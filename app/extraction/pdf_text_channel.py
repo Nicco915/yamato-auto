@@ -17,7 +17,12 @@ from pathlib import Path
 import fitz  # PyMuPDF
 
 from . import llm_client
-from .excel_channel import ChannelResult, UnsupportedFileError
+from .excel_channel import (
+    ChannelResult,
+    UnsupportedFileError,
+    sort_by_source_order,
+)
+from .schemas import apply_weight_basis
 from .prompts import (
     SYSTEM_PROMPT,
     JsonParseError,
@@ -76,7 +81,7 @@ def extract_pdf_text(file_path: str) -> ChannelResult:
             payload = parse_payload(raw)
             for item in payload.items:
                 item.source_file = file_path
-            result.items = payload.items
+            result.items = apply_weight_basis(sort_by_source_order(payload.items, text))
             return result
         except JsonParseError as e:
             result.json_parse_failures += 1

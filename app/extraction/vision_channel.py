@@ -14,6 +14,7 @@ from pathlib import Path
 import fitz  # PyMuPDF
 
 from . import llm_client
+from .schemas import apply_weight_basis
 from .excel_channel import ChannelResult, UnsupportedFileError
 from .prompts import (
     SYSTEM_PROMPT,
@@ -96,7 +97,7 @@ def _extract_batch(
             payload = parse_payload(raw)
             for item in payload.items:
                 item.source_file = source_file
-            result.items = payload.items
+            result.items = apply_weight_basis(payload.items)
             return result
         except JsonParseError as e:
             result.json_parse_failures += 1

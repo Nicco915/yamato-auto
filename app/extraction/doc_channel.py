@@ -19,6 +19,7 @@ import subprocess
 from pathlib import Path
 
 from . import llm_client
+from .schemas import apply_weight_basis
 from .excel_channel import ChannelResult, UnsupportedFileError
 from .prompts import (
     SYSTEM_PROMPT,
@@ -88,7 +89,7 @@ def extract_doc(file_path: str) -> ChannelResult:
             payload = parse_payload(raw)
             for item in payload.items:
                 item.source_file = file_path
-            result.items = payload.items
+            result.items = apply_weight_basis(payload.items)
             return result
         except JsonParseError as e:
             result.json_parse_failures += 1

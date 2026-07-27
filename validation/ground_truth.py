@@ -1,13 +1,10 @@
 # -*- coding: utf-8 -*-
 """Ground truth 构建与缓存。
 
-选定来源：/Users/nz/Downloads/yamato/96/报关匹配.xlsx 的「バンニングリスト」sheet
-（人工报关产出的バンニングリスト，812 行覆盖全部 10 个工厂，净重/毛重/件数列 100% 非空；
-已与工厂原始装箱单抽样核对一致，例如中地 SKU 4549509515197：
-件数 500 / 净重 3100 / 毛重 3600 与 XD-269760PackingList.xlsx 原文完全一致）。
-
-四个「报关匹配*.xlsx」（东京/名古屋/神户横滨）的バンニングリスト sheet 内容完全相同，
-故只用 报关匹配.xlsx 一份即可。
+选定来源：/Users/nz/Downloads/yamato/96/ContentsOfTheContainer_202624_青島XD_20260708.xlsx
+的「バンニングリスト」sheet（下游买家装箱表，812 行 × 60 列，净重/毛重/件数列 100% 非空）。
+2026-07-27 用户明确：GT 以此文件（ContentsOfTheContainer）为准；
+已与 报关匹配.xlsx 交叉核对，两文件该 sheet 数值一致（如贝来 10 SKU 全等）。
 
 聚合口径：按（工厂文件夹名, SHOHIN_CD）分组，对件数(SOTOBAKO_D_HACCHU_SU)、
 净重、毛重求和 —— 即"每个工厂每个 SKU 的总件数/总净重/总毛重"。
@@ -19,7 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
-GT_SOURCE = "/Users/nz/Downloads/yamato/96/报关匹配.xlsx"
+GT_SOURCE = "/Users/nz/Downloads/yamato/96/ContentsOfTheContainer_202624_青島XD_20260708.xlsx"
 GT_SHEET = "バンニングリスト"
 CACHE_PATH = Path(__file__).parent / "results" / "ground_truth_cache.json"
 

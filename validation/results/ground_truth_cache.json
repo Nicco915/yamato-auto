@@ -1429,9 +1429,9 @@
    ]
   },
   "4549509766520": {
-   "total_quantity": 50.0,
-   "total_net_weight": 256.5,
-   "total_gross_weight": 266.99999999999994,
+   "total_quantity": 0.0,
+   "total_net_weight": 0.0,
+   "total_gross_weight": 0.0,
    "names": [
     "PE TAPE 50mmx500m RE",
     "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　赤",
@@ -1439,9 +1439,9 @@
    ]
   },
   "4549509766537": {
-   "total_quantity": 70.0,
-   "total_net_weight": 359.1,
-   "total_gross_weight": 373.8,
+   "total_quantity": 0.0,
+   "total_net_weight": 0.0,
+   "total_gross_weight": 0.0,
    "names": [
     "PE TAPE 50mmx500m BL",
     "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　青",
@@ -1449,9 +1449,9 @@
    ]
   },
   "4549509766544": {
-   "total_quantity": 60.0,
-   "total_net_weight": 307.79999999999995,
-   "total_gross_weight": 320.40000000000003,
+   "total_quantity": 41.0,
+   "total_net_weight": 210.33,
+   "total_gross_weight": 218.94,
    "names": [
     "PE TAPE 50mmx500m YE",
     "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　黄",
@@ -1469,9 +1469,9 @@
    ]
   },
   "4549509766568": {
-   "total_quantity": 30.0,
-   "total_net_weight": 153.89999999999998,
-   "total_gross_weight": 160.20000000000002,
+   "total_quantity": 0.0,
+   "total_net_weight": 0.0,
+   "total_gross_weight": 0.0,
    "names": [
     "PE TAPE 50mmx500m PE",
     "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　紫",

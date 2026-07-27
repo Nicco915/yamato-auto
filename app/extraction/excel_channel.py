@@ -3,7 +3,8 @@
 
 流程（第二阶段设计文档第 2 节）：
 1. openpyxl 拆分合并单元格（把合并值填到每个单元格），不执行任何业务逻辑抓取；
-2. pandas 把有效表格区域转成 Markdown 表格纯文本；
+2. sheet 级目标识别：只把箱单（Packing List）sheet 转成 Markdown，
+   发票/合同/报关 sheet 不送 LLM（见 select_pl_sheets）；
 3. 交给文本大模型做语义提取，强制 JSON 输出，解析失败最多重试 2 次。
 
 旧版 .xls 用 pandas(xlrd) 读取；读不出的记入 unsupported。
@@ -11,6 +12,7 @@
 from __future__ import annotations
 
 import io
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -25,10 +27,12 @@ from .prompts import (
     build_text_user_prompt,
     parse_payload,
 )
-from .schemas import ExtractedItem
+from .schemas import ExtractedItem, apply_weight_basis
 
-# 单个文件转成 Markdown 后的长度上限（控制 token 成本）
-MAX_MARKDOWN_CHARS = 24000
+# 单个文件转成 Markdown 后的长度上限（控制 token 成本；
+# 2026-07-27 由 24000 提高到 100000：正达 INV+PL 两 sheet 合计超限被截断，
+# 导致 PL sheet 后半 29 个 SKU 丢失）
+MAX_MARKDOWN_CHARS = 100000
 # 单表最多保留的行列（防止巨型空表撑爆上下文）
 MAX_ROWS = 400
 MAX_COLS = 30
@@ -36,6 +40,33 @@ MAX_COLS = 30
 EXCEL_SUFFIXES = {".xlsx", ".xlsm", ".xls", ".csv"}
 # 旧版 .xls 走 pandas/xlrd，不做合并单元格拆分
 LEGACY_XLS_SUFFIXES = {".xls"}
+
+# ---------------------------------------------------------------------------
+# Sheet 级目标识别（2026-07-27 人工核对引入）
+# 箱单（Packing List）是提取的唯一目标 sheet；发票/合同/报关单 sheet 不送 LLM，
+# 既省 token 又消除 PCS/单价等干扰数据。
+# ---------------------------------------------------------------------------
+# 明确的箱单 sheet 名（命中即只取这些 sheet）
+PL_SHEET_PATTERNS = [r"(?i)\bPL\b", r"(?i)packing", "箱单", "装箱单"]
+# 明确的非箱单 sheet 名（无箱单 sheet 时用于排除，兜底保留其余）
+NON_PL_SHEET_PATTERNS = [
+    r"(?i)\bINV\b", r"(?i)invoice", "发票",
+    r"(?i)contract", "合同", "报关",
+]
+
+
+def select_pl_sheets(names: list[str]) -> list[str]:
+    """从 sheet 名列表中选出箱单 sheet。
+
+    规则：有明确箱单 sheet → 只取它们；
+    没有 → 排除明确非箱单的，保留其余（如 Sheet1 这类无名 sheet）；
+    全被排除 → 原样保留（宁多勿漏）。
+    """
+    pl = [n for n in names if any(re.search(p, n) for p in PL_SHEET_PATTERNS)]
+    if pl:
+        return pl
+    rest = [n for n in names if not any(re.search(p, n) for p in NON_PL_SHEET_PATTERNS)]
+    return rest or list(names)
 
 
 class UnsupportedFileError(RuntimeError):
@@ -105,10 +136,13 @@ def _df_to_markdown(df: pd.DataFrame) -> str:
 
 
 def xlsx_to_markdown(file_path: str) -> str:
-    """xlsx/xlsm：openpyxl 拆合并单元格 → 每个 sheet 转 Markdown。"""
+    """xlsx/xlsm：openpyxl 拆合并单元格 → 箱单 sheet 转 Markdown。"""
     wb = load_workbook(file_path, data_only=True, read_only=False)
+    selected = set(select_pl_sheets([ws.title for ws in wb.worksheets]))
     parts: list[str] = []
     for ws in wb.worksheets:
+        if ws.title not in selected:
+            continue
         grid = _unmerge_sheet_to_grid(ws)
         df = _grid_to_dataframe(grid)
         md = _df_to_markdown(df)
@@ -123,8 +157,11 @@ def legacy_xls_to_markdown(file_path: str) -> str:
         sheets = pd.read_excel(file_path, sheet_name=None, header=None, engine="xlrd")
     except Exception as e:  # noqa: BLE001
         raise UnsupportedFileError(f"xlrd 无法读取 {file_path}: {e}") from e
+    selected = set(select_pl_sheets(list(sheets.keys())))
     parts: list[str] = []
     for name, df in sheets.items():
+        if name not in selected:
+            continue
         df = df.dropna(axis=0, how="all").dropna(axis=1, how="all")
         # 合并单元格在 xlrd 中表现为只有左上角有值，做有限的前向填充（仅行内向右填）
         df = df.ffill(axis=1)
@@ -168,10 +205,54 @@ def excel_to_markdown(file_path: str) -> str:
 # 第二步：文本大模型语义提取
 # ---------------------------------------------------------------------------
 
+_NUM_RE = re.compile(r"^-?\d[\d,]*\.?\d*$")
+_BARCODE_RE = re.compile(r"^\d{8,14}$")
+
+
+def _drop_zero_rows(markdown_text: str) -> str:
+    """纯 Python 预过滤全 0 占位行（不送 LLM）。
+
+    判定：某 markdown 行含 8–14 位纯数字条码单元格，且该行其余所有数值
+    单元格（QUANTITY/PACKAGES/净重/毛重/体积等）全为 0 → 该行为未发货占位行，
+    删除不影响任何真实数据。无条码的行（表头、SUB TOTAL、说明文字）一律保留。
+    （2026-07-27 正达案例：PL sheet 约 50 行 0 值占位行使 LLM 输出超 max_tokens
+    被截断 / 生成超 120s 超时）
+    """
+    kept: list[str] = []
+    for line in markdown_text.split("\n"):
+        if not line.startswith("|"):
+            kept.append(line)
+            continue
+        cells = [c.strip() for c in line.split("|")[1:-1]]
+        numerics = [c for c in cells if _NUM_RE.match(c)]
+        has_barcode = any(_BARCODE_RE.match(c) for c in numerics)
+        others = [c for c in numerics if not _BARCODE_RE.match(c)]
+        if has_barcode and others and all(float(c.replace(",", "")) == 0 for c in others):
+            continue  # 全 0 占位行，丢弃
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def sort_by_source_order(items: list, source_text: str) -> list:
+    """按 sku_code 在源文本中首次出现的位置排序（稳定排序）。
+
+    刚性保证输出顺序与单据行序一致（人工核对习惯）——LLM 的 JSON 数组
+    顺序只是"恰好"按读入顺序，没有契约保证。找不到条码的项（sku_code
+    为空或文本中不存在）保持原相对顺序排到末尾。
+    （pdf_text_channel 亦复用本函数；vision 通道无文本层，无法定位，不排。）
+    """
+    def key(it) -> tuple:
+        code = (getattr(it, "sku_code", None) or "").strip()
+        pos = source_text.find(code) if code else -1
+        return (pos < 0, pos)
+
+    return sorted(items, key=key)
+
+
 def extract_excel(file_path: str) -> ChannelResult:
     """提取单个 Excel/CSV 文件，返回结构化结果。"""
     result = ChannelResult()
-    markdown_text = excel_to_markdown(file_path)  # 可能抛 UnsupportedFileError
+    markdown_text = _drop_zero_rows(excel_to_markdown(file_path))  # 可能抛 UnsupportedFileError
     source_name = Path(file_path).name
 
     messages: list[dict] = [
@@ -189,7 +270,7 @@ def extract_excel(file_path: str) -> ChannelResult:
             payload = parse_payload(raw)
             for item in payload.items:
                 item.source_file = file_path
-            result.items = payload.items
+            result.items = apply_weight_basis(sort_by_source_order(payload.items, markdown_text))
             return result
         except JsonParseError as e:
             result.json_parse_failures += 1

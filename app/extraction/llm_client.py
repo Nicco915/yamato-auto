@@ -137,7 +137,7 @@ def chat_completion(
     source_file: str = "",
     model: str | None = None,
     temperature: float = 0.0,
-    max_tokens: int = 4096,
+    max_tokens: int = 16384,
     json_mode: bool = True,
 ) -> str:
     """调用聊天补全接口，返回原始文本。

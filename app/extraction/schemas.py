@@ -33,6 +33,11 @@ class ExtractedItem(BaseModel):
     total_gross_weight: Optional[float] = Field(
         default=None, description="该 SKU 印出的合计毛重，未印出为 null"
     )
+    weight_basis: str = Field(
+        default="total",
+        description="重量口径：total=该行印出的就是合计重量；per_carton=该行印出的是每箱/每件重量"
+        "（此种情况下数值仍照抄，换算由下游纯 Python 完成）",
+    )
     weight_unit: Optional[str] = Field(
         default=None, description="重量单位，照抄单据（KG/LB/g 等），未标明为 null"
     )
@@ -54,6 +59,28 @@ class ExtractionPayload(BaseModel):
     items: list[ExtractedItem] = Field(default_factory=list)
 
 
+def apply_weight_basis(items: list[ExtractedItem]) -> list[ExtractedItem]:
+    """把 per_carton 口径的重量由纯 Python 换算为合计（单箱重 × 件数）。
+
+    计算隔离铁律不变：LLM 只做语义判断（"这列是每箱重"），乘法在这里发生。
+    件数缺失无法换算时置 needs_human_review，绝不静默丢数。
+    （2026-07-27 亿钻案例：通用箱单只印每箱毛/净重，如 13.00/12.00 × 50 CTNS。）
+    """
+    for it in items:
+        if it.weight_basis != "per_carton":
+            continue
+        if it.total_quantity:
+            if it.total_net_weight is not None:
+                it.total_net_weight = round(it.total_net_weight * it.total_quantity, 3)
+            if it.total_gross_weight is not None:
+                it.total_gross_weight = round(it.total_gross_weight * it.total_quantity, 3)
+            it.weight_basis = "total"
+        else:
+            it.needs_human_review = True
+            it.review_reason = (it.review_reason or "") + "重量为每箱口径但件数缺失，无法换算合计"
+    return items
+
+
 # 给模型看的 JSON 输出模板（写进 prompt，防幻觉规则的一部分）
 OUTPUT_JSON_TEMPLATE = """{
   "items": [
@@ -63,6 +90,7 @@ OUTPUT_JSON_TEMPLATE = """{
       "total_quantity": 数字或null,
       "total_net_weight": 数字或null,
       "total_gross_weight": 数字或null,
+      "weight_basis": "total或per_carton",
       "weight_unit": "KG或null",
       "needs_human_review": false,
       "review_reason": null
