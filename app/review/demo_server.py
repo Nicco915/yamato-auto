@@ -1,0 +1,217 @@
+"""人工审核界面独立演示服务（端口 8001）。
+
+- 使用 MockBackend 提供两份 mock 审核 payload（模拟两个工厂连续挂起）；
+- mock 版 /api/v1/orders/{thread_id}/resume 与 /state，让单页可以完整走通
+  "审核 → 提交 → 下一工厂 → 完成" 的流转；
+- document 接口指向真实工厂文件夹文件（PDF/Excel/JPG 各一），用于验证渲染链路。
+
+运行：cd /Users/nz/Downloads/yamato/app && python -m app.review.demo_server
+打开：http://127.0.0.1:8001/review?thread_id=demo
+"""
+from __future__ import annotations
+
+from typing import Any
+
+import uvicorn
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+from app.config import get_settings
+from app.review.router import configure_review, router, set_review_backend
+
+UPSTREAM = get_settings().upstream_root  # /Users/nz/Downloads/yamato/96/工厂
+
+
+def _real(folder: str, prefix: str, contains: str = "") -> str:
+    """按前缀在工厂文件夹里找真实文件名。
+
+    真实单据文件名里常含不间断空格 U+00A0（如 'ZDA26-0882A 家盈知 ….pdf'），
+    直接硬编码路径会 404，因此 demo 启动时从磁盘读取真实文件名。
+    """
+    import os
+
+    d = os.path.join(UPSTREAM, folder)
+    for f in sorted(os.listdir(d)):
+        if f.startswith(prefix) and contains in f:
+            return os.path.join(d, f)
+    raise FileNotFoundError(f"{d} 下找不到 {prefix}*{contains}*")
+
+
+# 真实单据文件（中地：PDF+Excel；达安：JPG+legacy xls）
+PDF_ZHONGDI = _real("中地", "ZDA26-0882A")
+XLSX_ZHONGDI = _real("中地", "XD-269760PackingList")
+JPG_DAAN = _real("达安", "XD-269759-001.jpg")
+XLS_DAAN = _real("达安", "DA26461", contains="箱单")
+
+# ---- 两份 mock payload：模拟多工厂循环（中地 → 达安）----
+MOCK_PAYLOADS: list[dict[str, Any]] = [
+    {
+        "factory_name": "中地",
+        "folder_path": f"{UPSTREAM}/中地",
+        "source_documents": [
+            XLSX_ZHONGDI,
+            PDF_ZHONGDI,
+        ],
+        "missing_skus": ["SKU-MISSING-001"],
+        "items": [
+            {
+                "sku": "ITEM-100",
+                "extracted_data": {
+                    "total_quantity": 50,
+                    "total_net_weight": 250.0,
+                    "total_gross_weight": 265.0,
+                    "weight_unit": "KG",
+                    "source_file": PDF_ZHONGDI,
+                },
+                "calculation": {
+                    "net_formula": "250.0 / 50",
+                    "gross_formula": "265.0 / 50",
+                    "calculated_unit_net": 5.0,
+                    "calculated_unit_gross": 5.3,
+                },
+                "status": "Normal",
+                "is_human_edited": False,
+                "is_new_sku": False,
+                "db_record": {"unit_net_weight": 5.0, "name_cn": "示例既存商品"},
+            },
+            {
+                "sku": "ITEM-200",
+                "extracted_data": {
+                    "total_quantity": 120,
+                    "total_net_weight": 1180.5,
+                    "total_gross_weight": 1260.0,
+                    "weight_unit": "KG",
+                    "source_file": XLSX_ZHONGDI,
+                },
+                "calculation": {
+                    "net_formula": "1180.5 / 120",
+                    "gross_formula": "1260.0 / 120",
+                    "calculated_unit_net": 9.8375,
+                    "calculated_unit_gross": 10.5,
+                },
+                "status": "Warning",
+                "is_human_edited": False,
+                "is_new_sku": False,
+                "db_record": {"unit_net_weight": 9.5, "weight_diff_ratio": 0.0355},
+            },
+            {
+                "sku": "ITEM-NEW-9",
+                "extracted_data": {
+                    "total_quantity": None,
+                    "total_net_weight": None,
+                    "total_gross_weight": None,
+                    "weight_unit": "KG",
+                    "source_file": XLSX_ZHONGDI,
+                },
+                "calculation": {
+                    "net_formula": "",
+                    "gross_formula": "",
+                    "calculated_unit_net": None,
+                    "calculated_unit_gross": None,
+                },
+                "status": "Error",
+                "is_human_edited": False,
+                "is_new_sku": True,
+                "fields_to_fill": ["name_cn", "hs_code", "inspection_required"],
+                "db_record": {},
+            },
+        ],
+    },
+    {
+        "factory_name": "达安",
+        "folder_path": f"{UPSTREAM}/达安",
+        "source_documents": [
+            JPG_DAAN,
+            XLS_DAAN,
+        ],
+        "missing_skus": [],
+        "items": [
+            {
+                "sku": "DA-3001",
+                "extracted_data": {
+                    "total_quantity": 80,
+                    "total_net_weight": 400.0,
+                    "total_gross_weight": 428.8,
+                    "weight_unit": "KG",
+                    "source_file": JPG_DAAN,
+                },
+                "calculation": {
+                    "net_formula": "400.0 / 80",
+                    "gross_formula": "428.8 / 80",
+                    "calculated_unit_net": 5.0,
+                    "calculated_unit_gross": 5.36,
+                },
+                "status": "Normal",
+                "is_human_edited": False,
+                "is_new_sku": False,
+                "db_record": {},
+            },
+        ],
+    },
+]
+
+
+class MockBackend:
+    """demo 数据源：按提交次数依次返回 mock payload。"""
+
+    def __init__(self) -> None:
+        self.round = 0
+
+    def get_payload(self, thread_id: str) -> dict[str, Any] | None:  # noqa: ARG002
+        if self.round < len(MOCK_PAYLOADS):
+            return MOCK_PAYLOADS[self.round]
+        return None
+
+
+_backend = MockBackend()
+
+
+class ReviewSubmitRequest(BaseModel):
+    approved: bool = True
+    items: list[dict[str, Any]] = []
+
+
+def create_demo_app() -> FastAPI:
+    app = FastAPI(title="人工审核界面 Demo", version="0.1.0")
+
+    # 注入 mock 数据源 + 白名单（真实工厂文件夹根目录）
+    set_review_backend(_backend)
+    configure_review(allowed_roots=[UPSTREAM])
+    app.include_router(router)
+
+    @app.post("/api/v1/orders/{thread_id}/resume")
+    async def mock_resume(thread_id: str, req: ReviewSubmitRequest):
+        """mock resume：第一次返回第二个工厂的 payload，第二次返回完成。"""
+        edited = sum(1 for i in req.items if i.get("is_human_edited"))
+        _backend.round += 1
+        if _backend.round < len(MOCK_PAYLOADS):
+            return {
+                "status": "pending_human_review",
+                "thread_id": thread_id,
+                "review_data": MOCK_PAYLOADS[_backend.round],
+                "_demo_note": f"上一轮收到 {len(req.items)} 项（含人工修改标记 {edited} 项）",
+            }
+        return {
+            "status": "success",
+            "message": "数据已成功落库并写入下游表格（demo）",
+            "final_validation_status": "Approved",
+            "final_output_path": "app/output/demo_final.xlsx",
+        }
+
+    @app.get("/api/v1/orders/{thread_id}/state")
+    async def mock_state(thread_id: str):
+        done = _backend.round >= len(MOCK_PAYLOADS)
+        return {
+            "thread_id": thread_id,
+            "exists": True,
+            "next_nodes": [] if done else ["human_review"],
+            "values": {},
+        }
+
+    return app
+
+
+app = create_demo_app()
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="127.0.0.1", port=8001, log_level="info")

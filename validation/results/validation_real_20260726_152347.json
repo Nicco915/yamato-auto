@@ -1,0 +1,1067 @@
+[
+ {
+  "factory": "亿钻",
+  "sku_total": 32,
+  "sku_covered": 32,
+  "sku_coverage": 1.0,
+  "sku_all_fields_correct": 0,
+  "field_accuracy": {
+   "total_quantity": 1.0,
+   "total_net_weight": 0.0,
+   "total_gross_weight": 0.0
+  },
+  "extracted_item_count": 49,
+  "needs_human_review_rate": 0.0204,
+  "json_parse_success_rate": 1.0,
+  "unsupported_files": [
+   "/Users/nz/Downloads/yamato/96/工厂/亿钻/商业发票报关RWS260714.doc",
+   "/Users/nz/Downloads/yamato/96/工厂/亿钻/商业发票通用RWS261233@.doc",
+   "/Users/nz/Downloads/yamato/96/工厂/亿钻/装箱单报关RWS260714.doc",
+   "/Users/nz/Downloads/yamato/96/工厂/亿钻/装箱单通用RWS261233@.doc"
+  ],
+  "file_errors": {},
+  "token_usage": {
+   "calls": 9,
+   "failed_calls": 2,
+   "prompt_tokens": 25059,
+   "completion_tokens": 27815,
+   "total_tokens": 52874
+  },
+  "per_sku": {
+   "4549509419679": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 252.0,
+     "total_gross_weight": 274.0
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 40.0,
+      "extracted_values": [
+       40.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 252.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 274.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4549509419693": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 100.0,
+     "total_gross_weight": 107.0
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 10.0,
+      "extracted_values": [
+       10.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 100.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 107.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052397": {
+    "gt": {
+     "total_quantity": 6.0,
+     "total_net_weight": 60.0,
+     "total_gross_weight": 63.0
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 6.0,
+      "extracted_values": [
+       6.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 60.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 63.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052403": {
+    "gt": {
+     "total_quantity": 3.0,
+     "total_net_weight": 30.0,
+     "total_gross_weight": 31.5
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 3.0,
+      "extracted_values": [
+       3.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 30.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 31.5,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052410": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 10.0,
+     "total_gross_weight": 10.5
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 1.0,
+      "extracted_values": [
+       1.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 10.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 10.5,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052427": {
+    "gt": {
+     "total_quantity": 5.0,
+     "total_net_weight": 67.5,
+     "total_gross_weight": 71.0
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 5.0,
+      "extracted_values": [
+       5.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 67.5,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 71.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052434": {
+    "gt": {
+     "total_quantity": 2.0,
+     "total_net_weight": 27.0,
+     "total_gross_weight": 28.4
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 2.0,
+      "extracted_values": [
+       2.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 27.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 28.4,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052441": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 13.5,
+     "total_gross_weight": 14.2
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 1.0,
+      "extracted_values": [
+       1.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 13.5,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 14.2,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052458": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 46.0,
+     "total_gross_weight": 48.0
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 4.0,
+      "extracted_values": [
+       4.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 46.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 48.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052465": {
+    "gt": {
+     "total_quantity": 3.0,
+     "total_net_weight": 34.5,
+     "total_gross_weight": 36.0
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 3.0,
+      "extracted_values": [
+       3.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 34.5,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 36.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052472": {
+    "gt": {
+     "total_quantity": 2.0,
+     "total_net_weight": 23.0,
+     "total_gross_weight": 24.0
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 2.0,
+      "extracted_values": [
+       2.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 23.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 24.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052489": {
+    "gt": {
+     "total_quantity": 3.0,
+     "total_net_weight": 55.5,
+     "total_gross_weight": 57.6
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 3.0,
+      "extracted_values": [
+       3.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 55.5,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 57.6,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052496": {
+    "gt": {
+     "total_quantity": 2.0,
+     "total_net_weight": 37.0,
+     "total_gross_weight": 38.4
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 2.0,
+      "extracted_values": [
+       2.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 37.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 38.4,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052502": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 18.5,
+     "total_gross_weight": 19.2
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 1.0,
+      "extracted_values": [
+       1.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 18.5,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 19.2,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052519": {
+    "gt": {
+     "total_quantity": 6.0,
+     "total_net_weight": 46.98,
+     "total_gross_weight": 49.2
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 6.0,
+      "extracted_values": [
+       6.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 46.98,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 49.2,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052540": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 12.2,
+     "total_gross_weight": 13.3
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 1.0,
+      "extracted_values": [
+       1.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 12.2,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 13.3,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052557": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 12.2,
+     "total_gross_weight": 13.3
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 1.0,
+      "extracted_values": [
+       1.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 12.2,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 13.3,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596052564": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 12.2,
+     "total_gross_weight": 13.3
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 1.0,
+      "extracted_values": [
+       1.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 12.2,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 13.3,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4550596153346": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 600.0,
+     "total_gross_weight": 650.0
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 50.0,
+      "extracted_values": [
+       50.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 600.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 650.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4936695680998": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 370.0,
+     "total_gross_weight": 414.0
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 40.0,
+      "extracted_values": [
+       40.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 370.0,
+      "extracted_values": [
+       9.25
+      ],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 414.0,
+      "extracted_values": [
+       10.35
+      ],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4936695681001": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 90.0,
+     "total_gross_weight": 106.0
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 40.0,
+      "extracted_values": [
+       40.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 90.0,
+      "extracted_values": [
+       2.25
+      ],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 106.0,
+      "extracted_values": [
+       2.65
+      ],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4936695731898": {
+    "gt": {
+     "total_quantity": 297.0,
+     "total_net_weight": 3801.6,
+     "total_gross_weight": 4098.6
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 297.0,
+      "extracted_values": [
+       297.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 3801.6,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 4098.6,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4936695732147": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 63.0,
+     "total_gross_weight": 66.0
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 4.0,
+      "extracted_values": [
+       4.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 63.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 66.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4936695732154": {
+    "gt": {
+     "total_quantity": 2.0,
+     "total_net_weight": 28.8,
+     "total_gross_weight": 30.0
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 2.0,
+      "extracted_values": [
+       2.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 28.8,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 30.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4936695732192": {
+    "gt": {
+     "total_quantity": 8.0,
+     "total_net_weight": 18.0,
+     "total_gross_weight": 21.6
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 8.0,
+      "extracted_values": [
+       8.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 18.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 21.6,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4936695732208": {
+    "gt": {
+     "total_quantity": 12.0,
+     "total_net_weight": 45.0,
+     "total_gross_weight": 50.4
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 12.0,
+      "extracted_values": [
+       12.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 45.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 50.4,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4936695732239": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 37.8,
+     "total_gross_weight": 42.4
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 4.0,
+      "extracted_values": [
+       4.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 37.8,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 42.4,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4936695732246": {
+    "gt": {
+     "total_quantity": 7.0,
+     "total_net_weight": 47.25,
+     "total_gross_weight": 59.85
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 7.0,
+      "extracted_values": [
+       7.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 47.25,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 59.85,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4936695732253": {
+    "gt": {
+     "total_quantity": 3.0,
+     "total_net_weight": 27.75,
+     "total_gross_weight": 29.1
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 3.0,
+      "extracted_values": [
+       3.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 27.75,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 29.1,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4936695732260": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 58.52,
+     "total_gross_weight": 62.0
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 4.0,
+      "extracted_values": [
+       4.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 58.52,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 62.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4936695732277": {
+    "gt": {
+     "total_quantity": 20.0,
+     "total_net_weight": 43.6,
+     "total_gross_weight": 52.0
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 20.0,
+      "extracted_values": [
+       20.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 43.6,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 52.0,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   },
+   "4936695732284": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 51.2,
+     "total_gross_weight": 53.2
+    },
+    "matched_items": 1,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 4.0,
+      "extracted_values": [
+       4.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 51.2,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     },
+     "total_gross_weight": {
+      "gt": 53.2,
+      "extracted_values": [],
+      "correct": false,
+      "via": "none"
+     }
+    },
+    "all_correct": false
+   }
+  },
+  "elapsed_sec": 1379.2,
+  "mock": false
+ }
+]

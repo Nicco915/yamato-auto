@@ -1,0 +1,504 @@
+[
+ {
+  "factory": "TOP",
+  "sku_total": 9,
+  "sku_covered": 9,
+  "sku_coverage": 1.0,
+  "sku_all_fields_correct": 9,
+  "field_accuracy": {
+   "total_quantity": 1.0,
+   "total_net_weight": 1.0,
+   "total_gross_weight": 1.0
+  },
+  "extracted_item_count": 11,
+  "needs_human_review_rate": 0.0,
+  "json_parse_success_rate": 1.0,
+  "unsupported_files": [],
+  "file_errors": {},
+  "token_usage": {
+   "calls": 2,
+   "failed_calls": 0,
+   "prompt_tokens": 8063,
+   "completion_tokens": 9001,
+   "total_tokens": 17064
+  },
+  "raw_items": [
+   {
+    "sku_name": "PE TAPE",
+    "sku_code": null,
+    "total_quantity": 420.0,
+    "total_net_weight": 2154.6,
+    "total_gross_weight": 2242.8,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/TOP/CZ报关单据 513箱.pdf"
+   },
+   {
+    "sku_name": "PAPER ROPE",
+    "sku_code": null,
+    "total_quantity": 93.0,
+    "total_net_weight": 482.16,
+    "total_gross_weight": 519.36,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/TOP/CZ报关单据 513箱.pdf"
+   },
+   {
+    "sku_name": "PAPER ROPE、PE TAPE POPE 1.5MM*100M",
+    "sku_code": "4549509703198",
+    "total_quantity": 19.0,
+    "total_net_weight": 72.96,
+    "total_gross_weight": 80.56,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/TOP/XD-269766-----请款资料.xls"
+   },
+   {
+    "sku_name": "PAPER ROPE、PE TAPE POPE 2.0MM*100M",
+    "sku_code": "4549509703204",
+    "total_quantity": 29.0,
+    "total_net_weight": 139.2,
+    "total_gross_weight": 150.8,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/TOP/XD-269766-----请款资料.xls"
+   },
+   {
+    "sku_name": "PAPER ROPE、PE TAPE POPE 2.5MM*100M",
+    "sku_code": "4549509703211",
+    "total_quantity": 45.0,
+    "total_net_weight": 270.0,
+    "total_gross_weight": 288.0,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/TOP/XD-269766-----请款资料.xls"
+   },
+   {
+    "sku_name": "PAPER ROPE、PE TAPE 201 50MM*500",
+    "sku_code": "4549509766513",
+    "total_quantity": 160.0,
+    "total_net_weight": 820.8,
+    "total_gross_weight": 854.4,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/TOP/XD-269766-----请款资料.xls"
+   },
+   {
+    "sku_name": "PAPER ROPE、PE TAPE 201 50MM*500",
+    "sku_code": "4549509766520",
+    "total_quantity": 50.0,
+    "total_net_weight": 256.5,
+    "total_gross_weight": 267.0,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/TOP/XD-269766-----请款资料.xls"
+   },
+   {
+    "sku_name": "PAPER ROPE、PE TAPE 201 50MM*500",
+    "sku_code": "4549509766537",
+    "total_quantity": 70.0,
+    "total_net_weight": 359.1,
+    "total_gross_weight": 373.8,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/TOP/XD-269766-----请款资料.xls"
+   },
+   {
+    "sku_name": "PAPER ROPE、PE TAPE 201 50MM*500",
+    "sku_code": "4549509766544",
+    "total_quantity": 60.0,
+    "total_net_weight": 307.8,
+    "total_gross_weight": 320.4,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/TOP/XD-269766-----请款资料.xls"
+   },
+   {
+    "sku_name": "PAPER ROPE、PE TAPE 201 50MM*500",
+    "sku_code": "4549509766551",
+    "total_quantity": 50.0,
+    "total_net_weight": 256.5,
+    "total_gross_weight": 267.0,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/TOP/XD-269766-----请款资料.xls"
+   },
+   {
+    "sku_name": "PAPER ROPE、PE TAPE 201 50MM*500",
+    "sku_code": "4549509766568",
+    "total_quantity": 30.0,
+    "total_net_weight": 153.9,
+    "total_gross_weight": 160.2,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/TOP/XD-269766-----请款资料.xls"
+   }
+  ],
+  "per_sku": {
+   "4549509703198": {
+    "gt": {
+     "total_quantity": 19.0,
+     "total_net_weight": 72.96000000000001,
+     "total_gross_weight": 80.56
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 19.0,
+      "extracted_values": [
+       19.0,
+       93.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 72.96000000000001,
+      "extracted_values": [
+       72.96,
+       482.16
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 80.56,
+      "extracted_values": [
+       80.56,
+       519.36
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509703204": {
+    "gt": {
+     "total_quantity": 29.0,
+     "total_net_weight": 139.2,
+     "total_gross_weight": 150.8
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 29.0,
+      "extracted_values": [
+       29.0,
+       93.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 139.2,
+      "extracted_values": [
+       139.2,
+       482.16
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 150.8,
+      "extracted_values": [
+       150.8,
+       519.36
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509703211": {
+    "gt": {
+     "total_quantity": 45.0,
+     "total_net_weight": 270.0,
+     "total_gross_weight": 288.0
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 45.0,
+      "extracted_values": [
+       45.0,
+       93.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 270.0,
+      "extracted_values": [
+       270.0,
+       482.16
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 288.0,
+      "extracted_values": [
+       288.0,
+       519.36
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509766513": {
+    "gt": {
+     "total_quantity": 160.0,
+     "total_net_weight": 820.8,
+     "total_gross_weight": 854.4000000000001
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 160.0,
+      "extracted_values": [
+       160.0,
+       420.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 820.8,
+      "extracted_values": [
+       820.8,
+       2154.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 854.4000000000001,
+      "extracted_values": [
+       854.4,
+       2242.8
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509766520": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 256.5,
+     "total_gross_weight": 266.99999999999994
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 50.0,
+      "extracted_values": [
+       50.0,
+       420.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 256.5,
+      "extracted_values": [
+       256.5,
+       2154.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 266.99999999999994,
+      "extracted_values": [
+       267.0,
+       2242.8
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509766537": {
+    "gt": {
+     "total_quantity": 70.0,
+     "total_net_weight": 359.1,
+     "total_gross_weight": 373.8
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 70.0,
+      "extracted_values": [
+       70.0,
+       420.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 359.1,
+      "extracted_values": [
+       359.1,
+       2154.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 373.8,
+      "extracted_values": [
+       373.8,
+       2242.8
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509766544": {
+    "gt": {
+     "total_quantity": 60.0,
+     "total_net_weight": 307.79999999999995,
+     "total_gross_weight": 320.40000000000003
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 60.0,
+      "extracted_values": [
+       60.0,
+       420.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 307.79999999999995,
+      "extracted_values": [
+       307.8,
+       2154.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 320.40000000000003,
+      "extracted_values": [
+       320.4,
+       2242.8
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509766551": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 256.5,
+     "total_gross_weight": 266.99999999999994
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 50.0,
+      "extracted_values": [
+       50.0,
+       420.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 256.5,
+      "extracted_values": [
+       256.5,
+       2154.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 266.99999999999994,
+      "extracted_values": [
+       267.0,
+       2242.8
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509766568": {
+    "gt": {
+     "total_quantity": 30.0,
+     "total_net_weight": 153.89999999999998,
+     "total_gross_weight": 160.20000000000002
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 30.0,
+      "extracted_values": [
+       30.0,
+       420.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 153.89999999999998,
+      "extracted_values": [
+       153.9,
+       2154.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 160.20000000000002,
+      "extracted_values": [
+       160.2,
+       2242.8
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   }
+  },
+  "elapsed_sec": 166.2,
+  "mock": false
+ }
+]

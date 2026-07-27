@@ -1,0 +1,7508 @@
+[
+ {
+  "factory": "TOP",
+  "sku_total": 9,
+  "sku_covered": 9,
+  "sku_coverage": 1.0,
+  "sku_all_fields_correct": 9,
+  "field_accuracy": {
+   "total_quantity": 1.0,
+   "total_net_weight": 1.0,
+   "total_gross_weight": 1.0
+  },
+  "extracted_item_count": 18,
+  "needs_human_review_rate": 0.0,
+  "json_parse_success_rate": 1.0,
+  "unsupported_files": [],
+  "file_errors": {},
+  "token_usage": {
+   "calls": 0,
+   "failed_calls": 0,
+   "prompt_tokens": 0,
+   "completion_tokens": 0,
+   "total_tokens": 0
+  },
+  "per_sku": {
+   "4549509703198": {
+    "gt": {
+     "total_quantity": 19.0,
+     "total_net_weight": 72.96000000000001,
+     "total_gross_weight": 80.56
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 19.0,
+      "extracted_values": [
+       19.0,
+       19.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 72.96000000000001,
+      "extracted_values": [
+       72.96000000000001,
+       72.96000000000001
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 80.56,
+      "extracted_values": [
+       80.56,
+       80.56
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509703204": {
+    "gt": {
+     "total_quantity": 29.0,
+     "total_net_weight": 139.2,
+     "total_gross_weight": 150.8
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 29.0,
+      "extracted_values": [
+       29.0,
+       29.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 139.2,
+      "extracted_values": [
+       139.2,
+       139.2
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 150.8,
+      "extracted_values": [
+       150.8,
+       150.8
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509703211": {
+    "gt": {
+     "total_quantity": 45.0,
+     "total_net_weight": 270.0,
+     "total_gross_weight": 288.0
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 45.0,
+      "extracted_values": [
+       45.0,
+       45.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 270.0,
+      "extracted_values": [
+       270.0,
+       270.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 288.0,
+      "extracted_values": [
+       288.0,
+       288.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509766513": {
+    "gt": {
+     "total_quantity": 160.0,
+     "total_net_weight": 820.8,
+     "total_gross_weight": 854.4000000000001
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 160.0,
+      "extracted_values": [
+       160.0,
+       160.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 820.8,
+      "extracted_values": [
+       820.8,
+       820.8
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 854.4000000000001,
+      "extracted_values": [
+       854.4000000000001,
+       854.4000000000001
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509766520": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 256.5,
+     "total_gross_weight": 266.99999999999994
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 50.0,
+      "extracted_values": [
+       50.0,
+       50.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 256.5,
+      "extracted_values": [
+       256.5,
+       256.5
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 266.99999999999994,
+      "extracted_values": [
+       266.99999999999994,
+       266.99999999999994
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509766537": {
+    "gt": {
+     "total_quantity": 70.0,
+     "total_net_weight": 359.1,
+     "total_gross_weight": 373.8
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 70.0,
+      "extracted_values": [
+       70.0,
+       70.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 359.1,
+      "extracted_values": [
+       359.1,
+       359.1
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 373.8,
+      "extracted_values": [
+       373.8,
+       373.8
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509766544": {
+    "gt": {
+     "total_quantity": 60.0,
+     "total_net_weight": 307.79999999999995,
+     "total_gross_weight": 320.40000000000003
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 60.0,
+      "extracted_values": [
+       60.0,
+       60.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 307.79999999999995,
+      "extracted_values": [
+       307.79999999999995,
+       307.79999999999995
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 320.40000000000003,
+      "extracted_values": [
+       320.40000000000003,
+       320.40000000000003
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509766551": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 256.5,
+     "total_gross_weight": 266.99999999999994
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 50.0,
+      "extracted_values": [
+       50.0,
+       50.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 256.5,
+      "extracted_values": [
+       256.5,
+       256.5
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 266.99999999999994,
+      "extracted_values": [
+       266.99999999999994,
+       266.99999999999994
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509766568": {
+    "gt": {
+     "total_quantity": 30.0,
+     "total_net_weight": 153.89999999999998,
+     "total_gross_weight": 160.20000000000002
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 30.0,
+      "extracted_values": [
+       30.0,
+       30.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 153.89999999999998,
+      "extracted_values": [
+       153.89999999999998,
+       153.89999999999998
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 160.20000000000002,
+      "extracted_values": [
+       160.20000000000002,
+       160.20000000000002
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   }
+  },
+  "elapsed_sec": 0.0,
+  "mock": true
+ },
+ {
+  "factory": "东基恒",
+  "sku_total": 9,
+  "sku_covered": 9,
+  "sku_coverage": 1.0,
+  "sku_all_fields_correct": 9,
+  "field_accuracy": {
+   "total_quantity": 1.0,
+   "total_net_weight": 1.0,
+   "total_gross_weight": 1.0
+  },
+  "extracted_item_count": 36,
+  "needs_human_review_rate": 0.0,
+  "json_parse_success_rate": 1.0,
+  "unsupported_files": [],
+  "file_errors": {},
+  "token_usage": {
+   "calls": 0,
+   "failed_calls": 0,
+   "prompt_tokens": 0,
+   "completion_tokens": 0,
+   "total_tokens": 0
+  },
+  "per_sku": {
+   "4550596044859": {
+    "gt": {
+     "total_quantity": 220.0,
+     "total_net_weight": 1847.9999999999998,
+     "total_gross_weight": 2068.0
+    },
+    "matched_items": 4,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 220.0,
+      "extracted_values": [
+       220.0,
+       220.0,
+       220.0,
+       220.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1847.9999999999998,
+      "extracted_values": [
+       1847.9999999999998,
+       1847.9999999999998,
+       1847.9999999999998,
+       1847.9999999999998
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 2068.0,
+      "extracted_values": [
+       2068.0,
+       2068.0,
+       2068.0,
+       2068.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596044866": {
+    "gt": {
+     "total_quantity": 250.0,
+     "total_net_weight": 4200.0,
+     "total_gross_weight": 4225.0
+    },
+    "matched_items": 4,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 250.0,
+      "extracted_values": [
+       250.0,
+       250.0,
+       250.0,
+       250.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 4200.0,
+      "extracted_values": [
+       4200.0,
+       4200.0,
+       4200.0,
+       4200.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 4225.0,
+      "extracted_values": [
+       4225.0,
+       4225.0,
+       4225.0,
+       4225.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596044897": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 650.0,
+     "total_gross_weight": 700.0
+    },
+    "matched_items": 4,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 50.0,
+      "extracted_values": [
+       50.0,
+       50.0,
+       50.0,
+       50.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 650.0,
+      "extracted_values": [
+       650.0,
+       650.0,
+       650.0,
+       650.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 700.0,
+      "extracted_values": [
+       700.0,
+       700.0,
+       700.0,
+       700.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596044903": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 520.0,
+     "total_gross_weight": 524.0
+    },
+    "matched_items": 4,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 40.0,
+      "extracted_values": [
+       40.0,
+       40.0,
+       40.0,
+       40.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 520.0,
+      "extracted_values": [
+       520.0,
+       520.0,
+       520.0,
+       520.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 524.0,
+      "extracted_values": [
+       524.0,
+       524.0,
+       524.0,
+       524.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596044910": {
+    "gt": {
+     "total_quantity": 90.0,
+     "total_net_weight": 900.0,
+     "total_gross_weight": 909.0
+    },
+    "matched_items": 4,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 90.0,
+      "extracted_values": [
+       90.0,
+       90.0,
+       90.0,
+       90.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 900.0,
+      "extracted_values": [
+       900.0,
+       900.0,
+       900.0,
+       900.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 909.0,
+      "extracted_values": [
+       909.0,
+       909.0,
+       909.0,
+       909.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596044927": {
+    "gt": {
+     "total_quantity": 100.0,
+     "total_net_weight": 1500.0,
+     "total_gross_weight": 1600.0
+    },
+    "matched_items": 4,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 100.0,
+      "extracted_values": [
+       100.0,
+       100.0,
+       100.0,
+       100.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1500.0,
+      "extracted_values": [
+       1500.0,
+       1500.0,
+       1500.0,
+       1500.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 1600.0,
+      "extracted_values": [
+       1600.0,
+       1600.0,
+       1600.0,
+       1600.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596044934": {
+    "gt": {
+     "total_quantity": 55.0,
+     "total_net_weight": 605.0,
+     "total_gross_weight": 660.0
+    },
+    "matched_items": 4,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 55.0,
+      "extracted_values": [
+       55.0,
+       55.0,
+       55.0,
+       55.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 605.0,
+      "extracted_values": [
+       605.0,
+       605.0,
+       605.0,
+       605.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 660.0,
+      "extracted_values": [
+       660.0,
+       660.0,
+       660.0,
+       660.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596044941": {
+    "gt": {
+     "total_quantity": 30.0,
+     "total_net_weight": 360.0,
+     "total_gross_weight": 390.0
+    },
+    "matched_items": 4,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 30.0,
+      "extracted_values": [
+       30.0,
+       30.0,
+       30.0,
+       30.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 360.0,
+      "extracted_values": [
+       360.0,
+       360.0,
+       360.0,
+       360.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 390.0,
+      "extracted_values": [
+       390.0,
+       390.0,
+       390.0,
+       390.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596045696": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 150.0,
+     "total_gross_weight": 160.0
+    },
+    "matched_items": 4,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 10.0,
+      "extracted_values": [
+       10.0,
+       10.0,
+       10.0,
+       10.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 150.0,
+      "extracted_values": [
+       150.0,
+       150.0,
+       150.0,
+       150.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 160.0,
+      "extracted_values": [
+       160.0,
+       160.0,
+       160.0,
+       160.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   }
+  },
+  "elapsed_sec": 0.0,
+  "mock": true
+ },
+ {
+  "factory": "中地",
+  "sku_total": 14,
+  "sku_covered": 14,
+  "sku_coverage": 1.0,
+  "sku_all_fields_correct": 14,
+  "field_accuracy": {
+   "total_quantity": 1.0,
+   "total_net_weight": 1.0,
+   "total_gross_weight": 1.0
+  },
+  "extracted_item_count": 112,
+  "needs_human_review_rate": 0.0,
+  "json_parse_success_rate": 1.0,
+  "unsupported_files": [],
+  "file_errors": {},
+  "token_usage": {
+   "calls": 0,
+   "failed_calls": 0,
+   "prompt_tokens": 0,
+   "completion_tokens": 0,
+   "total_tokens": 0
+  },
+  "per_sku": {
+   "4549509515197": {
+    "gt": {
+     "total_quantity": 500.0,
+     "total_net_weight": 3100.0,
+     "total_gross_weight": 3600.0
+    },
+    "matched_items": 8,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 500.0,
+      "extracted_values": [
+       500.0,
+       500.0,
+       500.0,
+       500.0,
+       500.0,
+       500.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 3100.0,
+      "extracted_values": [
+       3100.0,
+       3100.0,
+       3100.0,
+       3100.0,
+       3100.0,
+       3100.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 3600.0,
+      "extracted_values": [
+       3600.0,
+       3600.0,
+       3600.0,
+       3600.0,
+       3600.0,
+       3600.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509515203": {
+    "gt": {
+     "total_quantity": 48.0,
+     "total_net_weight": 345.6,
+     "total_gross_weight": 393.59999999999997
+    },
+    "matched_items": 8,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 48.0,
+      "extracted_values": [
+       48.0,
+       48.0,
+       48.0,
+       48.0,
+       48.0,
+       48.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 345.6,
+      "extracted_values": [
+       345.6,
+       345.6,
+       345.6,
+       345.6,
+       345.6,
+       345.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 393.59999999999997,
+      "extracted_values": [
+       393.59999999999997,
+       393.59999999999997,
+       393.59999999999997,
+       393.59999999999997,
+       393.59999999999997,
+       393.59999999999997
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509518860": {
+    "gt": {
+     "total_quantity": 255.0,
+     "total_net_weight": 1326.0,
+     "total_gross_weight": 2083.35
+    },
+    "matched_items": 8,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 255.0,
+      "extracted_values": [
+       255.0,
+       255.0,
+       255.0,
+       255.0,
+       255.0,
+       255.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1326.0,
+      "extracted_values": [
+       1326.0,
+       1326.0,
+       1326.0,
+       1326.0,
+       1326.0,
+       1326.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 2083.35,
+      "extracted_values": [
+       2083.35,
+       2083.35,
+       2083.35,
+       2083.35,
+       2083.35,
+       2083.35
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509518877": {
+    "gt": {
+     "total_quantity": 176.0,
+     "total_net_weight": 1213.6999999999991,
+     "total_gross_weight": 1644.5400000000009
+    },
+    "matched_items": 8,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 176.0,
+      "extracted_values": [
+       176.0,
+       176.0,
+       176.0,
+       176.0,
+       176.0,
+       176.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1213.6999999999991,
+      "extracted_values": [
+       1213.6999999999991,
+       1213.6999999999991,
+       1213.6999999999991,
+       1213.6999999999991,
+       1213.6999999999991,
+       1213.6999999999991
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 1644.5400000000009,
+      "extracted_values": [
+       1644.5400000000009,
+       1644.5400000000009,
+       1644.5400000000009,
+       1644.5400000000009,
+       1644.5400000000009,
+       1644.5400000000009
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509518884": {
+    "gt": {
+     "total_quantity": 110.0,
+     "total_net_weight": 1243.0,
+     "total_gross_weight": 1545.5
+    },
+    "matched_items": 8,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 110.0,
+      "extracted_values": [
+       110.0,
+       110.0,
+       110.0,
+       110.0,
+       110.0,
+       110.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1243.0,
+      "extracted_values": [
+       1243.0,
+       1243.0,
+       1243.0,
+       1243.0,
+       1243.0,
+       1243.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 1545.5,
+      "extracted_values": [
+       1545.5,
+       1545.5,
+       1545.5,
+       1545.5,
+       1545.5,
+       1545.5
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509518891": {
+    "gt": {
+     "total_quantity": 136.0,
+     "total_net_weight": 1833.2799999999997,
+     "total_gross_weight": 2224.96
+    },
+    "matched_items": 8,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 136.0,
+      "extracted_values": [
+       136.0,
+       136.0,
+       136.0,
+       136.0,
+       136.0,
+       136.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1833.2799999999997,
+      "extracted_values": [
+       1833.2799999999997,
+       1833.2799999999997,
+       1833.2799999999997,
+       1833.2799999999997,
+       1833.2799999999997,
+       1833.2799999999997
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 2224.96,
+      "extracted_values": [
+       2224.96,
+       2224.96,
+       2224.96,
+       2224.96,
+       2224.96,
+       2224.96
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509610960": {
+    "gt": {
+     "total_quantity": 138.0,
+     "total_net_weight": 434.7,
+     "total_gross_weight": 524.1199999999997
+    },
+    "matched_items": 8,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 138.0,
+      "extracted_values": [
+       138.0,
+       138.0,
+       138.0,
+       138.0,
+       138.0,
+       138.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 434.7,
+      "extracted_values": [
+       434.7,
+       434.7,
+       434.7,
+       434.7,
+       434.7,
+       434.7
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 524.1199999999997,
+      "extracted_values": [
+       524.1199999999997,
+       524.1199999999997,
+       524.1199999999997,
+       524.1199999999997,
+       524.1199999999997,
+       524.1199999999997
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509610977": {
+    "gt": {
+     "total_quantity": 110.0,
+     "total_net_weight": 455.3999999999999,
+     "total_gross_weight": 540.54
+    },
+    "matched_items": 8,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 110.0,
+      "extracted_values": [
+       110.0,
+       110.0,
+       110.0,
+       110.0,
+       110.0,
+       110.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 455.3999999999999,
+      "extracted_values": [
+       455.3999999999999,
+       455.3999999999999,
+       455.3999999999999,
+       455.3999999999999,
+       455.3999999999999,
+       455.3999999999999
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 540.54,
+      "extracted_values": [
+       540.54,
+       540.54,
+       540.54,
+       540.54,
+       540.54,
+       540.54
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509610984": {
+    "gt": {
+     "total_quantity": 106.0,
+     "total_net_weight": 362.52000000000004,
+     "total_gross_weight": 442.6599999999999
+    },
+    "matched_items": 8,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 106.0,
+      "extracted_values": [
+       106.0,
+       106.0,
+       106.0,
+       106.0,
+       106.0,
+       106.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 362.52000000000004,
+      "extracted_values": [
+       362.52000000000004,
+       362.52000000000004,
+       362.52000000000004,
+       362.52000000000004,
+       362.52000000000004,
+       362.52000000000004
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 442.6599999999999,
+      "extracted_values": [
+       442.6599999999999,
+       442.6599999999999,
+       442.6599999999999,
+       442.6599999999999,
+       442.6599999999999,
+       442.6599999999999
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596018201": {
+    "gt": {
+     "total_quantity": 2.0,
+     "total_net_weight": 1.0,
+     "total_gross_weight": 2.0
+    },
+    "matched_items": 8,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 2.0,
+      "extracted_values": [
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1.0,
+      "extracted_values": [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 2.0,
+      "extracted_values": [
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596018256": {
+    "gt": {
+     "total_quantity": 46.0,
+     "total_net_weight": 43.7,
+     "total_gross_weight": 69.0
+    },
+    "matched_items": 8,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 46.0,
+      "extracted_values": [
+       46.0,
+       46.0,
+       46.0,
+       46.0,
+       46.0,
+       46.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 43.7,
+      "extracted_values": [
+       43.7,
+       43.7,
+       43.7,
+       43.7,
+       43.7,
+       43.7
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 69.0,
+      "extracted_values": [
+       69.0,
+       69.0,
+       69.0,
+       69.0,
+       69.0,
+       69.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596109466": {
+    "gt": {
+     "total_quantity": 62.0,
+     "total_net_weight": 558.0,
+     "total_gross_weight": 633.64
+    },
+    "matched_items": 8,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 62.0,
+      "extracted_values": [
+       62.0,
+       62.0,
+       62.0,
+       62.0,
+       62.0,
+       62.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 558.0,
+      "extracted_values": [
+       558.0,
+       558.0,
+       558.0,
+       558.0,
+       558.0,
+       558.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 633.64,
+      "extracted_values": [
+       633.64,
+       633.64,
+       633.64,
+       633.64,
+       633.64,
+       633.64
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596211831": {
+    "gt": {
+     "total_quantity": 2591.0,
+     "total_net_weight": 14716.880000000001,
+     "total_gross_weight": 17618.8
+    },
+    "matched_items": 8,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 2591.0,
+      "extracted_values": [
+       2591.0,
+       2591.0,
+       2591.0,
+       2591.0,
+       2591.0,
+       2591.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 14716.880000000001,
+      "extracted_values": [
+       14716.880000000001,
+       14716.880000000001,
+       14716.880000000001,
+       14716.880000000001,
+       14716.880000000001,
+       14716.880000000001
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 17618.8,
+      "extracted_values": [
+       17618.8,
+       17618.8,
+       17618.8,
+       17618.8,
+       17618.8,
+       17618.8
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596211848": {
+    "gt": {
+     "total_quantity": 2235.0,
+     "total_net_weight": 12694.8,
+     "total_gross_weight": 15198.0
+    },
+    "matched_items": 8,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 2235.0,
+      "extracted_values": [
+       2235.0,
+       2235.0,
+       2235.0,
+       2235.0,
+       2235.0,
+       2235.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 12694.8,
+      "extracted_values": [
+       12694.8,
+       12694.8,
+       12694.8,
+       12694.8,
+       12694.8,
+       12694.8
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 15198.0,
+      "extracted_values": [
+       15198.0,
+       15198.0,
+       15198.0,
+       15198.0,
+       15198.0,
+       15198.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   }
+  },
+  "elapsed_sec": 0.0,
+  "mock": true
+ },
+ {
+  "factory": "亿钻",
+  "sku_total": 32,
+  "sku_covered": 32,
+  "sku_coverage": 1.0,
+  "sku_all_fields_correct": 32,
+  "field_accuracy": {
+   "total_quantity": 1.0,
+   "total_net_weight": 1.0,
+   "total_gross_weight": 1.0
+  },
+  "extracted_item_count": 224,
+  "needs_human_review_rate": 0.0,
+  "json_parse_success_rate": 1.0,
+  "unsupported_files": [
+   "/Users/nz/Downloads/yamato/96/工厂/亿钻/商业发票报关RWS260714.doc",
+   "/Users/nz/Downloads/yamato/96/工厂/亿钻/商业发票通用RWS261233@.doc",
+   "/Users/nz/Downloads/yamato/96/工厂/亿钻/装箱单报关RWS260714.doc",
+   "/Users/nz/Downloads/yamato/96/工厂/亿钻/装箱单通用RWS261233@.doc"
+  ],
+  "file_errors": {},
+  "token_usage": {
+   "calls": 0,
+   "failed_calls": 0,
+   "prompt_tokens": 0,
+   "completion_tokens": 0,
+   "total_tokens": 0
+  },
+  "per_sku": {
+   "4549509419679": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 252.0,
+     "total_gross_weight": 274.0
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 40.0,
+      "extracted_values": [
+       40.0,
+       40.0,
+       40.0,
+       40.0,
+       40.0,
+       40.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 252.0,
+      "extracted_values": [
+       252.0,
+       252.0,
+       252.0,
+       252.0,
+       252.0,
+       252.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 274.0,
+      "extracted_values": [
+       274.0,
+       274.0,
+       274.0,
+       274.0,
+       274.0,
+       274.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509419693": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 100.0,
+     "total_gross_weight": 107.0
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 10.0,
+      "extracted_values": [
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 100.0,
+      "extracted_values": [
+       100.0,
+       100.0,
+       100.0,
+       100.0,
+       100.0,
+       100.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 107.0,
+      "extracted_values": [
+       107.0,
+       107.0,
+       107.0,
+       107.0,
+       107.0,
+       107.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052397": {
+    "gt": {
+     "total_quantity": 6.0,
+     "total_net_weight": 60.0,
+     "total_gross_weight": 63.0
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 6.0,
+      "extracted_values": [
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 60.0,
+      "extracted_values": [
+       60.0,
+       60.0,
+       60.0,
+       60.0,
+       60.0,
+       60.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 63.0,
+      "extracted_values": [
+       63.0,
+       63.0,
+       63.0,
+       63.0,
+       63.0,
+       63.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052403": {
+    "gt": {
+     "total_quantity": 3.0,
+     "total_net_weight": 30.0,
+     "total_gross_weight": 31.5
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 3.0,
+      "extracted_values": [
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 30.0,
+      "extracted_values": [
+       30.0,
+       30.0,
+       30.0,
+       30.0,
+       30.0,
+       30.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 31.5,
+      "extracted_values": [
+       31.5,
+       31.5,
+       31.5,
+       31.5,
+       31.5,
+       31.5
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052410": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 10.0,
+     "total_gross_weight": 10.5
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 1.0,
+      "extracted_values": [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 10.0,
+      "extracted_values": [
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 10.5,
+      "extracted_values": [
+       10.5,
+       10.5,
+       10.5,
+       10.5,
+       10.5,
+       10.5
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052427": {
+    "gt": {
+     "total_quantity": 5.0,
+     "total_net_weight": 67.5,
+     "total_gross_weight": 71.0
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 5.0,
+      "extracted_values": [
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 67.5,
+      "extracted_values": [
+       67.5,
+       67.5,
+       67.5,
+       67.5,
+       67.5,
+       67.5
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 71.0,
+      "extracted_values": [
+       71.0,
+       71.0,
+       71.0,
+       71.0,
+       71.0,
+       71.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052434": {
+    "gt": {
+     "total_quantity": 2.0,
+     "total_net_weight": 27.0,
+     "total_gross_weight": 28.4
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 2.0,
+      "extracted_values": [
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 27.0,
+      "extracted_values": [
+       27.0,
+       27.0,
+       27.0,
+       27.0,
+       27.0,
+       27.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 28.4,
+      "extracted_values": [
+       28.4,
+       28.4,
+       28.4,
+       28.4,
+       28.4,
+       28.4
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052441": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 13.5,
+     "total_gross_weight": 14.2
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 1.0,
+      "extracted_values": [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 13.5,
+      "extracted_values": [
+       13.5,
+       13.5,
+       13.5,
+       13.5,
+       13.5,
+       13.5
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 14.2,
+      "extracted_values": [
+       14.2,
+       14.2,
+       14.2,
+       14.2,
+       14.2,
+       14.2
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052458": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 46.0,
+     "total_gross_weight": 48.0
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 4.0,
+      "extracted_values": [
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 46.0,
+      "extracted_values": [
+       46.0,
+       46.0,
+       46.0,
+       46.0,
+       46.0,
+       46.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 48.0,
+      "extracted_values": [
+       48.0,
+       48.0,
+       48.0,
+       48.0,
+       48.0,
+       48.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052465": {
+    "gt": {
+     "total_quantity": 3.0,
+     "total_net_weight": 34.5,
+     "total_gross_weight": 36.0
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 3.0,
+      "extracted_values": [
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 34.5,
+      "extracted_values": [
+       34.5,
+       34.5,
+       34.5,
+       34.5,
+       34.5,
+       34.5
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 36.0,
+      "extracted_values": [
+       36.0,
+       36.0,
+       36.0,
+       36.0,
+       36.0,
+       36.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052472": {
+    "gt": {
+     "total_quantity": 2.0,
+     "total_net_weight": 23.0,
+     "total_gross_weight": 24.0
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 2.0,
+      "extracted_values": [
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 23.0,
+      "extracted_values": [
+       23.0,
+       23.0,
+       23.0,
+       23.0,
+       23.0,
+       23.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 24.0,
+      "extracted_values": [
+       24.0,
+       24.0,
+       24.0,
+       24.0,
+       24.0,
+       24.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052489": {
+    "gt": {
+     "total_quantity": 3.0,
+     "total_net_weight": 55.5,
+     "total_gross_weight": 57.6
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 3.0,
+      "extracted_values": [
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 55.5,
+      "extracted_values": [
+       55.5,
+       55.5,
+       55.5,
+       55.5,
+       55.5,
+       55.5
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 57.6,
+      "extracted_values": [
+       57.6,
+       57.6,
+       57.6,
+       57.6,
+       57.6,
+       57.6
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052496": {
+    "gt": {
+     "total_quantity": 2.0,
+     "total_net_weight": 37.0,
+     "total_gross_weight": 38.4
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 2.0,
+      "extracted_values": [
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 37.0,
+      "extracted_values": [
+       37.0,
+       37.0,
+       37.0,
+       37.0,
+       37.0,
+       37.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 38.4,
+      "extracted_values": [
+       38.4,
+       38.4,
+       38.4,
+       38.4,
+       38.4,
+       38.4
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052502": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 18.5,
+     "total_gross_weight": 19.2
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 1.0,
+      "extracted_values": [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 18.5,
+      "extracted_values": [
+       18.5,
+       18.5,
+       18.5,
+       18.5,
+       18.5,
+       18.5
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 19.2,
+      "extracted_values": [
+       19.2,
+       19.2,
+       19.2,
+       19.2,
+       19.2,
+       19.2
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052519": {
+    "gt": {
+     "total_quantity": 6.0,
+     "total_net_weight": 46.98,
+     "total_gross_weight": 49.2
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 6.0,
+      "extracted_values": [
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 46.98,
+      "extracted_values": [
+       46.98,
+       46.98,
+       46.98,
+       46.98,
+       46.98,
+       46.98
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 49.2,
+      "extracted_values": [
+       49.2,
+       49.2,
+       49.2,
+       49.2,
+       49.2,
+       49.2
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052540": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 12.2,
+     "total_gross_weight": 13.3
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 1.0,
+      "extracted_values": [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 12.2,
+      "extracted_values": [
+       12.2,
+       12.2,
+       12.2,
+       12.2,
+       12.2,
+       12.2
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 13.3,
+      "extracted_values": [
+       13.3,
+       13.3,
+       13.3,
+       13.3,
+       13.3,
+       13.3
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052557": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 12.2,
+     "total_gross_weight": 13.3
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 1.0,
+      "extracted_values": [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 12.2,
+      "extracted_values": [
+       12.2,
+       12.2,
+       12.2,
+       12.2,
+       12.2,
+       12.2
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 13.3,
+      "extracted_values": [
+       13.3,
+       13.3,
+       13.3,
+       13.3,
+       13.3,
+       13.3
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596052564": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 12.2,
+     "total_gross_weight": 13.3
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 1.0,
+      "extracted_values": [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 12.2,
+      "extracted_values": [
+       12.2,
+       12.2,
+       12.2,
+       12.2,
+       12.2,
+       12.2
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 13.3,
+      "extracted_values": [
+       13.3,
+       13.3,
+       13.3,
+       13.3,
+       13.3,
+       13.3
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596153346": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 600.0,
+     "total_gross_weight": 650.0
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 50.0,
+      "extracted_values": [
+       50.0,
+       50.0,
+       50.0,
+       50.0,
+       50.0,
+       50.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 600.0,
+      "extracted_values": [
+       600.0,
+       600.0,
+       600.0,
+       600.0,
+       600.0,
+       600.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 650.0,
+      "extracted_values": [
+       650.0,
+       650.0,
+       650.0,
+       650.0,
+       650.0,
+       650.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4936695680998": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 370.0,
+     "total_gross_weight": 414.0
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 40.0,
+      "extracted_values": [
+       40.0,
+       40.0,
+       40.0,
+       40.0,
+       40.0,
+       40.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 370.0,
+      "extracted_values": [
+       370.0,
+       370.0,
+       370.0,
+       370.0,
+       370.0,
+       370.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 414.0,
+      "extracted_values": [
+       414.0,
+       414.0,
+       414.0,
+       414.0,
+       414.0,
+       414.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4936695681001": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 90.0,
+     "total_gross_weight": 106.0
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 40.0,
+      "extracted_values": [
+       40.0,
+       40.0,
+       40.0,
+       40.0,
+       40.0,
+       40.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 90.0,
+      "extracted_values": [
+       90.0,
+       90.0,
+       90.0,
+       90.0,
+       90.0,
+       90.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 106.0,
+      "extracted_values": [
+       106.0,
+       106.0,
+       106.0,
+       106.0,
+       106.0,
+       106.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4936695731898": {
+    "gt": {
+     "total_quantity": 297.0,
+     "total_net_weight": 3801.6,
+     "total_gross_weight": 4098.6
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 297.0,
+      "extracted_values": [
+       297.0,
+       297.0,
+       297.0,
+       297.0,
+       297.0,
+       297.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 3801.6,
+      "extracted_values": [
+       3801.6,
+       3801.6,
+       3801.6,
+       3801.6,
+       3801.6,
+       3801.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 4098.6,
+      "extracted_values": [
+       4098.6,
+       4098.6,
+       4098.6,
+       4098.6,
+       4098.6,
+       4098.6
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4936695732147": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 63.0,
+     "total_gross_weight": 66.0
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 4.0,
+      "extracted_values": [
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 63.0,
+      "extracted_values": [
+       63.0,
+       63.0,
+       63.0,
+       63.0,
+       63.0,
+       63.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 66.0,
+      "extracted_values": [
+       66.0,
+       66.0,
+       66.0,
+       66.0,
+       66.0,
+       66.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4936695732154": {
+    "gt": {
+     "total_quantity": 2.0,
+     "total_net_weight": 28.8,
+     "total_gross_weight": 30.0
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 2.0,
+      "extracted_values": [
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 28.8,
+      "extracted_values": [
+       28.8,
+       28.8,
+       28.8,
+       28.8,
+       28.8,
+       28.8
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 30.0,
+      "extracted_values": [
+       30.0,
+       30.0,
+       30.0,
+       30.0,
+       30.0,
+       30.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4936695732192": {
+    "gt": {
+     "total_quantity": 8.0,
+     "total_net_weight": 18.0,
+     "total_gross_weight": 21.6
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 8.0,
+      "extracted_values": [
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 18.0,
+      "extracted_values": [
+       18.0,
+       18.0,
+       18.0,
+       18.0,
+       18.0,
+       18.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 21.6,
+      "extracted_values": [
+       21.6,
+       21.6,
+       21.6,
+       21.6,
+       21.6,
+       21.6
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4936695732208": {
+    "gt": {
+     "total_quantity": 12.0,
+     "total_net_weight": 45.0,
+     "total_gross_weight": 50.4
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 12.0,
+      "extracted_values": [
+       12.0,
+       12.0,
+       12.0,
+       12.0,
+       12.0,
+       12.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 45.0,
+      "extracted_values": [
+       45.0,
+       45.0,
+       45.0,
+       45.0,
+       45.0,
+       45.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 50.4,
+      "extracted_values": [
+       50.4,
+       50.4,
+       50.4,
+       50.4,
+       50.4,
+       50.4
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4936695732239": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 37.8,
+     "total_gross_weight": 42.4
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 4.0,
+      "extracted_values": [
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 37.8,
+      "extracted_values": [
+       37.8,
+       37.8,
+       37.8,
+       37.8,
+       37.8,
+       37.8
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 42.4,
+      "extracted_values": [
+       42.4,
+       42.4,
+       42.4,
+       42.4,
+       42.4,
+       42.4
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4936695732246": {
+    "gt": {
+     "total_quantity": 7.0,
+     "total_net_weight": 47.25,
+     "total_gross_weight": 59.85
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 7.0,
+      "extracted_values": [
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 47.25,
+      "extracted_values": [
+       47.25,
+       47.25,
+       47.25,
+       47.25,
+       47.25,
+       47.25
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 59.85,
+      "extracted_values": [
+       59.85,
+       59.85,
+       59.85,
+       59.85,
+       59.85,
+       59.85
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4936695732253": {
+    "gt": {
+     "total_quantity": 3.0,
+     "total_net_weight": 27.75,
+     "total_gross_weight": 29.1
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 3.0,
+      "extracted_values": [
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 27.75,
+      "extracted_values": [
+       27.75,
+       27.75,
+       27.75,
+       27.75,
+       27.75,
+       27.75
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 29.1,
+      "extracted_values": [
+       29.1,
+       29.1,
+       29.1,
+       29.1,
+       29.1,
+       29.1
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4936695732260": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 58.52,
+     "total_gross_weight": 62.0
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 4.0,
+      "extracted_values": [
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 58.52,
+      "extracted_values": [
+       58.52,
+       58.52,
+       58.52,
+       58.52,
+       58.52,
+       58.52
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 62.0,
+      "extracted_values": [
+       62.0,
+       62.0,
+       62.0,
+       62.0,
+       62.0,
+       62.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4936695732277": {
+    "gt": {
+     "total_quantity": 20.0,
+     "total_net_weight": 43.6,
+     "total_gross_weight": 52.0
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 20.0,
+      "extracted_values": [
+       20.0,
+       20.0,
+       20.0,
+       20.0,
+       20.0,
+       20.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 43.6,
+      "extracted_values": [
+       43.6,
+       43.6,
+       43.6,
+       43.6,
+       43.6,
+       43.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 52.0,
+      "extracted_values": [
+       52.0,
+       52.0,
+       52.0,
+       52.0,
+       52.0,
+       52.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4936695732284": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 51.2,
+     "total_gross_weight": 53.2
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 4.0,
+      "extracted_values": [
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 51.2,
+      "extracted_values": [
+       51.2,
+       51.2,
+       51.2,
+       51.2,
+       51.2,
+       51.2
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 53.2,
+      "extracted_values": [
+       53.2,
+       53.2,
+       53.2,
+       53.2,
+       53.2,
+       53.2
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   }
+  },
+  "elapsed_sec": 0.0,
+  "mock": true
+ },
+ {
+  "factory": "兆丰",
+  "sku_total": 12,
+  "sku_covered": 12,
+  "sku_coverage": 1.0,
+  "sku_all_fields_correct": 12,
+  "field_accuracy": {
+   "total_quantity": 1.0,
+   "total_net_weight": 1.0,
+   "total_gross_weight": 1.0
+  },
+  "extracted_item_count": 120,
+  "needs_human_review_rate": 0.0,
+  "json_parse_success_rate": 1.0,
+  "unsupported_files": [],
+  "file_errors": {},
+  "token_usage": {
+   "calls": 0,
+   "failed_calls": 0,
+   "prompt_tokens": 0,
+   "completion_tokens": 0,
+   "total_tokens": 0
+  },
+  "per_sku": {
+   "4549509623861": {
+    "gt": {
+     "total_quantity": 200.0,
+     "total_net_weight": 778.6,
+     "total_gross_weight": 972.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 200.0,
+      "extracted_values": [
+       200.0,
+       200.0,
+       200.0,
+       200.0,
+       200.0,
+       200.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 778.6,
+      "extracted_values": [
+       778.6,
+       778.6,
+       778.6,
+       778.6,
+       778.6,
+       778.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 972.0,
+      "extracted_values": [
+       972.0,
+       972.0,
+       972.0,
+       972.0,
+       972.0,
+       972.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509623878": {
+    "gt": {
+     "total_quantity": 80.0,
+     "total_net_weight": 243.84000000000003,
+     "total_gross_weight": 304.00000000000006
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 80.0,
+      "extracted_values": [
+       80.0,
+       80.0,
+       80.0,
+       80.0,
+       80.0,
+       80.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 243.84000000000003,
+      "extracted_values": [
+       243.84000000000003,
+       243.84000000000003,
+       243.84000000000003,
+       243.84000000000003,
+       243.84000000000003,
+       243.84000000000003
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 304.00000000000006,
+      "extracted_values": [
+       304.00000000000006,
+       304.00000000000006,
+       304.00000000000006,
+       304.00000000000006,
+       304.00000000000006,
+       304.00000000000006
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509623885": {
+    "gt": {
+     "total_quantity": 186.0,
+     "total_net_weight": 526.9400000000006,
+     "total_gross_weight": 665.8800000000001
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 186.0,
+      "extracted_values": [
+       186.0,
+       186.0,
+       186.0,
+       186.0,
+       186.0,
+       186.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 526.9400000000006,
+      "extracted_values": [
+       526.9400000000006,
+       526.9400000000006,
+       526.9400000000006,
+       526.9400000000006,
+       526.9400000000006,
+       526.9400000000006
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 665.8800000000001,
+      "extracted_values": [
+       665.8800000000001,
+       665.8800000000001,
+       665.8800000000001,
+       665.8800000000001,
+       665.8800000000001,
+       665.8800000000001
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509623892": {
+    "gt": {
+     "total_quantity": 157.0,
+     "total_net_weight": 435.5199999999996,
+     "total_gross_weight": 525.9499999999999
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 157.0,
+      "extracted_values": [
+       157.0,
+       157.0,
+       157.0,
+       157.0,
+       157.0,
+       157.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 435.5199999999996,
+      "extracted_values": [
+       435.5199999999996,
+       435.5199999999996,
+       435.5199999999996,
+       435.5199999999996,
+       435.5199999999996,
+       435.5199999999996
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 525.9499999999999,
+      "extracted_values": [
+       525.9499999999999,
+       525.9499999999999,
+       525.9499999999999,
+       525.9499999999999,
+       525.9499999999999,
+       525.9499999999999
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509623908": {
+    "gt": {
+     "total_quantity": 200.0,
+     "total_net_weight": 770.6,
+     "total_gross_weight": 964.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 200.0,
+      "extracted_values": [
+       200.0,
+       200.0,
+       200.0,
+       200.0,
+       200.0,
+       200.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 770.6,
+      "extracted_values": [
+       770.6,
+       770.6,
+       770.6,
+       770.6,
+       770.6,
+       770.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 964.0,
+      "extracted_values": [
+       964.0,
+       964.0,
+       964.0,
+       964.0,
+       964.0,
+       964.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509623915": {
+    "gt": {
+     "total_quantity": 80.0,
+     "total_net_weight": 243.84000000000003,
+     "total_gross_weight": 304.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 80.0,
+      "extracted_values": [
+       80.0,
+       80.0,
+       80.0,
+       80.0,
+       80.0,
+       80.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 243.84000000000003,
+      "extracted_values": [
+       243.84000000000003,
+       243.84000000000003,
+       243.84000000000003,
+       243.84000000000003,
+       243.84000000000003,
+       243.84000000000003
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 304.0,
+      "extracted_values": [
+       304.0,
+       304.0,
+       304.0,
+       304.0,
+       304.0,
+       304.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509623922": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 141.65,
+     "total_gross_weight": 179.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 50.0,
+      "extracted_values": [
+       50.0,
+       50.0,
+       50.0,
+       50.0,
+       50.0,
+       50.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 141.65,
+      "extracted_values": [
+       141.65,
+       141.65,
+       141.65,
+       141.65,
+       141.65,
+       141.65
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 179.0,
+      "extracted_values": [
+       179.0,
+       179.0,
+       179.0,
+       179.0,
+       179.0,
+       179.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509623939": {
+    "gt": {
+     "total_quantity": 133.0,
+     "total_net_weight": 370.2700000000005,
+     "total_gross_weight": 446.88000000000005
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 133.0,
+      "extracted_values": [
+       133.0,
+       133.0,
+       133.0,
+       133.0,
+       133.0,
+       133.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 370.2700000000005,
+      "extracted_values": [
+       370.2700000000005,
+       370.2700000000005,
+       370.2700000000005,
+       370.2700000000005,
+       370.2700000000005,
+       370.2700000000005
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 446.88000000000005,
+      "extracted_values": [
+       446.88000000000005,
+       446.88000000000005,
+       446.88000000000005,
+       446.88000000000005,
+       446.88000000000005,
+       446.88000000000005
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509729358": {
+    "gt": {
+     "total_quantity": 72.0,
+     "total_net_weight": 158.4,
+     "total_gross_weight": 216.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 72.0,
+      "extracted_values": [
+       72.0,
+       72.0,
+       72.0,
+       72.0,
+       72.0,
+       72.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 158.4,
+      "extracted_values": [
+       158.4,
+       158.4,
+       158.4,
+       158.4,
+       158.4,
+       158.4
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 216.0,
+      "extracted_values": [
+       216.0,
+       216.0,
+       216.0,
+       216.0,
+       216.0,
+       216.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509729365": {
+    "gt": {
+     "total_quantity": 51.0,
+     "total_net_weight": 112.19999999999999,
+     "total_gross_weight": 153.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 51.0,
+      "extracted_values": [
+       51.0,
+       51.0,
+       51.0,
+       51.0,
+       51.0,
+       51.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 112.19999999999999,
+      "extracted_values": [
+       112.19999999999999,
+       112.19999999999999,
+       112.19999999999999,
+       112.19999999999999,
+       112.19999999999999,
+       112.19999999999999
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 153.0,
+      "extracted_values": [
+       153.0,
+       153.0,
+       153.0,
+       153.0,
+       153.0,
+       153.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509769378": {
+    "gt": {
+     "total_quantity": 202.0,
+     "total_net_weight": 525.1999999999999,
+     "total_gross_weight": 929.1999999999999
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 202.0,
+      "extracted_values": [
+       202.0,
+       202.0,
+       202.0,
+       202.0,
+       202.0,
+       202.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 525.1999999999999,
+      "extracted_values": [
+       525.1999999999999,
+       525.1999999999999,
+       525.1999999999999,
+       525.1999999999999,
+       525.1999999999999,
+       525.1999999999999
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 929.1999999999999,
+      "extracted_values": [
+       929.1999999999999,
+       929.1999999999999,
+       929.1999999999999,
+       929.1999999999999,
+       929.1999999999999,
+       929.1999999999999
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509769385": {
+    "gt": {
+     "total_quantity": 79.0,
+     "total_net_weight": 205.4,
+     "total_gross_weight": 363.3999999999999
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 79.0,
+      "extracted_values": [
+       79.0,
+       79.0,
+       79.0,
+       79.0,
+       79.0,
+       79.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 205.4,
+      "extracted_values": [
+       205.4,
+       205.4,
+       205.4,
+       205.4,
+       205.4,
+       205.4
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 363.3999999999999,
+      "extracted_values": [
+       363.3999999999999,
+       363.3999999999999,
+       363.3999999999999,
+       363.3999999999999,
+       363.3999999999999,
+       363.3999999999999
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   }
+  },
+  "elapsed_sec": 0.0,
+  "mock": true
+ },
+ {
+  "factory": "华旭阳",
+  "sku_total": 6,
+  "sku_covered": 6,
+  "sku_coverage": 1.0,
+  "sku_all_fields_correct": 6,
+  "field_accuracy": {
+   "total_quantity": 1.0,
+   "total_net_weight": 1.0,
+   "total_gross_weight": 1.0
+  },
+  "extracted_item_count": 18,
+  "needs_human_review_rate": 0.0,
+  "json_parse_success_rate": 1.0,
+  "unsupported_files": [],
+  "file_errors": {},
+  "token_usage": {
+   "calls": 0,
+   "failed_calls": 0,
+   "prompt_tokens": 0,
+   "completion_tokens": 0,
+   "total_tokens": 0
+  },
+  "per_sku": {
+   "4549509492948": {
+    "gt": {
+     "total_quantity": 20.0,
+     "total_net_weight": 105.6,
+     "total_gross_weight": 138.0
+    },
+    "matched_items": 3,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 20.0,
+      "extracted_values": [
+       20.0,
+       20.0,
+       20.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 105.6,
+      "extracted_values": [
+       105.6,
+       105.6,
+       105.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 138.0,
+      "extracted_values": [
+       138.0,
+       138.0,
+       138.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509492955": {
+    "gt": {
+     "total_quantity": 100.0,
+     "total_net_weight": 528.0,
+     "total_gross_weight": 690.0
+    },
+    "matched_items": 3,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 100.0,
+      "extracted_values": [
+       100.0,
+       100.0,
+       100.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 528.0,
+      "extracted_values": [
+       528.0,
+       528.0,
+       528.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 690.0,
+      "extracted_values": [
+       690.0,
+       690.0,
+       690.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509492979": {
+    "gt": {
+     "total_quantity": 20.0,
+     "total_net_weight": 105.6,
+     "total_gross_weight": 138.00000000000003
+    },
+    "matched_items": 3,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 20.0,
+      "extracted_values": [
+       20.0,
+       20.0,
+       20.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 105.6,
+      "extracted_values": [
+       105.6,
+       105.6,
+       105.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 138.00000000000003,
+      "extracted_values": [
+       138.00000000000003,
+       138.00000000000003,
+       138.00000000000003
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509559597": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 302.4,
+     "total_gross_weight": 400.0
+    },
+    "matched_items": 3,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 40.0,
+      "extracted_values": [
+       40.0,
+       40.0,
+       40.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 302.4,
+      "extracted_values": [
+       302.4,
+       302.4,
+       302.4
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 400.0,
+      "extracted_values": [
+       400.0,
+       400.0,
+       400.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509559603": {
+    "gt": {
+     "total_quantity": 70.0,
+     "total_net_weight": 369.6,
+     "total_gross_weight": 483.0
+    },
+    "matched_items": 3,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 70.0,
+      "extracted_values": [
+       70.0,
+       70.0,
+       70.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 369.6,
+      "extracted_values": [
+       369.6,
+       369.6,
+       369.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 483.0,
+      "extracted_values": [
+       483.0,
+       483.0,
+       483.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509559610": {
+    "gt": {
+     "total_quantity": 100.0,
+     "total_net_weight": 756.0,
+     "total_gross_weight": 1000.0
+    },
+    "matched_items": 3,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 100.0,
+      "extracted_values": [
+       100.0,
+       100.0,
+       100.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 756.0,
+      "extracted_values": [
+       756.0,
+       756.0,
+       756.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 1000.0,
+      "extracted_values": [
+       1000.0,
+       1000.0,
+       1000.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   }
+  },
+  "elapsed_sec": 0.0,
+  "mock": true
+ },
+ {
+  "factory": "正达",
+  "sku_total": 43,
+  "sku_covered": 43,
+  "sku_coverage": 1.0,
+  "sku_all_fields_correct": 43,
+  "field_accuracy": {
+   "total_quantity": 1.0,
+   "total_net_weight": 1.0,
+   "total_gross_weight": 1.0
+  },
+  "extracted_item_count": 430,
+  "needs_human_review_rate": 0.0,
+  "json_parse_success_rate": 1.0,
+  "unsupported_files": [],
+  "file_errors": {},
+  "token_usage": {
+   "calls": 0,
+   "failed_calls": 0,
+   "prompt_tokens": 0,
+   "completion_tokens": 0,
+   "total_tokens": 0
+  },
+  "per_sku": {
+   "4549509174042": {
+    "gt": {
+     "total_quantity": 341.0,
+     "total_net_weight": 1895.96,
+     "total_gross_weight": 2090.3299999999995
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 341.0,
+      "extracted_values": [
+       341.0,
+       341.0,
+       341.0,
+       341.0,
+       341.0,
+       341.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1895.96,
+      "extracted_values": [
+       1895.96,
+       1895.96,
+       1895.96,
+       1895.96,
+       1895.96,
+       1895.96
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 2090.3299999999995,
+      "extracted_values": [
+       2090.3299999999995,
+       2090.3299999999995,
+       2090.3299999999995,
+       2090.3299999999995,
+       2090.3299999999995,
+       2090.3299999999995
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509174059": {
+    "gt": {
+     "total_quantity": 66.0,
+     "total_net_weight": 488.4,
+     "total_gross_weight": 541.2
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 66.0,
+      "extracted_values": [
+       66.0,
+       66.0,
+       66.0,
+       66.0,
+       66.0,
+       66.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 488.4,
+      "extracted_values": [
+       488.4,
+       488.4,
+       488.4,
+       488.4,
+       488.4,
+       488.4
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 541.2,
+      "extracted_values": [
+       541.2,
+       541.2,
+       541.2,
+       541.2,
+       541.2,
+       541.2
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509280125": {
+    "gt": {
+     "total_quantity": 372.0,
+     "total_net_weight": 1971.6,
+     "total_gross_weight": 2362.2
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 372.0,
+      "extracted_values": [
+       372.0,
+       372.0,
+       372.0,
+       372.0,
+       372.0,
+       372.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1971.6,
+      "extracted_values": [
+       1971.6,
+       1971.6,
+       1971.6,
+       1971.6,
+       1971.6,
+       1971.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 2362.2,
+      "extracted_values": [
+       2362.2,
+       2362.2,
+       2362.2,
+       2362.2,
+       2362.2,
+       2362.2
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509315339": {
+    "gt": {
+     "total_quantity": 29.0,
+     "total_net_weight": 35.96,
+     "total_gross_weight": 49.3
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 29.0,
+      "extracted_values": [
+       29.0,
+       29.0,
+       29.0,
+       29.0,
+       29.0,
+       29.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 35.96,
+      "extracted_values": [
+       35.96,
+       35.96,
+       35.96,
+       35.96,
+       35.96,
+       35.96
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 49.3,
+      "extracted_values": [
+       49.3,
+       49.3,
+       49.3,
+       49.3,
+       49.3,
+       49.3
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509412694": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 70.0,
+     "total_gross_weight": 74.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 10.0,
+      "extracted_values": [
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 70.0,
+      "extracted_values": [
+       70.0,
+       70.0,
+       70.0,
+       70.0,
+       70.0,
+       70.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 74.0,
+      "extracted_values": [
+       74.0,
+       74.0,
+       74.0,
+       74.0,
+       74.0,
+       74.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509412700": {
+    "gt": {
+     "total_quantity": 17.0,
+     "total_net_weight": 142.8,
+     "total_gross_weight": 151.3
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 17.0,
+      "extracted_values": [
+       17.0,
+       17.0,
+       17.0,
+       17.0,
+       17.0,
+       17.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 142.8,
+      "extracted_values": [
+       142.8,
+       142.8,
+       142.8,
+       142.8,
+       142.8,
+       142.8
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 151.3,
+      "extracted_values": [
+       151.3,
+       151.3,
+       151.3,
+       151.3,
+       151.3,
+       151.3
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509412717": {
+    "gt": {
+     "total_quantity": 188.0,
+     "total_net_weight": 2143.2,
+     "total_gross_weight": 2256.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 188.0,
+      "extracted_values": [
+       188.0,
+       188.0,
+       188.0,
+       188.0,
+       188.0,
+       188.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 2143.2,
+      "extracted_values": [
+       2143.2,
+       2143.2,
+       2143.2,
+       2143.2,
+       2143.2,
+       2143.2
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 2256.0,
+      "extracted_values": [
+       2256.0,
+       2256.0,
+       2256.0,
+       2256.0,
+       2256.0,
+       2256.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509412724": {
+    "gt": {
+     "total_quantity": 312.0,
+     "total_net_weight": 4555.200000000001,
+     "total_gross_weight": 4773.600000000001
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 312.0,
+      "extracted_values": [
+       312.0,
+       312.0,
+       312.0,
+       312.0,
+       312.0,
+       312.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 4555.200000000001,
+      "extracted_values": [
+       4555.200000000001,
+       4555.200000000001,
+       4555.200000000001,
+       4555.200000000001,
+       4555.200000000001,
+       4555.200000000001
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 4773.600000000001,
+      "extracted_values": [
+       4773.600000000001,
+       4773.600000000001,
+       4773.600000000001,
+       4773.600000000001,
+       4773.600000000001,
+       4773.600000000001
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509412748": {
+    "gt": {
+     "total_quantity": 400.0,
+     "total_net_weight": 1320.0,
+     "total_gross_weight": 1520.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 400.0,
+      "extracted_values": [
+       400.0,
+       400.0,
+       400.0,
+       400.0,
+       400.0,
+       400.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1320.0,
+      "extracted_values": [
+       1320.0,
+       1320.0,
+       1320.0,
+       1320.0,
+       1320.0,
+       1320.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 1520.0,
+      "extracted_values": [
+       1520.0,
+       1520.0,
+       1520.0,
+       1520.0,
+       1520.0,
+       1520.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509588306": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 240.0,
+     "total_gross_weight": 256.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 40.0,
+      "extracted_values": [
+       40.0,
+       40.0,
+       40.0,
+       40.0,
+       40.0,
+       40.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 240.0,
+      "extracted_values": [
+       240.0,
+       240.0,
+       240.0,
+       240.0,
+       240.0,
+       240.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 256.0,
+      "extracted_values": [
+       256.0,
+       256.0,
+       256.0,
+       256.0,
+       256.0,
+       256.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509588313": {
+    "gt": {
+     "total_quantity": 5.0,
+     "total_net_weight": 30.0,
+     "total_gross_weight": 32.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 5.0,
+      "extracted_values": [
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 30.0,
+      "extracted_values": [
+       30.0,
+       30.0,
+       30.0,
+       30.0,
+       30.0,
+       30.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 32.0,
+      "extracted_values": [
+       32.0,
+       32.0,
+       32.0,
+       32.0,
+       32.0,
+       32.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509656876": {
+    "gt": {
+     "total_quantity": 283.0,
+     "total_net_weight": 1528.2,
+     "total_gross_weight": 1799.88
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 283.0,
+      "extracted_values": [
+       283.0,
+       283.0,
+       283.0,
+       283.0,
+       283.0,
+       283.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1528.2,
+      "extracted_values": [
+       1528.2,
+       1528.2,
+       1528.2,
+       1528.2,
+       1528.2,
+       1528.2
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 1799.88,
+      "extracted_values": [
+       1799.88,
+       1799.88,
+       1799.88,
+       1799.88,
+       1799.88,
+       1799.88
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509659709": {
+    "gt": {
+     "total_quantity": 104.0,
+     "total_net_weight": 863.2,
+     "total_gross_weight": 946.3999999999999
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 104.0,
+      "extracted_values": [
+       104.0,
+       104.0,
+       104.0,
+       104.0,
+       104.0,
+       104.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 863.2,
+      "extracted_values": [
+       863.2,
+       863.2,
+       863.2,
+       863.2,
+       863.2,
+       863.2
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 946.3999999999999,
+      "extracted_values": [
+       946.3999999999999,
+       946.3999999999999,
+       946.3999999999999,
+       946.3999999999999,
+       946.3999999999999,
+       946.3999999999999
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509761778": {
+    "gt": {
+     "total_quantity": 283.0,
+     "total_net_weight": 3254.5,
+     "total_gross_weight": 3537.5
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 283.0,
+      "extracted_values": [
+       283.0,
+       283.0,
+       283.0,
+       283.0,
+       283.0,
+       283.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 3254.5,
+      "extracted_values": [
+       3254.5,
+       3254.5,
+       3254.5,
+       3254.5,
+       3254.5,
+       3254.5
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 3537.5,
+      "extracted_values": [
+       3537.5,
+       3537.5,
+       3537.5,
+       3537.5,
+       3537.5,
+       3537.5
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509849865": {
+    "gt": {
+     "total_quantity": 98.0,
+     "total_net_weight": 784.0,
+     "total_gross_weight": 833.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 98.0,
+      "extracted_values": [
+       98.0,
+       98.0,
+       98.0,
+       98.0,
+       98.0,
+       98.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 784.0,
+      "extracted_values": [
+       784.0,
+       784.0,
+       784.0,
+       784.0,
+       784.0,
+       784.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 833.0,
+      "extracted_values": [
+       833.0,
+       833.0,
+       833.0,
+       833.0,
+       833.0,
+       833.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509849872": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 12.0,
+     "total_gross_weight": 13.4
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 4.0,
+      "extracted_values": [
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 12.0,
+      "extracted_values": [
+       12.0,
+       12.0,
+       12.0,
+       12.0,
+       12.0,
+       12.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 13.4,
+      "extracted_values": [
+       13.4,
+       13.4,
+       13.4,
+       13.4,
+       13.4,
+       13.4
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509849889": {
+    "gt": {
+     "total_quantity": 18.0,
+     "total_net_weight": 153.0,
+     "total_gross_weight": 163.79999999999998
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 18.0,
+      "extracted_values": [
+       18.0,
+       18.0,
+       18.0,
+       18.0,
+       18.0,
+       18.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 153.0,
+      "extracted_values": [
+       153.0,
+       153.0,
+       153.0,
+       153.0,
+       153.0,
+       153.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 163.79999999999998,
+      "extracted_values": [
+       163.79999999999998,
+       163.79999999999998,
+       163.79999999999998,
+       163.79999999999998,
+       163.79999999999998,
+       163.79999999999998
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509849896": {
+    "gt": {
+     "total_quantity": 6.0,
+     "total_net_weight": 32.4,
+     "total_gross_weight": 34.92
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 6.0,
+      "extracted_values": [
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 32.4,
+      "extracted_values": [
+       32.4,
+       32.4,
+       32.4,
+       32.4,
+       32.4,
+       32.4
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 34.92,
+      "extracted_values": [
+       34.92,
+       34.92,
+       34.92,
+       34.92,
+       34.92,
+       34.92
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596018607": {
+    "gt": {
+     "total_quantity": 829.0,
+     "total_net_weight": 3398.9,
+     "total_gross_weight": 4393.7
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 829.0,
+      "extracted_values": [
+       829.0,
+       829.0,
+       829.0,
+       829.0,
+       829.0,
+       829.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 3398.9,
+      "extracted_values": [
+       3398.9,
+       3398.9,
+       3398.9,
+       3398.9,
+       3398.9,
+       3398.9
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 4393.7,
+      "extracted_values": [
+       4393.7,
+       4393.7,
+       4393.7,
+       4393.7,
+       4393.7,
+       4393.7
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596018614": {
+    "gt": {
+     "total_quantity": 322.0,
+     "total_net_weight": 1738.8000000000002,
+     "total_gross_weight": 2318.3999999999996
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 322.0,
+      "extracted_values": [
+       322.0,
+       322.0,
+       322.0,
+       322.0,
+       322.0,
+       322.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1738.8000000000002,
+      "extracted_values": [
+       1738.8000000000002,
+       1738.8000000000002,
+       1738.8000000000002,
+       1738.8000000000002,
+       1738.8000000000002,
+       1738.8000000000002
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 2318.3999999999996,
+      "extracted_values": [
+       2318.3999999999996,
+       2318.3999999999996,
+       2318.3999999999996,
+       2318.3999999999996,
+       2318.3999999999996,
+       2318.3999999999996
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596018638": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 128.0,
+     "total_gross_weight": 156.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 40.0,
+      "extracted_values": [
+       40.0,
+       40.0,
+       40.0,
+       40.0,
+       40.0,
+       40.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 128.0,
+      "extracted_values": [
+       128.0,
+       128.0,
+       128.0,
+       128.0,
+       128.0,
+       128.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 156.0,
+      "extracted_values": [
+       156.0,
+       156.0,
+       156.0,
+       156.0,
+       156.0,
+       156.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596018652": {
+    "gt": {
+     "total_quantity": 153.0,
+     "total_net_weight": 1086.3,
+     "total_gross_weight": 1361.7
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 153.0,
+      "extracted_values": [
+       153.0,
+       153.0,
+       153.0,
+       153.0,
+       153.0,
+       153.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1086.3,
+      "extracted_values": [
+       1086.3,
+       1086.3,
+       1086.3,
+       1086.3,
+       1086.3,
+       1086.3
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 1361.7,
+      "extracted_values": [
+       1361.7,
+       1361.7,
+       1361.7,
+       1361.7,
+       1361.7,
+       1361.7
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596018669": {
+    "gt": {
+     "total_quantity": 150.0,
+     "total_net_weight": 1335.0,
+     "total_gross_weight": 1680.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 150.0,
+      "extracted_values": [
+       150.0,
+       150.0,
+       150.0,
+       150.0,
+       150.0,
+       150.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1335.0,
+      "extracted_values": [
+       1335.0,
+       1335.0,
+       1335.0,
+       1335.0,
+       1335.0,
+       1335.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 1680.0,
+      "extracted_values": [
+       1680.0,
+       1680.0,
+       1680.0,
+       1680.0,
+       1680.0,
+       1680.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596092843": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 77.99999999999999,
+     "total_gross_weight": 86.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 10.0,
+      "extracted_values": [
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 77.99999999999999,
+      "extracted_values": [
+       77.99999999999999,
+       77.99999999999999,
+       77.99999999999999,
+       77.99999999999999,
+       77.99999999999999,
+       77.99999999999999
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 86.0,
+      "extracted_values": [
+       86.0,
+       86.0,
+       86.0,
+       86.0,
+       86.0,
+       86.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596112121": {
+    "gt": {
+     "total_quantity": 300.0,
+     "total_net_weight": 1680.0,
+     "total_gross_weight": 2100.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 300.0,
+      "extracted_values": [
+       300.0,
+       300.0,
+       300.0,
+       300.0,
+       300.0,
+       300.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1680.0,
+      "extracted_values": [
+       1680.0,
+       1680.0,
+       1680.0,
+       1680.0,
+       1680.0,
+       1680.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 2100.0,
+      "extracted_values": [
+       2100.0,
+       2100.0,
+       2100.0,
+       2100.0,
+       2100.0,
+       2100.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596112138": {
+    "gt": {
+     "total_quantity": 294.0,
+     "total_net_weight": 1352.4,
+     "total_gross_weight": 1705.2
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 294.0,
+      "extracted_values": [
+       294.0,
+       294.0,
+       294.0,
+       294.0,
+       294.0,
+       294.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 1352.4,
+      "extracted_values": [
+       1352.4,
+       1352.4,
+       1352.4,
+       1352.4,
+       1352.4,
+       1352.4
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 1705.2,
+      "extracted_values": [
+       1705.2,
+       1705.2,
+       1705.2,
+       1705.2,
+       1705.2,
+       1705.2
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596139470": {
+    "gt": {
+     "total_quantity": 89.0,
+     "total_net_weight": 409.4,
+     "total_gross_weight": 480.6
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 89.0,
+      "extracted_values": [
+       89.0,
+       89.0,
+       89.0,
+       89.0,
+       89.0,
+       89.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 409.4,
+      "extracted_values": [
+       409.4,
+       409.4,
+       409.4,
+       409.4,
+       409.4,
+       409.4
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 480.6,
+      "extracted_values": [
+       480.6,
+       480.6,
+       480.6,
+       480.6,
+       480.6,
+       480.6
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596139487": {
+    "gt": {
+     "total_quantity": 143.0,
+     "total_net_weight": 972.4000000000001,
+     "total_gross_weight": 1029.6
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 143.0,
+      "extracted_values": [
+       143.0,
+       143.0,
+       143.0,
+       143.0,
+       143.0,
+       143.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 972.4000000000001,
+      "extracted_values": [
+       972.4000000000001,
+       972.4000000000001,
+       972.4000000000001,
+       972.4000000000001,
+       972.4000000000001,
+       972.4000000000001
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 1029.6,
+      "extracted_values": [
+       1029.6,
+       1029.6,
+       1029.6,
+       1029.6,
+       1029.6,
+       1029.6
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596139494": {
+    "gt": {
+     "total_quantity": 100.0,
+     "total_net_weight": 620.0,
+     "total_gross_weight": 720.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 100.0,
+      "extracted_values": [
+       100.0,
+       100.0,
+       100.0,
+       100.0,
+       100.0,
+       100.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 620.0,
+      "extracted_values": [
+       620.0,
+       620.0,
+       620.0,
+       620.0,
+       620.0,
+       620.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 720.0,
+      "extracted_values": [
+       720.0,
+       720.0,
+       720.0,
+       720.0,
+       720.0,
+       720.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596139500": {
+    "gt": {
+     "total_quantity": 118.0,
+     "total_net_weight": 483.8,
+     "total_gross_weight": 566.4
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 118.0,
+      "extracted_values": [
+       118.0,
+       118.0,
+       118.0,
+       118.0,
+       118.0,
+       118.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 483.8,
+      "extracted_values": [
+       483.8,
+       483.8,
+       483.8,
+       483.8,
+       483.8,
+       483.8
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 566.4,
+      "extracted_values": [
+       566.4,
+       566.4,
+       566.4,
+       566.4,
+       566.4,
+       566.4
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596145884": {
+    "gt": {
+     "total_quantity": 75.0,
+     "total_net_weight": 120.0,
+     "total_gross_weight": 157.5
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 75.0,
+      "extracted_values": [
+       75.0,
+       75.0,
+       75.0,
+       75.0,
+       75.0,
+       75.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 120.0,
+      "extracted_values": [
+       120.0,
+       120.0,
+       120.0,
+       120.0,
+       120.0,
+       120.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 157.5,
+      "extracted_values": [
+       157.5,
+       157.5,
+       157.5,
+       157.5,
+       157.5,
+       157.5
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596145891": {
+    "gt": {
+     "total_quantity": 65.0,
+     "total_net_weight": 162.5,
+     "total_gross_weight": 191.75
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 65.0,
+      "extracted_values": [
+       65.0,
+       65.0,
+       65.0,
+       65.0,
+       65.0,
+       65.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 162.5,
+      "extracted_values": [
+       162.5,
+       162.5,
+       162.5,
+       162.5,
+       162.5,
+       162.5
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 191.75,
+      "extracted_values": [
+       191.75,
+       191.75,
+       191.75,
+       191.75,
+       191.75,
+       191.75
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596145907": {
+    "gt": {
+     "total_quantity": 30.0,
+     "total_net_weight": 57.0,
+     "total_gross_weight": 73.5
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 30.0,
+      "extracted_values": [
+       30.0,
+       30.0,
+       30.0,
+       30.0,
+       30.0,
+       30.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 57.0,
+      "extracted_values": [
+       57.0,
+       57.0,
+       57.0,
+       57.0,
+       57.0,
+       57.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 73.5,
+      "extracted_values": [
+       73.5,
+       73.5,
+       73.5,
+       73.5,
+       73.5,
+       73.5
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596164328": {
+    "gt": {
+     "total_quantity": 65.0,
+     "total_net_weight": 101.39999999999999,
+     "total_gross_weight": 116.34999999999998
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 65.0,
+      "extracted_values": [
+       65.0,
+       65.0,
+       65.0,
+       65.0,
+       65.0,
+       65.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 101.39999999999999,
+      "extracted_values": [
+       101.39999999999999,
+       101.39999999999999,
+       101.39999999999999,
+       101.39999999999999,
+       101.39999999999999,
+       101.39999999999999
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 116.34999999999998,
+      "extracted_values": [
+       116.34999999999998,
+       116.34999999999998,
+       116.34999999999998,
+       116.34999999999998,
+       116.34999999999998,
+       116.34999999999998
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596164335": {
+    "gt": {
+     "total_quantity": 100.0,
+     "total_net_weight": 209.99999999999997,
+     "total_gross_weight": 230.00000000000003
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 100.0,
+      "extracted_values": [
+       100.0,
+       100.0,
+       100.0,
+       100.0,
+       100.0,
+       100.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 209.99999999999997,
+      "extracted_values": [
+       209.99999999999997,
+       209.99999999999997,
+       209.99999999999997,
+       209.99999999999997,
+       209.99999999999997,
+       209.99999999999997
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 230.00000000000003,
+      "extracted_values": [
+       230.00000000000003,
+       230.00000000000003,
+       230.00000000000003,
+       230.00000000000003,
+       230.00000000000003,
+       230.00000000000003
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596164342": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 126.4,
+     "total_gross_weight": 145.59999999999997
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 40.0,
+      "extracted_values": [
+       40.0,
+       40.0,
+       40.0,
+       40.0,
+       40.0,
+       40.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 126.4,
+      "extracted_values": [
+       126.4,
+       126.4,
+       126.4,
+       126.4,
+       126.4,
+       126.4
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 145.59999999999997,
+      "extracted_values": [
+       145.59999999999997,
+       145.59999999999997,
+       145.59999999999997,
+       145.59999999999997,
+       145.59999999999997,
+       145.59999999999997
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596184838": {
+    "gt": {
+     "total_quantity": 17.0,
+     "total_net_weight": 102.0,
+     "total_gross_weight": 110.5
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 17.0,
+      "extracted_values": [
+       17.0,
+       17.0,
+       17.0,
+       17.0,
+       17.0,
+       17.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 102.0,
+      "extracted_values": [
+       102.0,
+       102.0,
+       102.0,
+       102.0,
+       102.0,
+       102.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 110.5,
+      "extracted_values": [
+       110.5,
+       110.5,
+       110.5,
+       110.5,
+       110.5,
+       110.5
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596202044": {
+    "gt": {
+     "total_quantity": 25.0,
+     "total_net_weight": 110.0,
+     "total_gross_weight": 120.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 25.0,
+      "extracted_values": [
+       25.0,
+       25.0,
+       25.0,
+       25.0,
+       25.0,
+       25.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 110.0,
+      "extracted_values": [
+       110.0,
+       110.0,
+       110.0,
+       110.0,
+       110.0,
+       110.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 120.0,
+      "extracted_values": [
+       120.0,
+       120.0,
+       120.0,
+       120.0,
+       120.0,
+       120.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596227849": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 274.0,
+     "total_gross_weight": 305.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 50.0,
+      "extracted_values": [
+       50.0,
+       50.0,
+       50.0,
+       50.0,
+       50.0,
+       50.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 274.0,
+      "extracted_values": [
+       274.0,
+       274.0,
+       274.0,
+       274.0,
+       274.0,
+       274.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 305.0,
+      "extracted_values": [
+       305.0,
+       305.0,
+       305.0,
+       305.0,
+       305.0,
+       305.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596227856": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 375.0,
+     "total_gross_weight": 425.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 50.0,
+      "extracted_values": [
+       50.0,
+       50.0,
+       50.0,
+       50.0,
+       50.0,
+       50.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 375.0,
+      "extracted_values": [
+       375.0,
+       375.0,
+       375.0,
+       375.0,
+       375.0,
+       375.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 425.0,
+      "extracted_values": [
+       425.0,
+       425.0,
+       425.0,
+       425.0,
+       425.0,
+       425.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596227863": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 255.00000000000003,
+     "total_gross_weight": 305.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 50.0,
+      "extracted_values": [
+       50.0,
+       50.0,
+       50.0,
+       50.0,
+       50.0,
+       50.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 255.00000000000003,
+      "extracted_values": [
+       255.00000000000003,
+       255.00000000000003,
+       255.00000000000003,
+       255.00000000000003,
+       255.00000000000003,
+       255.00000000000003
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 305.0,
+      "extracted_values": [
+       305.0,
+       305.0,
+       305.0,
+       305.0,
+       305.0,
+       305.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596227870": {
+    "gt": {
+     "total_quantity": 75.0,
+     "total_net_weight": 697.5,
+     "total_gross_weight": 780.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 75.0,
+      "extracted_values": [
+       75.0,
+       75.0,
+       75.0,
+       75.0,
+       75.0,
+       75.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 697.5,
+      "extracted_values": [
+       697.5,
+       697.5,
+       697.5,
+       697.5,
+       697.5,
+       697.5
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 780.0,
+      "extracted_values": [
+       780.0,
+       780.0,
+       780.0,
+       780.0,
+       780.0,
+       780.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596227887": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 310.0,
+     "total_gross_weight": 365.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 50.0,
+      "extracted_values": [
+       50.0,
+       50.0,
+       50.0,
+       50.0,
+       50.0,
+       50.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 310.0,
+      "extracted_values": [
+       310.0,
+       310.0,
+       310.0,
+       310.0,
+       310.0,
+       310.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 365.0,
+      "extracted_values": [
+       365.0,
+       365.0,
+       365.0,
+       365.0,
+       365.0,
+       365.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   }
+  },
+  "elapsed_sec": 0.0,
+  "mock": true
+ },
+ {
+  "factory": "益尚",
+  "sku_total": 10,
+  "sku_covered": 10,
+  "sku_coverage": 1.0,
+  "sku_all_fields_correct": 10,
+  "field_accuracy": {
+   "total_quantity": 1.0,
+   "total_net_weight": 1.0,
+   "total_gross_weight": 1.0
+  },
+  "extracted_item_count": 70,
+  "needs_human_review_rate": 0.0,
+  "json_parse_success_rate": 1.0,
+  "unsupported_files": [],
+  "file_errors": {},
+  "token_usage": {
+   "calls": 0,
+   "failed_calls": 0,
+   "prompt_tokens": 0,
+   "completion_tokens": 0,
+   "total_tokens": 0
+  },
+  "per_sku": {
+   "4549509379904": {
+    "gt": {
+     "total_quantity": 100.0,
+     "total_net_weight": 395.0,
+     "total_gross_weight": 476.99999999999994
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 100.0,
+      "extracted_values": [
+       100.0,
+       100.0,
+       100.0,
+       100.0,
+       100.0,
+       100.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 395.0,
+      "extracted_values": [
+       395.0,
+       395.0,
+       395.0,
+       395.0,
+       395.0,
+       395.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 476.99999999999994,
+      "extracted_values": [
+       476.99999999999994,
+       476.99999999999994,
+       476.99999999999994,
+       476.99999999999994,
+       476.99999999999994,
+       476.99999999999994
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509379911": {
+    "gt": {
+     "total_quantity": 60.0,
+     "total_net_weight": 186.0,
+     "total_gross_weight": 210.6
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 60.0,
+      "extracted_values": [
+       60.0,
+       60.0,
+       60.0,
+       60.0,
+       60.0,
+       60.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 186.0,
+      "extracted_values": [
+       186.0,
+       186.0,
+       186.0,
+       186.0,
+       186.0,
+       186.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 210.6,
+      "extracted_values": [
+       210.6,
+       210.6,
+       210.6,
+       210.6,
+       210.6,
+       210.6
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509379928": {
+    "gt": {
+     "total_quantity": 48.0,
+     "total_net_weight": 130.56,
+     "total_gross_weight": 156.48000000000002
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 48.0,
+      "extracted_values": [
+       48.0,
+       48.0,
+       48.0,
+       48.0,
+       48.0,
+       48.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 130.56,
+      "extracted_values": [
+       130.56,
+       130.56,
+       130.56,
+       130.56,
+       130.56,
+       130.56
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 156.48000000000002,
+      "extracted_values": [
+       156.48000000000002,
+       156.48000000000002,
+       156.48000000000002,
+       156.48000000000002,
+       156.48000000000002,
+       156.48000000000002
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509379935": {
+    "gt": {
+     "total_quantity": 82.0,
+     "total_net_weight": 213.2,
+     "total_gross_weight": 228.78
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 82.0,
+      "extracted_values": [
+       82.0,
+       82.0,
+       82.0,
+       82.0,
+       82.0,
+       82.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 213.2,
+      "extracted_values": [
+       213.2,
+       213.2,
+       213.2,
+       213.2,
+       213.2,
+       213.2
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 228.78,
+      "extracted_values": [
+       228.78,
+       228.78,
+       228.78,
+       228.78,
+       228.78,
+       228.78
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509379942": {
+    "gt": {
+     "total_quantity": 60.0,
+     "total_net_weight": 237.0,
+     "total_gross_weight": 286.2
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 60.0,
+      "extracted_values": [
+       60.0,
+       60.0,
+       60.0,
+       60.0,
+       60.0,
+       60.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 237.0,
+      "extracted_values": [
+       237.0,
+       237.0,
+       237.0,
+       237.0,
+       237.0,
+       237.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 286.2,
+      "extracted_values": [
+       286.2,
+       286.2,
+       286.2,
+       286.2,
+       286.2,
+       286.2
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509379959": {
+    "gt": {
+     "total_quantity": 35.0,
+     "total_net_weight": 108.5,
+     "total_gross_weight": 122.85
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 35.0,
+      "extracted_values": [
+       35.0,
+       35.0,
+       35.0,
+       35.0,
+       35.0,
+       35.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 108.5,
+      "extracted_values": [
+       108.5,
+       108.5,
+       108.5,
+       108.5,
+       108.5,
+       108.5
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 122.85,
+      "extracted_values": [
+       122.85,
+       122.85,
+       122.85,
+       122.85,
+       122.85,
+       122.85
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509379966": {
+    "gt": {
+     "total_quantity": 36.0,
+     "total_net_weight": 97.92,
+     "total_gross_weight": 117.35999999999999
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 36.0,
+      "extracted_values": [
+       36.0,
+       36.0,
+       36.0,
+       36.0,
+       36.0,
+       36.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 97.92,
+      "extracted_values": [
+       97.92,
+       97.92,
+       97.92,
+       97.92,
+       97.92,
+       97.92
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 117.35999999999999,
+      "extracted_values": [
+       117.35999999999999,
+       117.35999999999999,
+       117.35999999999999,
+       117.35999999999999,
+       117.35999999999999,
+       117.35999999999999
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509379973": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 26.0,
+     "total_gross_weight": 27.9
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 10.0,
+      "extracted_values": [
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 26.0,
+      "extracted_values": [
+       26.0,
+       26.0,
+       26.0,
+       26.0,
+       26.0,
+       26.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 27.9,
+      "extracted_values": [
+       27.9,
+       27.9,
+       27.9,
+       27.9,
+       27.9,
+       27.9
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509900474": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 23.0,
+     "total_gross_weight": 28.0
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 10.0,
+      "extracted_values": [
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 23.0,
+      "extracted_values": [
+       23.0,
+       23.0,
+       23.0,
+       23.0,
+       23.0,
+       23.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 28.0,
+      "extracted_values": [
+       28.0,
+       28.0,
+       28.0,
+       28.0,
+       28.0,
+       28.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596183039": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 107.0,
+     "total_gross_weight": 125.99999999999999
+    },
+    "matched_items": 7,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 10.0,
+      "extracted_values": [
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 107.0,
+      "extracted_values": [
+       107.0,
+       107.0,
+       107.0,
+       107.0,
+       107.0,
+       107.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 125.99999999999999,
+      "extracted_values": [
+       125.99999999999999,
+       125.99999999999999,
+       125.99999999999999,
+       125.99999999999999,
+       125.99999999999999,
+       125.99999999999999
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   }
+  },
+  "elapsed_sec": 0.0,
+  "mock": true
+ },
+ {
+  "factory": "贝来",
+  "sku_total": 10,
+  "sku_covered": 10,
+  "sku_coverage": 1.0,
+  "sku_all_fields_correct": 10,
+  "field_accuracy": {
+   "total_quantity": 1.0,
+   "total_net_weight": 1.0,
+   "total_gross_weight": 1.0
+  },
+  "extracted_item_count": 100,
+  "needs_human_review_rate": 0.0,
+  "json_parse_success_rate": 1.0,
+  "unsupported_files": [],
+  "file_errors": {},
+  "token_usage": {
+   "calls": 0,
+   "failed_calls": 0,
+   "prompt_tokens": 0,
+   "completion_tokens": 0,
+   "total_tokens": 0
+  },
+  "per_sku": {
+   "4549509299950": {
+    "gt": {
+     "total_quantity": 35.0,
+     "total_net_weight": 224.00000000000003,
+     "total_gross_weight": 280.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 35.0,
+      "extracted_values": [
+       35.0,
+       35.0,
+       35.0,
+       35.0,
+       35.0,
+       35.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 224.00000000000003,
+      "extracted_values": [
+       224.00000000000003,
+       224.00000000000003,
+       224.00000000000003,
+       224.00000000000003,
+       224.00000000000003,
+       224.00000000000003
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 280.0,
+      "extracted_values": [
+       280.0,
+       280.0,
+       280.0,
+       280.0,
+       280.0,
+       280.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509340188": {
+    "gt": {
+     "total_quantity": 3.0,
+     "total_net_weight": 9.600000000000001,
+     "total_gross_weight": 11.100000000000001
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 3.0,
+      "extracted_values": [
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 9.600000000000001,
+      "extracted_values": [
+       9.600000000000001,
+       9.600000000000001,
+       9.600000000000001,
+       9.600000000000001,
+       9.600000000000001,
+       9.600000000000001
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 11.100000000000001,
+      "extracted_values": [
+       11.100000000000001,
+       11.100000000000001,
+       11.100000000000001,
+       11.100000000000001,
+       11.100000000000001,
+       11.100000000000001
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509340195": {
+    "gt": {
+     "total_quantity": 7.0,
+     "total_net_weight": 30.8,
+     "total_gross_weight": 32.9
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 7.0,
+      "extracted_values": [
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 30.8,
+      "extracted_values": [
+       30.8,
+       30.8,
+       30.8,
+       30.8,
+       30.8,
+       30.8
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 32.9,
+      "extracted_values": [
+       32.9,
+       32.9,
+       32.9,
+       32.9,
+       32.9,
+       32.9
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509340201": {
+    "gt": {
+     "total_quantity": 21.0,
+     "total_net_weight": 134.4,
+     "total_gross_weight": 157.5
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 21.0,
+      "extracted_values": [
+       21.0,
+       21.0,
+       21.0,
+       21.0,
+       21.0,
+       21.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 134.4,
+      "extracted_values": [
+       134.4,
+       134.4,
+       134.4,
+       134.4,
+       134.4,
+       134.4
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 157.5,
+      "extracted_values": [
+       157.5,
+       157.5,
+       157.5,
+       157.5,
+       157.5,
+       157.5
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509341550": {
+    "gt": {
+     "total_quantity": 20.0,
+     "total_net_weight": 60.0,
+     "total_gross_weight": 68.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 20.0,
+      "extracted_values": [
+       20.0,
+       20.0,
+       20.0,
+       20.0,
+       20.0,
+       20.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 60.0,
+      "extracted_values": [
+       60.0,
+       60.0,
+       60.0,
+       60.0,
+       60.0,
+       60.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 68.0,
+      "extracted_values": [
+       68.0,
+       68.0,
+       68.0,
+       68.0,
+       68.0,
+       68.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509341567": {
+    "gt": {
+     "total_quantity": 38.0,
+     "total_net_weight": 205.20000000000002,
+     "total_gross_weight": 228.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 38.0,
+      "extracted_values": [
+       38.0,
+       38.0,
+       38.0,
+       38.0,
+       38.0,
+       38.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 205.20000000000002,
+      "extracted_values": [
+       205.20000000000002,
+       205.20000000000002,
+       205.20000000000002,
+       205.20000000000002,
+       205.20000000000002,
+       205.20000000000002
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 228.0,
+      "extracted_values": [
+       228.0,
+       228.0,
+       228.0,
+       228.0,
+       228.0,
+       228.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509444770": {
+    "gt": {
+     "total_quantity": 25.0,
+     "total_net_weight": 236.0,
+     "total_gross_weight": 332.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 25.0,
+      "extracted_values": [
+       25.0,
+       25.0,
+       25.0,
+       25.0,
+       25.0,
+       25.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 236.0,
+      "extracted_values": [
+       236.0,
+       236.0,
+       236.0,
+       236.0,
+       236.0,
+       236.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 332.0,
+      "extracted_values": [
+       332.0,
+       332.0,
+       332.0,
+       332.0,
+       332.0,
+       332.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509637264": {
+    "gt": {
+     "total_quantity": 20.0,
+     "total_net_weight": 160.0,
+     "total_gross_weight": 172.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 20.0,
+      "extracted_values": [
+       20.0,
+       20.0,
+       20.0,
+       20.0,
+       20.0,
+       20.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 160.0,
+      "extracted_values": [
+       160.0,
+       160.0,
+       160.0,
+       160.0,
+       160.0,
+       160.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 172.0,
+      "extracted_values": [
+       172.0,
+       172.0,
+       172.0,
+       172.0,
+       172.0,
+       172.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509637288": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 624.0,
+     "total_gross_weight": 740.0
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 40.0,
+      "extracted_values": [
+       40.0,
+       40.0,
+       40.0,
+       40.0,
+       40.0,
+       40.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 624.0,
+      "extracted_values": [
+       624.0,
+       624.0,
+       624.0,
+       624.0,
+       624.0,
+       624.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 740.0,
+      "extracted_values": [
+       740.0,
+       740.0,
+       740.0,
+       740.0,
+       740.0,
+       740.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509845539": {
+    "gt": {
+     "total_quantity": 67.0,
+     "total_net_weight": 522.5999999999999,
+     "total_gross_weight": 576.2
+    },
+    "matched_items": 10,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 67.0,
+      "extracted_values": [
+       67.0,
+       67.0,
+       67.0,
+       67.0,
+       67.0,
+       67.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 522.5999999999999,
+      "extracted_values": [
+       522.5999999999999,
+       522.5999999999999,
+       522.5999999999999,
+       522.5999999999999,
+       522.5999999999999,
+       522.5999999999999
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 576.2,
+      "extracted_values": [
+       576.2,
+       576.2,
+       576.2,
+       576.2,
+       576.2,
+       576.2
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   }
+  },
+  "elapsed_sec": 0.0,
+  "mock": true
+ },
+ {
+  "factory": "达安",
+  "sku_total": 1,
+  "sku_covered": 1,
+  "sku_coverage": 1.0,
+  "sku_all_fields_correct": 1,
+  "field_accuracy": {
+   "total_quantity": 1.0,
+   "total_net_weight": 1.0,
+   "total_gross_weight": 1.0
+  },
+  "extracted_item_count": 3,
+  "needs_human_review_rate": 0.0,
+  "json_parse_success_rate": 1.0,
+  "unsupported_files": [],
+  "file_errors": {},
+  "token_usage": {
+   "calls": 0,
+   "failed_calls": 0,
+   "prompt_tokens": 0,
+   "completion_tokens": 0,
+   "total_tokens": 0
+  },
+  "per_sku": {
+   "4936695359672": {
+    "gt": {
+     "total_quantity": 75.0,
+     "total_net_weight": 738.0000000000001,
+     "total_gross_weight": 790.5
+    },
+    "matched_items": 3,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 75.0,
+      "extracted_values": [
+       75.0,
+       75.0,
+       75.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 738.0000000000001,
+      "extracted_values": [
+       738.0000000000001,
+       738.0000000000001,
+       738.0000000000001
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 790.5,
+      "extracted_values": [
+       790.5,
+       790.5,
+       790.5
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   }
+  },
+  "elapsed_sec": 0.0,
+  "mock": true
+ }
+]

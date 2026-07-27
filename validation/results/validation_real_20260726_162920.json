@@ -1,0 +1,788 @@
+[
+ {
+  "factory": "益尚",
+  "sku_total": 10,
+  "sku_covered": 10,
+  "sku_coverage": 1.0,
+  "sku_all_fields_correct": 10,
+  "field_accuracy": {
+   "total_quantity": 1.0,
+   "total_net_weight": 1.0,
+   "total_gross_weight": 1.0
+  },
+  "extracted_item_count": 29,
+  "needs_human_review_rate": 0.0,
+  "json_parse_success_rate": 1.0,
+  "unsupported_files": [],
+  "file_errors": {},
+  "token_usage": {
+   "calls": 7,
+   "failed_calls": 0,
+   "prompt_tokens": 26242,
+   "completion_tokens": 18203,
+   "total_tokens": 44445
+  },
+  "raw_items": [
+   {
+    "sku_name": "・・レンジで使えるバスケット オーバルM B R",
+    "sku_code": "4549509900474",
+    "total_quantity": 10.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/000142_MX2-265537-002_20260604102443439.pdf"
+   },
+   {
+    "sku_name": "◆インナーボックス（ナチュラル）",
+    "sku_code": "4549509379904",
+    "total_quantity": 100.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/000142_XD-269758-001_20260708110501903(1).pdf"
+   },
+   {
+    "sku_name": "◆インナーボックス（ナチュラル）浅型",
+    "sku_code": "4549509379911",
+    "total_quantity": 60.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/000142_XD-269758-001_20260708110501903(1).pdf"
+   },
+   {
+    "sku_name": "◆インナーボックス（ナチュラル）ハーフ",
+    "sku_code": "4549509379928",
+    "total_quantity": 48.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/000142_XD-269758-001_20260708110501903(1).pdf"
+   },
+   {
+    "sku_name": "◆インナーボックス（ナチュラル）S",
+    "sku_code": "4549509379935",
+    "total_quantity": 82.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/000142_XD-269758-001_20260708110501903(1).pdf"
+   },
+   {
+    "sku_name": "◆インナーボックス（ブラウン）",
+    "sku_code": "4549509379942",
+    "total_quantity": 60.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/000142_XD-269758-001_20260708110501903(1).pdf"
+   },
+   {
+    "sku_name": "◆インナーボックス（ブラウン）浅型",
+    "sku_code": "4549509379959",
+    "total_quantity": 35.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/000142_XD-269758-001_20260708110501903(1).pdf"
+   },
+   {
+    "sku_name": "◆インナーボックス（ブラウン）ハーフ",
+    "sku_code": "4549509379966",
+    "total_quantity": 36.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/000142_XD-269758-001_20260708110501903(1).pdf"
+   },
+   {
+    "sku_name": "◆インナーボックス（ブラウン）S",
+    "sku_code": "4549509379973",
+    "total_quantity": 10.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/000142_XD-269758-001_20260708110501903(1).pdf"
+   },
+   {
+    "sku_name": "◆たためるランドリーボックス 1段タイプ",
+    "sku_code": "4550596183039",
+    "total_quantity": 10.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/000142_XD-269758-001_20260708110501903(1).pdf"
+   },
+   {
+    "sku_name": "PAPER BASKET 1. 品名：工艺篮 申报要素：材质:纸制，非植物材料制 3境外贴牌cainz牌，铁架支撑 不享惠 HS: 46029000 境内货源地：山东滨州",
+    "sku_code": null,
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/发票XD-269758-001&MX2-265537-002.pdf"
+   },
+   {
+    "sku_name": "LAUNDRY BASKET 2. 品名：收纳用篮筐，材质：100%涤纶，铁架支撑； HS CODE:6307909000 收纳用，3境外贴牌cainz牌；不享惠 货号：4550596183039 境内货源地：浙江省金华市",
+    "sku_code": "4550596183039",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/发票XD-269758-001&MX2-265537-002.pdf"
+   },
+   {
+    "sku_name": "PP BASKET 3. 品名：篮子；材质:PP 非植物材料制，收纳用，3境外贴牌cainz牌 不享惠 HS:46029000 境内货源地：山东省临沂市",
+    "sku_code": null,
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/发票XD-269758-001&MX2-265537-002.pdf"
+   },
+   {
+    "sku_name": "PP BASKET",
+    "sku_code": "4549509900474",
+    "total_quantity": 10.0,
+    "total_net_weight": 23.0,
+    "total_gross_weight": 28.0,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/清关资料MX2-265537-002.pdf"
+   },
+   {
+    "sku_name": "PAPER BASKET",
+    "sku_code": "4549509379904",
+    "total_quantity": 100.0,
+    "total_net_weight": 395.0,
+    "total_gross_weight": 477.0,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/清关资料XD-269758-001.pdf"
+   },
+   {
+    "sku_name": "PAPER BASKET",
+    "sku_code": "4549509379911",
+    "total_quantity": 60.0,
+    "total_net_weight": 186.0,
+    "total_gross_weight": 210.6,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/清关资料XD-269758-001.pdf"
+   },
+   {
+    "sku_name": "PAPER BASKET",
+    "sku_code": "4549509379928",
+    "total_quantity": 48.0,
+    "total_net_weight": 130.56,
+    "total_gross_weight": 156.48,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/清关资料XD-269758-001.pdf"
+   },
+   {
+    "sku_name": "PAPER BASKET",
+    "sku_code": "4549509379935",
+    "total_quantity": 82.0,
+    "total_net_weight": 213.2,
+    "total_gross_weight": 228.78,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/清关资料XD-269758-001.pdf"
+   },
+   {
+    "sku_name": "PAPER BASKET",
+    "sku_code": "4549509379942",
+    "total_quantity": 60.0,
+    "total_net_weight": 237.0,
+    "total_gross_weight": 286.2,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/清关资料XD-269758-001.pdf"
+   },
+   {
+    "sku_name": "PAPER BASKET",
+    "sku_code": "4549509379959",
+    "total_quantity": 35.0,
+    "total_net_weight": 108.5,
+    "total_gross_weight": 122.85,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/清关资料XD-269758-001.pdf"
+   },
+   {
+    "sku_name": "PAPER BASKET",
+    "sku_code": "4549509379966",
+    "total_quantity": 36.0,
+    "total_net_weight": 97.92,
+    "total_gross_weight": 117.36,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/清关资料XD-269758-001.pdf"
+   },
+   {
+    "sku_name": "PAPER BASKET",
+    "sku_code": "4549509379973",
+    "total_quantity": 10.0,
+    "total_net_weight": 26.0,
+    "total_gross_weight": 27.9,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/清关资料XD-269758-001.pdf"
+   },
+   {
+    "sku_name": "LAUNDRY BASKET",
+    "sku_code": "4550596183039",
+    "total_quantity": 10.0,
+    "total_net_weight": 107.0,
+    "total_gross_weight": 126.0,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/清关资料XD-269758-001.pdf"
+   },
+   {
+    "sku_name": "工艺篮",
+    "sku_code": null,
+    "total_quantity": null,
+    "total_net_weight": 1394.18,
+    "total_gross_weight": 1627.17,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/益尚入库导入模板.xls"
+   },
+   {
+    "sku_name": "收纳用篮筐",
+    "sku_code": null,
+    "total_quantity": null,
+    "total_net_weight": 107.0,
+    "total_gross_weight": 126.0,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/益尚入库导入模板.xls"
+   },
+   {
+    "sku_name": "篮子",
+    "sku_code": null,
+    "total_quantity": null,
+    "total_net_weight": 23.0,
+    "total_gross_weight": 28.0,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/益尚入库导入模板.xls"
+   },
+   {
+    "sku_name": "PAPER BASKET",
+    "sku_code": null,
+    "total_quantity": 431.0,
+    "total_net_weight": 1394.18,
+    "total_gross_weight": 1627.17,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/箱单XD-269758-001&MX2-265537-002.pdf"
+   },
+   {
+    "sku_name": "LAUNDRY BASKET",
+    "sku_code": null,
+    "total_quantity": 10.0,
+    "total_net_weight": 107.0,
+    "total_gross_weight": 126.0,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/箱单XD-269758-001&MX2-265537-002.pdf"
+   },
+   {
+    "sku_name": "PP BASKET",
+    "sku_code": null,
+    "total_quantity": 10.0,
+    "total_net_weight": 23.0,
+    "total_gross_weight": 28.0,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/益尚/箱单XD-269758-001&MX2-265537-002.pdf"
+   }
+  ],
+  "per_sku": {
+   "4549509379904": {
+    "gt": {
+     "total_quantity": 100.0,
+     "total_net_weight": 395.0,
+     "total_gross_weight": 476.99999999999994
+    },
+    "matched_items": 11,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 100.0,
+      "extracted_values": [
+       100.0,
+       100.0,
+       60.0,
+       48.0,
+       82.0,
+       60.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 395.0,
+      "extracted_values": [
+       395.0,
+       1394.18
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 476.99999999999994,
+      "extracted_values": [
+       477.0,
+       1627.17
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509379911": {
+    "gt": {
+     "total_quantity": 60.0,
+     "total_net_weight": 186.0,
+     "total_gross_weight": 210.6
+    },
+    "matched_items": 11,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 60.0,
+      "extracted_values": [
+       60.0,
+       60.0,
+       100.0,
+       48.0,
+       82.0,
+       60.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 186.0,
+      "extracted_values": [
+       186.0,
+       1394.18
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 210.6,
+      "extracted_values": [
+       210.6,
+       1627.17
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509379928": {
+    "gt": {
+     "total_quantity": 48.0,
+     "total_net_weight": 130.56,
+     "total_gross_weight": 156.48000000000002
+    },
+    "matched_items": 11,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 48.0,
+      "extracted_values": [
+       48.0,
+       48.0,
+       100.0,
+       60.0,
+       82.0,
+       60.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 130.56,
+      "extracted_values": [
+       130.56,
+       1394.18
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 156.48000000000002,
+      "extracted_values": [
+       156.48,
+       1627.17
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509379935": {
+    "gt": {
+     "total_quantity": 82.0,
+     "total_net_weight": 213.2,
+     "total_gross_weight": 228.78
+    },
+    "matched_items": 11,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 82.0,
+      "extracted_values": [
+       82.0,
+       82.0,
+       100.0,
+       60.0,
+       48.0,
+       60.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 213.2,
+      "extracted_values": [
+       213.2,
+       1394.18
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 228.78,
+      "extracted_values": [
+       228.78,
+       1627.17
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509379942": {
+    "gt": {
+     "total_quantity": 60.0,
+     "total_net_weight": 237.0,
+     "total_gross_weight": 286.2
+    },
+    "matched_items": 11,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 60.0,
+      "extracted_values": [
+       60.0,
+       60.0,
+       100.0,
+       60.0,
+       48.0,
+       82.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 237.0,
+      "extracted_values": [
+       237.0,
+       1394.18
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 286.2,
+      "extracted_values": [
+       286.2,
+       1627.17
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509379959": {
+    "gt": {
+     "total_quantity": 35.0,
+     "total_net_weight": 108.5,
+     "total_gross_weight": 122.85
+    },
+    "matched_items": 11,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 35.0,
+      "extracted_values": [
+       35.0,
+       35.0,
+       100.0,
+       60.0,
+       48.0,
+       82.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 108.5,
+      "extracted_values": [
+       108.5,
+       1394.18
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 122.85,
+      "extracted_values": [
+       122.85,
+       1627.17
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509379966": {
+    "gt": {
+     "total_quantity": 36.0,
+     "total_net_weight": 97.92,
+     "total_gross_weight": 117.35999999999999
+    },
+    "matched_items": 11,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 36.0,
+      "extracted_values": [
+       36.0,
+       36.0,
+       100.0,
+       60.0,
+       48.0,
+       82.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 97.92,
+      "extracted_values": [
+       97.92,
+       1394.18
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 117.35999999999999,
+      "extracted_values": [
+       117.36,
+       1627.17
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509379973": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 26.0,
+     "total_gross_weight": 27.9
+    },
+    "matched_items": 11,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 10.0,
+      "extracted_values": [
+       10.0,
+       10.0,
+       100.0,
+       60.0,
+       48.0,
+       82.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 26.0,
+      "extracted_values": [
+       26.0,
+       1394.18
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 27.9,
+      "extracted_values": [
+       27.9,
+       1627.17
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509900474": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 23.0,
+     "total_gross_weight": 28.0
+    },
+    "matched_items": 14,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 10.0,
+      "extracted_values": [
+       10.0,
+       10.0,
+       100.0,
+       60.0,
+       48.0,
+       82.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 23.0,
+      "extracted_values": [
+       23.0,
+       395.0,
+       186.0,
+       130.56,
+       213.2,
+       237.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 28.0,
+      "extracted_values": [
+       28.0,
+       477.0,
+       210.6,
+       156.48,
+       228.78,
+       286.2
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4550596183039": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 107.0,
+     "total_gross_weight": 125.99999999999999
+    },
+    "matched_items": 5,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 10.0,
+      "extracted_values": [
+       10.0,
+       10.0,
+       10.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 107.0,
+      "extracted_values": [
+       107.0,
+       107.0,
+       107.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 125.99999999999999,
+      "extracted_values": [
+       126.0,
+       126.0,
+       126.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   }
+  },
+  "elapsed_sec": 344.8,
+  "mock": false
+ }
+]

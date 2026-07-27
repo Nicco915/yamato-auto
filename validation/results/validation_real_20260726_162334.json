@@ -1,0 +1,408 @@
+[
+ {
+  "factory": "华旭阳",
+  "sku_total": 6,
+  "sku_covered": 6,
+  "sku_coverage": 1.0,
+  "sku_all_fields_correct": 6,
+  "field_accuracy": {
+   "total_quantity": 1.0,
+   "total_net_weight": 1.0,
+   "total_gross_weight": 1.0
+  },
+  "extracted_item_count": 14,
+  "needs_human_review_rate": 0.0,
+  "json_parse_success_rate": 1.0,
+  "unsupported_files": [],
+  "file_errors": {},
+  "token_usage": {
+   "calls": 3,
+   "failed_calls": 0,
+   "prompt_tokens": 12504,
+   "completion_tokens": 7421,
+   "total_tokens": 19925
+  },
+  "raw_items": [
+   {
+    "sku_name": "◆カットしやすい菜園マルチ黒0.02×95×50m",
+    "sku_code": "4549509492948",
+    "total_quantity": 20.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/华旭阳/0f09966bf06c7fd018b4ba56de8181c5.jpg"
+   },
+   {
+    "sku_name": "◆菜園穴あきマルチ黒9230 50m",
+    "sku_code": "4549509492955",
+    "total_quantity": 100.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/华旭阳/0f09966bf06c7fd018b4ba56de8181c5.jpg"
+   },
+   {
+    "sku_name": "◆穴あけ簡単菜園マルチ黒 0.02×95×50m",
+    "sku_code": "4549509492979",
+    "total_quantity": 20.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/华旭阳/0f09966bf06c7fd018b4ba56de8181c5.jpg"
+   },
+   {
+    "sku_name": "◆菜園マルチ 黒 0.02×135×50m",
+    "sku_code": "4549509559597",
+    "total_quantity": 40.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/华旭阳/0f09966bf06c7fd018b4ba56de8181c5.jpg"
+   },
+   {
+    "sku_name": "◆菜園マルチ 透明 0.02×95×50m",
+    "sku_code": "4549509559603",
+    "total_quantity": 70.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/华旭阳/0f09966bf06c7fd018b4ba56de8181c5.jpg"
+   },
+   {
+    "sku_name": "◆菜園マルチ 透明 0.02×135×50m",
+    "sku_code": "4549509559610",
+    "total_quantity": 100.0,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/华旭阳/0f09966bf06c7fd018b4ba56de8181c5.jpg"
+   },
+   {
+    "sku_name": "PLASTIC FILM            95cm×50m×0.002CM 等",
+    "sku_code": null,
+    "total_quantity": 180.0,
+    "total_net_weight": 1041.6,
+    "total_gross_weight": 1366.0,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/华旭阳/JYZ  XD269764-001 报关用单据.xls"
+   },
+   {
+    "sku_name": "PLASTIC FILM            95cm×50m×0.002CM 等",
+    "sku_code": null,
+    "total_quantity": 170.0,
+    "total_net_weight": 1125.6,
+    "total_gross_weight": 1483.0,
+    "weight_unit": "KGS",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/华旭阳/JYZ  XD269764-001 报关用单据.xls"
+   },
+   {
+    "sku_name": "BLACK  PLASTIC  FILM  PRINT LINE 0.02mm*95cm*50m",
+    "sku_code": "4549509492948",
+    "total_quantity": 20.0,
+    "total_net_weight": 105.60000000000001,
+    "total_gross_weight": 138.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/华旭阳/XD269764-001 pl&ci.xls"
+   },
+   {
+    "sku_name": "BLACK  PLASTIC  FILM  WITH HOLE9230 0.02mm*95cm*50m",
+    "sku_code": "4549509492955",
+    "total_quantity": 100.0,
+    "total_net_weight": 528.0,
+    "total_gross_weight": 690.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/华旭阳/XD269764-001 pl&ci.xls"
+   },
+   {
+    "sku_name": "BLACK  PLASTIC  FILM  WITH HOLE9330 0.02mm*95cm*50m",
+    "sku_code": "4549509492979",
+    "total_quantity": 20.0,
+    "total_net_weight": 105.60000000000001,
+    "total_gross_weight": 138.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/华旭阳/XD269764-001 pl&ci.xls"
+   },
+   {
+    "sku_name": "BLACK   PLASTIC  FILM   0.02mm*135cm*50m",
+    "sku_code": "4549509559597",
+    "total_quantity": 40.0,
+    "total_net_weight": 302.40000000000003,
+    "total_gross_weight": 400.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/华旭阳/XD269764-001 pl&ci.xls"
+   },
+   {
+    "sku_name": "TRANSPARENT  PLASTIC  FILM 0.02mm*95cm*50m",
+    "sku_code": "4549509559603",
+    "total_quantity": 70.0,
+    "total_net_weight": 369.6,
+    "total_gross_weight": 483.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/华旭阳/XD269764-001 pl&ci.xls"
+   },
+   {
+    "sku_name": "TRANSPARENT  PLASTIC  FILM   0.02mm*135cm*50m",
+    "sku_code": "4549509559610",
+    "total_quantity": 100.0,
+    "total_net_weight": 756.0,
+    "total_gross_weight": 1000.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/华旭阳/XD269764-001 pl&ci.xls"
+   }
+  ],
+  "per_sku": {
+   "4549509492948": {
+    "gt": {
+     "total_quantity": 20.0,
+     "total_net_weight": 105.6,
+     "total_gross_weight": 138.0
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 20.0,
+      "extracted_values": [
+       20.0,
+       20.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 105.6,
+      "extracted_values": [
+       105.60000000000001
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 138.0,
+      "extracted_values": [
+       138.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509492955": {
+    "gt": {
+     "total_quantity": 100.0,
+     "total_net_weight": 528.0,
+     "total_gross_weight": 690.0
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 100.0,
+      "extracted_values": [
+       100.0,
+       100.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 528.0,
+      "extracted_values": [
+       528.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 690.0,
+      "extracted_values": [
+       690.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509492979": {
+    "gt": {
+     "total_quantity": 20.0,
+     "total_net_weight": 105.6,
+     "total_gross_weight": 138.00000000000003
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 20.0,
+      "extracted_values": [
+       20.0,
+       20.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 105.6,
+      "extracted_values": [
+       105.60000000000001
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 138.00000000000003,
+      "extracted_values": [
+       138.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509559597": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 302.4,
+     "total_gross_weight": 400.0
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 40.0,
+      "extracted_values": [
+       40.0,
+       40.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 302.4,
+      "extracted_values": [
+       302.40000000000003
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 400.0,
+      "extracted_values": [
+       400.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509559603": {
+    "gt": {
+     "total_quantity": 70.0,
+     "total_net_weight": 369.6,
+     "total_gross_weight": 483.0
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 70.0,
+      "extracted_values": [
+       70.0,
+       70.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 369.6,
+      "extracted_values": [
+       369.6
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 483.0,
+      "extracted_values": [
+       483.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509559610": {
+    "gt": {
+     "total_quantity": 100.0,
+     "total_net_weight": 756.0,
+     "total_gross_weight": 1000.0
+    },
+    "matched_items": 2,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 100.0,
+      "extracted_values": [
+       100.0,
+       100.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 756.0,
+      "extracted_values": [
+       756.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 1000.0,
+      "extracted_values": [
+       1000.0
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   }
+  },
+  "elapsed_sec": 138.9,
+  "mock": false
+ }
+]

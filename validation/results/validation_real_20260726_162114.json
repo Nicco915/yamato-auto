@@ -1,0 +1,1480 @@
+[
+ {
+  "factory": "兆丰",
+  "sku_total": 12,
+  "sku_covered": 12,
+  "sku_coverage": 1.0,
+  "sku_all_fields_correct": 12,
+  "field_accuracy": {
+   "total_quantity": 1.0,
+   "total_net_weight": 1.0,
+   "total_gross_weight": 1.0
+  },
+  "extracted_item_count": 76,
+  "needs_human_review_rate": 0.0263,
+  "json_parse_success_rate": 1.0,
+  "unsupported_files": [],
+  "file_errors": {},
+  "token_usage": {
+   "calls": 10,
+   "failed_calls": 0,
+   "prompt_tokens": 36835,
+   "completion_tokens": 25419,
+   "total_tokens": 62254
+  },
+  "raw_items": [
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン）",
+    "sku_code": "4549509623861",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Invoice XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） 浅型",
+    "sku_code": "4549509623878",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Invoice XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） ハーフ",
+    "sku_code": "4549509623885",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Invoice XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） Ｓ",
+    "sku_code": "4549509623892",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Invoice XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ）",
+    "sku_code": "4549509623908",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Invoice XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） 浅型",
+    "sku_code": "4549509623915",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Invoice XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） ハーフ",
+    "sku_code": "4549509623922",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Invoice XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） Ｓ",
+    "sku_code": "4549509623939",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Invoice XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス用フタ ＰＰ（ブラウン）",
+    "sku_code": "4549509729358",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Invoice XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス用フタ ＰＰ（ベージュ）",
+    "sku_code": "4549509729365",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Invoice XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "持ち運べるスリムインナーボックスPP BR",
+    "sku_code": "4549509769378",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Invoice XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "持ち運べるスリムインナーボックスPP BE",
+    "sku_code": "4549509769385",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Invoice XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン）",
+    "sku_code": "4549509623861",
+    "total_quantity": 0.0,
+    "total_net_weight": 0.0,
+    "total_gross_weight": 0.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Packing XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） 浅型",
+    "sku_code": "4549509623878",
+    "total_quantity": 0.0,
+    "total_net_weight": 0.0,
+    "total_gross_weight": 0.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Packing XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） ハーフ",
+    "sku_code": "4549509623885",
+    "total_quantity": 186.0,
+    "total_net_weight": 526.938,
+    "total_gross_weight": 665.88,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Packing XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） Ｓ",
+    "sku_code": "4549509623892",
+    "total_quantity": 157.0,
+    "total_net_weight": 435.518,
+    "total_gross_weight": 525.95,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Packing XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ）",
+    "sku_code": "4549509623908",
+    "total_quantity": 200.0,
+    "total_net_weight": 770.6,
+    "total_gross_weight": 964.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Packing XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） 浅型",
+    "sku_code": "4549509623915",
+    "total_quantity": 0.0,
+    "total_net_weight": 0.0,
+    "total_gross_weight": 0.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Packing XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） ハーフ",
+    "sku_code": "4549509623922",
+    "total_quantity": 50.0,
+    "total_net_weight": 141.65,
+    "total_gross_weight": 179.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Packing XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） Ｓ",
+    "sku_code": "4549509623939",
+    "total_quantity": 133.0,
+    "total_net_weight": 370.272,
+    "total_gross_weight": 446.88,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Packing XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス用フタ ＰＰ（ブラウン）",
+    "sku_code": "4549509729358",
+    "total_quantity": 72.0,
+    "total_net_weight": 158.4,
+    "total_gross_weight": 216.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Packing XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス用フタ ＰＰ（ベージュ）",
+    "sku_code": "4549509729365",
+    "total_quantity": 0.0,
+    "total_net_weight": 0.0,
+    "total_gross_weight": 0.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Packing XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "持ち運べるスリムインナーボックスPP BR",
+    "sku_code": "4549509769378",
+    "total_quantity": 202.0,
+    "total_net_weight": 525.2,
+    "total_gross_weight": 929.2,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Packing XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "持ち運べるスリムインナーボックスPP BE",
+    "sku_code": "4549509769385",
+    "total_quantity": 0.0,
+    "total_net_weight": 0.0,
+    "total_gross_weight": 0.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月15日 报关资料/Packing XD-269765-001-7.15.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン）",
+    "sku_code": "4549509623861",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Invoice XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） 浅型",
+    "sku_code": "4549509623878",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Invoice XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） ハーフ",
+    "sku_code": "4549509623885",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Invoice XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） Ｓ",
+    "sku_code": "4549509623892",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Invoice XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ）",
+    "sku_code": "4549509623908",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Invoice XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） 浅型",
+    "sku_code": "4549509623915",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Invoice XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） ハーフ",
+    "sku_code": "4549509623922",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Invoice XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） Ｓ",
+    "sku_code": "4549509623939",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Invoice XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス用フタ ＰＰ（ブラウン）",
+    "sku_code": "4549509729358",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Invoice XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス用フタ ＰＰ（ベージュ）",
+    "sku_code": "4549509729365",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Invoice XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "持ち運べるスリムインナーボックスPP BR",
+    "sku_code": "4549509769378",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Invoice XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "持ち運べるスリムインナーボックスPP BE",
+    "sku_code": "4549509769385",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Invoice XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン）",
+    "sku_code": "4549509623861",
+    "total_quantity": 200.0,
+    "total_net_weight": 778.6,
+    "total_gross_weight": 972.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Packing XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） 浅型",
+    "sku_code": "4549509623878",
+    "total_quantity": 80.0,
+    "total_net_weight": 243.84,
+    "total_gross_weight": 304.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Packing XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） ハーフ",
+    "sku_code": "4549509623885",
+    "total_quantity": 0.0,
+    "total_net_weight": 0.0,
+    "total_gross_weight": 0.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Packing XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） Ｓ",
+    "sku_code": "4549509623892",
+    "total_quantity": 0.0,
+    "total_net_weight": 0.0,
+    "total_gross_weight": 0.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Packing XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ）",
+    "sku_code": "4549509623908",
+    "total_quantity": 0.0,
+    "total_net_weight": 0.0,
+    "total_gross_weight": 0.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Packing XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） 浅型",
+    "sku_code": "4549509623915",
+    "total_quantity": 80.0,
+    "total_net_weight": 243.84,
+    "total_gross_weight": 304.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Packing XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） ハーフ",
+    "sku_code": "4549509623922",
+    "total_quantity": 0.0,
+    "total_net_weight": 0.0,
+    "total_gross_weight": 0.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Packing XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） Ｓ",
+    "sku_code": "4549509623939",
+    "total_quantity": 0.0,
+    "total_net_weight": 0.0,
+    "total_gross_weight": 0.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Packing XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス用フタ ＰＰ（ブラウン）",
+    "sku_code": "4549509729358",
+    "total_quantity": 0.0,
+    "total_net_weight": 0.0,
+    "total_gross_weight": 0.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Packing XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス用フタ ＰＰ（ベージュ）",
+    "sku_code": "4549509729365",
+    "total_quantity": 51.0,
+    "total_net_weight": 112.2,
+    "total_gross_weight": 153.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Packing XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "持ち運べるスリムインナーボックスPP BR",
+    "sku_code": "4549509769378",
+    "total_quantity": 0.0,
+    "total_net_weight": 0.0,
+    "total_gross_weight": 0.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Packing XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "持ち運べるスリムインナーボックスPP BE",
+    "sku_code": "4549509769385",
+    "total_quantity": 79.0,
+    "total_net_weight": 205.4,
+    "total_gross_weight": 363.4,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/7月17日 报关资料/Packing XD-269765-001-7.17.xlsx"
+   },
+   {
+    "sku_name": "收纳筐",
+    "sku_code": null,
+    "total_quantity": null,
+    "total_net_weight": 1583.88,
+    "total_gross_weight": 2096.4,
+    "weight_unit": null,
+    "needs_human_review": true,
+    "review_reason": "单据中'数量'列值为3144，无法确定是包装件数（箱数）还是内装个数（PCS），且无明确列名标识为箱数/件数；重量单位未标明。",
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/兆丰入库导入模板 - 副本.xls"
+   },
+   {
+    "sku_name": "收纳筐",
+    "sku_code": null,
+    "total_quantity": null,
+    "total_net_weight": 2928.58,
+    "total_gross_weight": 3926.91,
+    "weight_unit": null,
+    "needs_human_review": true,
+    "review_reason": "单据中'数量'列值为6868，无法确定是包装件数（箱数）还是内装个数（PCS），按规则4填null；重量单位未标明，填null；部分列（如订单号、发票号、箱号等）值均为'中国'，疑似模板填写错误，需人工确认行列对应关系及数据准确性。",
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/兆丰入库导入模板.xls"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン）",
+    "sku_code": "4549509623861",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Invoice XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） 浅型",
+    "sku_code": "4549509623878",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Invoice XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） ハーフ",
+    "sku_code": "4549509623885",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Invoice XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） Ｓ",
+    "sku_code": "4549509623892",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Invoice XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ）",
+    "sku_code": "4549509623908",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Invoice XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） 浅型",
+    "sku_code": "4549509623915",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Invoice XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） ハーフ",
+    "sku_code": "4549509623922",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Invoice XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） Ｓ",
+    "sku_code": "4549509623939",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Invoice XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス用フタ ＰＰ（ブラウン）",
+    "sku_code": "4549509729358",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Invoice XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス用フタ ＰＰ（ベージュ）",
+    "sku_code": "4549509729365",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Invoice XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "持ち運べるスリムインナーボックスPP BR",
+    "sku_code": "4549509769378",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Invoice XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "持ち運べるスリムインナーボックスPP BE",
+    "sku_code": "4549509769385",
+    "total_quantity": null,
+    "total_net_weight": null,
+    "total_gross_weight": null,
+    "weight_unit": null,
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Invoice XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン）",
+    "sku_code": "4549509623861",
+    "total_quantity": 200.0,
+    "total_net_weight": 778.6,
+    "total_gross_weight": 972.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Packing XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） 浅型",
+    "sku_code": "4549509623878",
+    "total_quantity": 80.0,
+    "total_net_weight": 243.84,
+    "total_gross_weight": 304.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Packing XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） ハーフ",
+    "sku_code": "4549509623885",
+    "total_quantity": 186.0,
+    "total_net_weight": 526.938,
+    "total_gross_weight": 665.88,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Packing XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ブラウン） Ｓ",
+    "sku_code": "4549509623892",
+    "total_quantity": 157.0,
+    "total_net_weight": 435.518,
+    "total_gross_weight": 525.95,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Packing XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ）",
+    "sku_code": "4549509623908",
+    "total_quantity": 200.0,
+    "total_net_weight": 770.6,
+    "total_gross_weight": 964.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Packing XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） 浅型",
+    "sku_code": "4549509623915",
+    "total_quantity": 80.0,
+    "total_net_weight": 243.84,
+    "total_gross_weight": 304.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Packing XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） ハーフ",
+    "sku_code": "4549509623922",
+    "total_quantity": 50.0,
+    "total_net_weight": 141.65,
+    "total_gross_weight": 179.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Packing XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス ＰＰ（ベージュ） Ｓ",
+    "sku_code": "4549509623939",
+    "total_quantity": 133.0,
+    "total_net_weight": 370.272,
+    "total_gross_weight": 446.88,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Packing XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス用フタ ＰＰ（ブラウン）",
+    "sku_code": "4549509729358",
+    "total_quantity": 72.0,
+    "total_net_weight": 158.4,
+    "total_gross_weight": 216.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Packing XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "インナーボックス用フタ ＰＰ（ベージュ）",
+    "sku_code": "4549509729365",
+    "total_quantity": 51.0,
+    "total_net_weight": 112.2,
+    "total_gross_weight": 153.0,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Packing XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "持ち運べるスリムインナーボックスPP BR",
+    "sku_code": "4549509769378",
+    "total_quantity": 202.0,
+    "total_net_weight": 525.2,
+    "total_gross_weight": 929.2,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Packing XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "持ち運べるスリムインナーボックスPP BE",
+    "sku_code": "4549509769385",
+    "total_quantity": 79.0,
+    "total_net_weight": 205.4,
+    "total_gross_weight": 363.4,
+    "weight_unit": "KG",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Packing XD-269765-001-7.13.xlsx"
+   },
+   {
+    "sku_name": "收纳筐",
+    "sku_code": null,
+    "total_quantity": 1000.0,
+    "total_net_weight": 2928.58,
+    "total_gross_weight": 3926.91,
+    "weight_unit": "kg",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/雅玛多入仓通知(邦达芯903) 7.15.xls"
+   },
+   {
+    "sku_name": "收纳筐",
+    "sku_code": null,
+    "total_quantity": 490.0,
+    "total_net_weight": 1583.88,
+    "total_gross_weight": 2096.4,
+    "weight_unit": "kg",
+    "needs_human_review": false,
+    "review_reason": null,
+    "source_file": "/Users/nz/Downloads/yamato/96/工厂/兆丰/雅玛多入仓通知(邦达芯903) 7.17.xls"
+   }
+  ],
+  "per_sku": {
+   "4549509623861": {
+    "gt": {
+     "total_quantity": 200.0,
+     "total_net_weight": 778.6,
+     "total_gross_weight": 972.0
+    },
+    "matched_items": 64,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 200.0,
+      "extracted_values": [
+       0.0,
+       200.0,
+       200.0,
+       0.0,
+       186.0,
+       157.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 778.6,
+      "extracted_values": [
+       0.0,
+       778.6,
+       778.6,
+       0.0,
+       526.938,
+       435.518
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 972.0,
+      "extracted_values": [
+       0.0,
+       972.0,
+       972.0,
+       0.0,
+       665.88,
+       525.95
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509623878": {
+    "gt": {
+     "total_quantity": 80.0,
+     "total_net_weight": 243.84000000000003,
+     "total_gross_weight": 304.00000000000006
+    },
+    "matched_items": 64,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 80.0,
+      "extracted_values": [
+       0.0,
+       80.0,
+       80.0,
+       0.0,
+       186.0,
+       157.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 243.84000000000003,
+      "extracted_values": [
+       0.0,
+       243.84,
+       243.84,
+       0.0,
+       526.938,
+       435.518
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 304.00000000000006,
+      "extracted_values": [
+       0.0,
+       304.0,
+       304.0,
+       0.0,
+       665.88,
+       525.95
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509623885": {
+    "gt": {
+     "total_quantity": 186.0,
+     "total_net_weight": 526.9400000000006,
+     "total_gross_weight": 665.8800000000001
+    },
+    "matched_items": 64,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 186.0,
+      "extracted_values": [
+       186.0,
+       0.0,
+       186.0,
+       0.0,
+       0.0,
+       157.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 526.9400000000006,
+      "extracted_values": [
+       526.938,
+       0.0,
+       526.938,
+       0.0,
+       0.0,
+       435.518
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 665.8800000000001,
+      "extracted_values": [
+       665.88,
+       0.0,
+       665.88,
+       0.0,
+       0.0,
+       525.95
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509623892": {
+    "gt": {
+     "total_quantity": 157.0,
+     "total_net_weight": 435.5199999999996,
+     "total_gross_weight": 525.9499999999999
+    },
+    "matched_items": 64,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 157.0,
+      "extracted_values": [
+       157.0,
+       0.0,
+       157.0,
+       0.0,
+       0.0,
+       186.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 435.5199999999996,
+      "extracted_values": [
+       435.518,
+       0.0,
+       435.518,
+       0.0,
+       0.0,
+       526.938
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 525.9499999999999,
+      "extracted_values": [
+       525.95,
+       0.0,
+       525.95,
+       0.0,
+       0.0,
+       665.88
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509623908": {
+    "gt": {
+     "total_quantity": 200.0,
+     "total_net_weight": 770.6,
+     "total_gross_weight": 964.0
+    },
+    "matched_items": 64,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 200.0,
+      "extracted_values": [
+       200.0,
+       0.0,
+       200.0,
+       0.0,
+       0.0,
+       186.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 770.6,
+      "extracted_values": [
+       770.6,
+       0.0,
+       770.6,
+       0.0,
+       0.0,
+       526.938
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 964.0,
+      "extracted_values": [
+       964.0,
+       0.0,
+       964.0,
+       0.0,
+       0.0,
+       665.88
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509623915": {
+    "gt": {
+     "total_quantity": 80.0,
+     "total_net_weight": 243.84000000000003,
+     "total_gross_weight": 304.0
+    },
+    "matched_items": 64,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 80.0,
+      "extracted_values": [
+       0.0,
+       80.0,
+       80.0,
+       0.0,
+       0.0,
+       186.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 243.84000000000003,
+      "extracted_values": [
+       0.0,
+       243.84,
+       243.84,
+       0.0,
+       0.0,
+       526.938
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 304.0,
+      "extracted_values": [
+       0.0,
+       304.0,
+       304.0,
+       0.0,
+       0.0,
+       665.88
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509623922": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 141.65,
+     "total_gross_weight": 179.0
+    },
+    "matched_items": 64,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 50.0,
+      "extracted_values": [
+       50.0,
+       0.0,
+       50.0,
+       0.0,
+       0.0,
+       186.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 141.65,
+      "extracted_values": [
+       141.65,
+       0.0,
+       141.65,
+       0.0,
+       0.0,
+       526.938
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 179.0,
+      "extracted_values": [
+       179.0,
+       0.0,
+       179.0,
+       0.0,
+       0.0,
+       665.88
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509623939": {
+    "gt": {
+     "total_quantity": 133.0,
+     "total_net_weight": 370.2700000000005,
+     "total_gross_weight": 446.88000000000005
+    },
+    "matched_items": 64,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 133.0,
+      "extracted_values": [
+       133.0,
+       0.0,
+       133.0,
+       0.0,
+       0.0,
+       186.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 370.2700000000005,
+      "extracted_values": [
+       370.272,
+       0.0,
+       370.272,
+       0.0,
+       0.0,
+       526.938
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 446.88000000000005,
+      "extracted_values": [
+       446.88,
+       0.0,
+       446.88,
+       0.0,
+       0.0,
+       665.88
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509729358": {
+    "gt": {
+     "total_quantity": 72.0,
+     "total_net_weight": 158.4,
+     "total_gross_weight": 216.0
+    },
+    "matched_items": 64,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 72.0,
+      "extracted_values": [
+       72.0,
+       0.0,
+       72.0,
+       0.0,
+       0.0,
+       186.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 158.4,
+      "extracted_values": [
+       158.4,
+       0.0,
+       158.4,
+       0.0,
+       0.0,
+       526.938
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 216.0,
+      "extracted_values": [
+       216.0,
+       0.0,
+       216.0,
+       0.0,
+       0.0,
+       665.88
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509729365": {
+    "gt": {
+     "total_quantity": 51.0,
+     "total_net_weight": 112.19999999999999,
+     "total_gross_weight": 153.0
+    },
+    "matched_items": 64,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 51.0,
+      "extracted_values": [
+       0.0,
+       51.0,
+       51.0,
+       0.0,
+       0.0,
+       186.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 112.19999999999999,
+      "extracted_values": [
+       0.0,
+       112.2,
+       112.2,
+       0.0,
+       0.0,
+       526.938
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 153.0,
+      "extracted_values": [
+       0.0,
+       153.0,
+       153.0,
+       0.0,
+       0.0,
+       665.88
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509769378": {
+    "gt": {
+     "total_quantity": 202.0,
+     "total_net_weight": 525.1999999999999,
+     "total_gross_weight": 929.1999999999999
+    },
+    "matched_items": 16,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 202.0,
+      "extracted_values": [
+       202.0,
+       0.0,
+       202.0,
+       0.0,
+       79.0,
+       79.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 525.1999999999999,
+      "extracted_values": [
+       525.2,
+       0.0,
+       525.2,
+       0.0,
+       205.4,
+       1583.88
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 929.1999999999999,
+      "extracted_values": [
+       929.2,
+       0.0,
+       929.2,
+       0.0,
+       363.4,
+       2096.4
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   },
+   "4549509769385": {
+    "gt": {
+     "total_quantity": 79.0,
+     "total_net_weight": 205.4,
+     "total_gross_weight": 363.3999999999999
+    },
+    "matched_items": 16,
+    "match_by": "sku_code",
+    "fields": {
+     "total_quantity": {
+      "gt": 79.0,
+      "extracted_values": [
+       0.0,
+       79.0,
+       79.0,
+       202.0,
+       0.0,
+       202.0
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_net_weight": {
+      "gt": 205.4,
+      "extracted_values": [
+       0.0,
+       205.4,
+       205.4,
+       525.2,
+       0.0,
+       1583.88
+      ],
+      "correct": true,
+      "via": "single"
+     },
+     "total_gross_weight": {
+      "gt": 363.3999999999999,
+      "extracted_values": [
+       0.0,
+       363.4,
+       363.4,
+       929.2,
+       0.0,
+       2096.4
+      ],
+      "correct": true,
+      "via": "single"
+     }
+    },
+    "all_correct": true
+   }
+  },
+  "elapsed_sec": 469.7,
+  "mock": false
+ }
+]

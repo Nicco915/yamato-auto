@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>人工双屏审核</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+         background: #f5f6f8; height: 100vh; display: flex; flex-direction: column; }
+  /* ---------- 顶栏 ---------- */
+  #topbar { display: flex; align-items: center; gap: 16px; padding: 10px 16px;
+            background: #1f2937; color: #fff; }
+  #topbar .title { font-weight: 700; font-size: 15px; }
+  #topbar .meta { font-size: 13px; color: #cbd5e1; }
+  #topbar .spacer { flex: 1; }
+  #badge { padding: 3px 10px; border-radius: 10px; font-size: 12px; background: #b45309; }
+  #badge.done { background: #15803d; }
+  #btn-submit { padding: 8px 22px; border: 0; border-radius: 6px; font-size: 14px;
+                font-weight: 600; color: #fff; background: #2563eb; cursor: pointer; }
+  #btn-submit:disabled { background: #64748b; cursor: not-allowed; }
+  /* ---------- 双屏 ---------- */
+  #main { flex: 1; display: flex; min-height: 0; }
+  #left { width: 48%; border-right: 1px solid #d1d5db; display: flex; flex-direction: column;
+          background: #fff; }
+  #right { flex: 1; overflow-y: auto; padding: 12px; }
+  /* 左屏查看器 */
+  #doc-toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+                 border-bottom: 1px solid #e5e7eb; font-size: 13px; flex-wrap: wrap; }
+  #doc-toolbar select { max-width: 320px; }
+  #doc-view { flex: 1; overflow: auto; display: flex; align-items: flex-start;
+              justify-content: center; padding: 8px; background: #e8eaed; }
+  #doc-view img { max-width: 100%; box-shadow: 0 1px 6px rgba(0,0,0,.3); background:#fff; }
+  #doc-view iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+  .pager { display: flex; align-items: center; gap: 6px; }
+  .pager button { padding: 2px 10px; cursor: pointer; }
+  /* 右屏卡片 */
+  #missing-bar { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5;
+                 border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; }
+  .card { background: #fff; border: 1px solid #d1d5db; border-left: 5px solid #9ca3af;
+          border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; cursor: pointer; }
+  .card.selected { outline: 2px solid #2563eb; }
+  .card.st-Error { border-left-color: #dc2626; }
+  .card.st-Warning { border-left-color: #d97706; }
+  .card.st-Normal { border-left-color: #16a34a; }
+  .card.new-sku { border-left-color: #ea580c; background: #fff7ed; }
+  .card.edited { background: #eff6ff; }
+  .card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .sku { font-weight: 700; font-size: 14px; }
+  .status { font-size: 12px; padding: 1px 8px; border-radius: 8px; background: #e5e7eb; }
+  .status.st-Error { background: #fecaca; color: #991b1b; }
+  .status.st-Warning { background: #fde68a; color: #92400e; }
+  .status.st-Normal { background: #bbf7d0; color: #166534; }
+  .tag { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: #ffedd5;
+         color: #9a3412; }
+  .tag.modified { background: #dbeafe; color: #1d4ed8; }
+  .src { margin-left: auto; font-size: 11px; color: #6b7280; max-width: 40%;
+         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 12px; font-size: 13px; }
+  .grid label { display: flex; flex-direction: column; color: #4b5563; font-size: 12px; }
+  .grid input { margin-top: 2px; padding: 4px 6px; border: 1px solid #cbd5e1;
+                border-radius: 4px; font-size: 13px; width: 100%; }
+  .grid input:focus { outline: 2px solid #93c5fd; border-color: #2563eb; }
+  .calc { margin-top: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+          color: #374151; background: #f3f4f6; border-radius: 4px; padding: 4px 8px; }
+  .calc .res { font-weight: 700; color: #111827; }
+  .dbinfo { margin-top: 4px; font-size: 11px; color: #6b7280; }
+  .required-note { color: #dc2626; font-size: 11px; }
+  #done-view { display: none; margin: 60px auto; text-align: center; }
+  #done-view h2 { color: #15803d; }
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+           background: #111827; color: #fff; padding: 10px 20px; border-radius: 8px;
+           font-size: 13px; display: none; z-index: 99; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <span class="title">人工双屏审核</span>
+  <span class="meta" id="tb-thread">thread: -</span>
+  <span class="meta" id="tb-factory">工厂: -</span>
+  <span class="spacer"></span>
+  <span id="badge">挂起待审</span>
+  <button id="btn-submit" onclick="submitReview()">提交并继续</button>
+</div>
+
+<div id="main">
+  <!-- 左屏：原始单据查看器 -->
+  <div id="left">
+    <div id="doc-toolbar">
+      <span>单据:</span>
+      <select id="doc-select" onchange="onDocSelect(this.value)"></select>
+      <span class="pager" id="pager" style="display:none">
+        <button onclick="gotoPage(curPage-1)">◀</button>
+        <span id="page-info">1 / 1</span>
+        <button onclick="gotoPage(curPage+1)">▶</button>
+      </span>
+    </div>
+    <div id="doc-view"><span style="color:#9ca3af;margin-top:40px">加载中…</span></div>
+  </div>
+
+  <!-- 右屏：审核工作区 -->
+  <div id="right">
+    <div id="missing-bar" style="display:none"></div>
+    <div id="cards"></div>
+  </div>
+</div>
+
+<div id="done-view">
+  <h2>✔ 全部工厂处理完成</h2>
+  <p id="done-path"></p>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+/* ================= 全局状态 ================= */
+const threadId = new URLSearchParams(location.search).get("thread_id") || "demo";
+let payload = null;        // 当前审核 payload
+let items = [];            // 可编辑的 items（与 payload.items 同构）
+let selectedIdx = 0;
+let curDoc = null;         // 当前左屏文件路径
+let curPage = 1, pageCount = 1;
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
+  (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function toast(msg, ms = 2600) {
+  const t = $("toast"); t.textContent = msg; t.style.display = "block";
+  setTimeout(() => t.style.display = "none", ms);
+}
+
+/* ================= 数据加载 ================= */
+async function loadPayload() {
+  const r = await fetch(`/api/v1/review/${encodeURIComponent(threadId)}/payload`);
+  if (!r.ok) { toast("获取审核数据失败：" + r.status); return; }
+  payload = await r.json();
+  // 深拷贝 items 作为编辑副本
+  items = JSON.parse(JSON.stringify(payload.items || []));
+  $("tb-thread").textContent = "thread: " + threadId;
+  $("tb-factory").textContent = "工厂: " + (payload.factory_name || "-");
+  $("badge").textContent = "挂起待审"; $("badge").className = "";
+  $("done-view").style.display = "none";
+  renderMissingBar();
+  renderCards();
+  renderDocSelect();
+  // 默认选中第一条需要人工关注的（Error/Warning/新SKU优先），否则第一条
+  const pri = items.findIndex(i => i.status !== "Normal" || i.is_new_sku);
+  selectCard(pri >= 0 ? pri : 0);
+}
+
+function renderMissingBar() {
+  const m = payload.missing_skus || [];
+  const bar = $("missing-bar");
+  if (m.length) {
+    bar.style.display = "block";
+    bar.textContent = "⚠ 下游要求但未提取到的 SKU：" + m.join("、") + "（请人工在左屏原始单据中确认）";
+  } else { bar.style.display = "none"; }
+}
+
+/* ================= 右屏卡片 ================= */
+function sourceFileOf(item) {
+  return (item.extracted_data && item.extracted_data.source_file) || "";
+}
+function baseName(p) { return p ? p.split("/").pop() : ""; }
+
+function renderCards() {
+  const box = $("cards");
+  box.innerHTML = "";
+  items.forEach((item, idx) => {
+    const ed = item.extracted_data || {};
+    const calc = item.calculation || {};
+    const card = document.createElement("div");
+    card.className = `card st-${item.status || "Normal"}` +
+      (item.is_new_sku ? " new-sku" : "") + (idx === selectedIdx ? " selected" : "") +
+      (item._modified ? " edited" : "");
+    card.id = "card-" + idx;
+    card.onclick = (e) => { if (e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") selectCard(idx); };
+
+    const newSkuFields = item.is_new_sku ? `
+      <div class="grid" style="margin-top:6px">
+        <label>中文品名 <span class="required-note">*必填</span>
+          <input data-idx="${idx}" data-field="name_cn" value="${esc(item.name_cn || "")}" oninput="onMetaEdit(this)"></label>
+        <label>HS 编码 <span class="required-note">*必填</span>
+          <input data-idx="${idx}" data-field="hs_code" value="${esc(item.hs_code || "")}" oninput="onMetaEdit(this)"></label>
+        <label>商检状态 <span class="required-note">*必填</span>
+          <input data-idx="${idx}" data-field="inspection_required" value="${esc(item.inspection_required ?? "")}" oninput="onMetaEdit(this)"></label>
+      </div>` : "";
+
+    card.innerHTML = `
+      <div class="card-head">
+        <span class="sku">${esc(item.sku)}</span>
+        <span class="status st-${item.status}">${esc(item.status || "")}</span>
+        ${item.is_new_sku ? '<span class="tag">新SKU</span>' : ""}
+        ${item._modified ? '<span class="tag modified">已修改</span>' : ""}
+        <span class="src" title="${esc(sourceFileOf(item))}">${esc(baseName(sourceFileOf(item)))}</span>
+      </div>
+      <div class="grid">
+        <label>总件数
+          <input type="number" data-idx="${idx}" data-field="total_quantity" value="${ed.total_quantity ?? ""}" oninput="onNumEdit(this)"></label>
+        <label>总净重 (${esc(ed.weight_unit || "KG")})
+          <input type="number" step="any" data-idx="${idx}" data-field="total_net_weight" value="${ed.total_net_weight ?? ""}" oninput="onNumEdit(this)"></label>
+        <label>总毛重 (${esc(ed.weight_unit || "KG")})
+          <input type="number" step="any" data-idx="${idx}" data-field="total_gross_weight" value="${ed.total_gross_weight ?? ""}" oninput="onNumEdit(this)"></label>
+      </div>
+      <div class="calc" id="calc-${idx}"></div>
+      ${(item.db_record && item.db_record.unit_net_weight != null) ?
+        `<div class="dbinfo">历史库单件净重: ${esc(item.db_record.unit_net_weight)} ${item.db_record.name_cn ? "｜" + esc(item.db_record.name_cn) : ""}</div>` : ""}
+      ${newSkuFields}`;
+    box.appendChild(card);
+    renderCalc(idx);
+  });
+  refreshSubmitState();
+}
+
+/* 前端即时重算：与 Node4 相同的除法，公式字符串同步刷新 */
+function renderCalc(idx) {
+  const ed = items[idx].extracted_data || {};
+  const q = parseFloat(ed.total_quantity), net = parseFloat(ed.total_net_weight),
+        gross = parseFloat(ed.total_gross_weight);
+  const el = $("calc-" + idx);
+  const fmt = (v) => (v == null || isNaN(v)) ? "—" : (Math.round(v * 10000) / 10000);
+  let netLine = "净: —", grossLine = "毛: —";
+  if (!isNaN(net) && !isNaN(q) && q > 0) netLine = `净: ${net} / ${q} = <span class="res">${fmt(net / q)}</span>`;
+  if (!isNaN(gross) && !isNaN(q) && q > 0) grossLine = `毛: ${gross} / ${q} = <span class="res">${fmt(gross / q)}</span>`;
+  el.innerHTML = netLine + "　　" + grossLine;
+}
+
+function onNumEdit(input) {
+  const idx = +input.dataset.idx, field = input.dataset.field;
+  const v = input.value === "" ? null : parseFloat(input.value);
+  items[idx].extracted_data[field] = v;
+  items[idx]._modified = true;
+  // 同步重算 calculation（提交时与 Node5 覆写逻辑对齐）
+  const ed = items[idx].extracted_data;
+  const q = parseFloat(ed.total_quantity);
+  if (q > 0) {
+    const net = parseFloat(ed.total_net_weight), gross = parseFloat(ed.total_gross_weight);
+    items[idx].calculation = {
+      net_formula: isNaN(net) ? "" : `${net} / ${q}`,
+      gross_formula: isNaN(gross) ? "" : `${gross} / ${q}`,
+      calculated_unit_net: isNaN(net) ? null : net / q,
+      calculated_unit_gross: isNaN(gross) ? null : gross / q,
+    };
+  }
+  renderCalc(idx);
+  markCardModified(idx);
+  refreshSubmitState();
+}
+
+function onMetaEdit(input) {
+  const idx = +input.dataset.idx;
+  items[idx][input.dataset.field] = input.value;
+  items[idx]._modified = true;
+  markCardModified(idx);
+  refreshSubmitState();
+}
+
+function markCardModified(idx) {
+  const card = $("card-" + idx);
+  card.classList.add("edited");
+  if (!card.querySelector(".tag.modified")) {
+    const tag = document.createElement("span");
+    tag.className = "tag modified"; tag.textContent = "已修改";
+    card.querySelector(".card-head").insertBefore(tag, card.querySelector(".src"));
+  }
+}
+
+/* 新 SKU 必填校验：未填齐禁提交 */
+function refreshSubmitState() {
+  let ok = true;
+  for (const it of items) {
+    if (it.is_new_sku) {
+      if (!it.name_cn || !it.hs_code || (it.inspection_required === undefined || it.inspection_required === "")) ok = false;
+    }
+    const ed = it.extracted_data || {};
+    if (ed.total_quantity == null || isNaN(parseFloat(ed.total_quantity))) { /* 允许 null 原样回传 */ }
+  }
+  $("btn-submit").disabled = !ok;
+  $("btn-submit").title = ok ? "" : "存在新 SKU 必填项未填写";
+}
+
+/* ================= 左屏查看器 ================= */
+function renderDocSelect() {
+  const sel = $("doc-select");
+  sel.innerHTML = "";
+  (payload.source_documents || []).forEach((p) => {
+    const opt = document.createElement("option");
+    opt.value = p; opt.textContent = baseName(p);
+    sel.appendChild(opt);
+  });
+}
+
+function onDocSelect(path) { loadDocument(path, 1); }
+
+async function loadDocument(path, page) {
+  if (!path) { $("doc-view").innerHTML = "<span style='color:#9ca3af;margin-top:40px'>该 SKU 无来源文件</span>"; return; }
+  curDoc = path; curPage = page;
+  $("doc-select").value = path;
+  const url = `/api/v1/review/${encodeURIComponent(threadId)}/document?path=${encodeURIComponent(path)}&page=${page}`;
+  const suffix = path.split(".").pop().toLowerCase();
+  const view = $("doc-view");
+  try {
+    if (["xls", "xlsx", "xlsm", "csv"].includes(suffix)) {
+      view.innerHTML = "";
+      const ifr = document.createElement("iframe");
+      ifr.src = url;
+      view.appendChild(ifr);
+      setPager(1);
+    } else {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 120));
+      pageCount = parseInt(r.headers.get("X-Page-Count") || "1", 10);
+      const blob = await r.blob();
+      view.innerHTML = "";
+      const img = document.createElement("img");
+      img.src = URL.createObjectURL(blob);
+      view.appendChild(img);
+      setPager(pageCount);
+    }
+  } catch (e) {
+    view.innerHTML = `<span style="color:#dc2626;margin-top:40px">单据加载失败：${esc(e.message)}</span>`;
+    setPager(1);
+  }
+}
+
+function setPager(n) {
+  pageCount = n;
+  $("pager").style.display = n > 1 ? "flex" : "none";
+  $("page-info").textContent = `${curPage} / ${n}`;
+}
+function gotoPage(p) {
+  if (!curDoc || p < 1 || p > pageCount) return;
+  loadDocument(curDoc, p);
+}
+
+/* 点击卡片：左屏跳到该 SKU 的 source_file */
+function selectCard(idx) {
+  selectedIdx = idx;
+  document.querySelectorAll(".card").forEach((c, i) => c.classList.toggle("selected", i === idx));
+  const src = sourceFileOf(items[idx]);
+  if (src && src !== curDoc) loadDocument(src, 1);
+}
+
+/* ================= 提交与流转 ================= */
+async function submitReview() {
+  const btn = $("btn-submit");
+  btn.disabled = true; btn.textContent = "提交中…";
+  // 清理前端临时标记
+  const submitItems = items.map((it) => {
+    const c = { ...it };
+    delete c._modified;
+    return c;
+  });
+  try {
+    const r = await fetch(`/api/v1/orders/${encodeURIComponent(threadId)}/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approved: true, items: submitItems }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
+
+    if (data.status === "pending_human_review") {
+      // 多工厂循环：图在下一个工厂的 Node5 再次挂起
+      toast("已写入，进入下一工厂审核");
+      payload = data.review_data;
+      items = JSON.parse(JSON.stringify(payload.items || []));
+      $("tb-factory").textContent = "工厂: " + (payload.factory_name || "-");
+      renderMissingBar(); renderCards(); renderDocSelect();
+      selectCard(0);
+    } else {
+      showDone(data);
+    }
+  } catch (e) {
+    toast("提交失败：" + e.message, 4000);
+    btn.disabled = false;
+  } finally {
+    btn.textContent = "提交并继续";
+    refreshSubmitState();
+  }
+}
+
+function showDone(data) {
+  $("badge").textContent = "已完成"; $("badge").className = "done";
+  $("btn-submit").disabled = true;
+  $("done-view").style.display = "block";
+  $("done-path").textContent = data.final_output_path ? ("最终文件：" + data.final_output_path) : (data.message || "");
+  $("cards").innerHTML = "";
+  $("missing-bar").style.display = "none";
+  toast("本批次全部完成");
+}
+
+/* 兜底：刷新页面后轮询 state 恢复现场（生产环境用） */
+async function pollState() {
+  try {
+    const r = await fetch(`/api/v1/orders/${encodeURIComponent(threadId)}/state`);
+    if (!r.ok) return;
+    const s = await r.json();
+    if (s.next_nodes && s.next_nodes.length === 0 && $("badge").textContent !== "已完成") {
+      showDone({ message: "任务已结束" });
+    }
+  } catch (e) { /* demo 环境无 state 接口时静默 */ }
+}
+
+loadPayload();
+setInterval(pollState, 10000);
+</script>
+</body>
+</html>
