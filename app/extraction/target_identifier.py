@@ -25,14 +25,24 @@ from .doc_channel import doc_to_html
 from .excel_channel import UnsupportedFileError, excel_to_markdown
 from .pdf_text_channel import pdf_to_text
 
-# 8–14 位数字条码（JAN/货号）
-_BARCODE_RE = re.compile(r"\b\d{8,14}\b")
+# 13 位数字条码（JAN）。本批 10 个工厂的全部 SKU 编码均为 13 位；
+# 8–10 位会误中 HS 编码（如 63053300/4421999090），11 位误中手机号，
+# 12/14 位误中报关单杂项编号——13 位是目前最干净的分界。
+# 若未来工厂使用其他长度货号，需按工厂放宽。
+_BARCODE_RE = re.compile(r"\b\d{13}\b")
 # 内容信号（均为关键词级别，不解析数值）
 _NET_RE = re.compile(r"(?i)net\s*weight|n\.?w\.?|净重")
 _GROSS_RE = re.compile(r"(?i)gross\s*weight|g\.?w\.?|毛重")
+# 毛净重同格表头（如 "GROSS/NET WEIGHT"、"毛/净重"）——同时满足净+毛两个信号
+_COMBINED_WEIGHT_RE = re.compile(
+    r"(?i)gross\s*/\s*net|net\s*/\s*gross|g\.?w\.?\s*/\s*n\.?w\.?|n\.?w\.?\s*/\s*g\.?w\.?|毛\s*/\s*净|净\s*/\s*毛"
+)
 _QTY_RE = re.compile(r"(?i)ctns|cartons?|packages|件数|箱数")
 # 文件名偏好（打分用，仅用于同集合/子集去重时的代表选择，不参与候选判定）
 _NAME_SIGNALS = ["请款", "总", "清关", "装箱", "箱单", "packing", "pl"]
+# 路径负向信号：命中则在去重竞争中大幅降权（兆丰 7.15 报关资料拆分版
+# 曾凭路径排序挤掉「总 清款资料」全量版；正达通関単靠父目录「报关」排除）
+_NEGATIVE_NAME_SIGNALS = ["报关", "通関", "通关", "发票", "invoice", "入仓", "入库"]
 
 
 @dataclass
@@ -53,10 +63,11 @@ class FileProfile:
 
 
 def _scan_text(text: str) -> tuple[set[str], bool, bool, bool]:
+    combined = bool(_COMBINED_WEIGHT_RE.search(text))
     return (
         set(_BARCODE_RE.findall(text)),
-        bool(_NET_RE.search(text)),
-        bool(_GROSS_RE.search(text)),
+        bool(_NET_RE.search(text)) or combined,
+        bool(_GROSS_RE.search(text)) or combined,
         bool(_QTY_RE.search(text)),
     )
 
@@ -97,10 +108,16 @@ def scan_file(file_path: str) -> FileProfile:
 
 
 def _name_score(path: str) -> int:
-    """文件名信号分（仅在候选间去重时使用）：请款/总/清关/箱单类优先。"""
-    name = Path(path).name.lower()
+    """路径信号分（仅在候选间去重时使用）：请款/总/清关/箱单类优先，报关/发票类重罚。
+
+    评估整条路径（含父目录）——关键信号常在文件夹名上（如「总 清款资料/」），
+    文件名本身可能只有 "Packing XD-xxx.xlsx"。
+    """
+    p = path.lower()
+    if any(sig in p for sig in _NEGATIVE_NAME_SIGNALS):
+        return -100
     for i, sig in enumerate(_NAME_SIGNALS):
-        if sig in name:
+        if sig in p:
             return len(_NAME_SIGNALS) - i
     return 0
 
@@ -115,8 +132,14 @@ def identify_targets(folder_path: str) -> list[FileProfile]:
     profiles = [scan_file(str(p)) for p in files]
     candidates = [p for p in profiles if p.is_candidate]
 
+    # 负向路径信号（报关/发票/入仓…）的候选仅在"别无选择"时启用：
+    # 这类文件即使内容含条码明细，也几乎从不是最优目标（正达通関単、
+    # 兆丰按日期的报关资料拆分版）；整个文件夹只有它们时才兜底保留。
+    clean = [p for p in candidates if _name_score(p.path) > -100]
+    pool = clean if clean else candidates
+
     kept: list[FileProfile] = []
-    for prof in sorted(candidates, key=lambda p: (-_name_score(p.path), p.path)):
+    for prof in sorted(pool, key=lambda p: (-_name_score(p.path), p.path)):
         # 真子集：已被某个保留候选覆盖 → 丢弃
         if any(prof.barcodes < k.barcodes for k in kept):
             continue
