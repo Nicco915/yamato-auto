@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>工作台 - 雅玛多单证自动化</title>
+<link rel="stylesheet" href="/ui/static/ui.css">
+<script src="/ui/static/ui.js"></script>
+<style>
+  /* 页面局部样式：通用组件全部来自 ui.css */
+  .form-actions { margin-top: 14px; text-align: right; }
+  .form-hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .col-actions { white-space: nowrap; }
+  .col-actions .btn { margin-right: 6px; }
+  .refresh-btn { padding: 2px 10px; }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <!-- 发起批次 -->
+  <div class="card">
+    <h2 class="card-title">发起批次</h2>
+    <div class="field">
+      <label for="f-thread">批次号 <span style="color:var(--err)">*</span></label>
+      <input id="f-thread" type="text" placeholder="ETD0805">
+    </div>
+    <div class="field">
+      <label for="f-upstream">上游工厂文件夹</label>
+      <input id="f-upstream" type="text" placeholder="加载默认配置中…">
+    </div>
+    <div class="field">
+      <label for="f-downstream">下游装箱表</label>
+      <input id="f-downstream" type="text" placeholder="加载默认配置中…">
+    </div>
+    <div class="form-hint">路径变更请优先通过「Agent对话」页配置；此处修改仅对本次发起生效。</div>
+    <div class="form-actions">
+      <button id="btn-create" class="btn btn-primary" onclick="createBatch()">发起批次</button>
+    </div>
+  </div>
+
+  <!-- 批次列表 -->
+  <div class="card">
+    <h2 class="card-title">
+      批次列表
+      <span class="right">
+        <span id="last-updated">最后更新 -</span>
+        <button class="btn btn-ghost btn-sm refresh-btn" onclick="refreshList(true)">刷新</button>
+      </span>
+    </h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>批次号</th>
+          <th>状态</th>
+          <th>当前工厂</th>
+          <th>进度</th>
+          <th>创建时间</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="batch-tbody">
+        <tr><td colspan="6" class="empty">加载中…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+
+/* ================= 初始化 ================= */
+renderTopbar("dashboard");
+loadDefaults();
+refreshList(true);
+setInterval(autoRefresh, 10000);
+
+/* ================= 默认路径预填 ================= */
+async function loadDefaults() {
+  try {
+    const d = await api("/api/v1/config/defaults");
+    if (d && d.upstream_root) $("f-upstream").value = d.upstream_root;
+    if (d && d.downstream_file_path) $("f-downstream").value = d.downstream_file_path;
+  } catch (e) {
+    toast("默认配置加载失败：" + e.message, 4000);
+    $("f-upstream").placeholder = "请输入上游工厂文件夹路径";
+    $("f-downstream").placeholder = "请输入下游装箱表路径";
+  }
+}
+
+/* ================= 发起批次 ================= */
+async function createBatch() {
+  const threadId = $("f-thread").value.trim();
+  const upstreamRoot = $("f-upstream").value.trim();
+  const downstreamFile = $("f-downstream").value.trim();
+  if (!threadId) {
+    toast("请填写批次号");
+    $("f-thread").focus();
+    return;
+  }
+  const btn = $("btn-create");
+  btn.disabled = true;
+  btn.textContent = "发起中…（LLM 提取可能需要几分钟）";
+  try {
+    const data = await api("/api/v1/batches", {
+      method: "POST",
+      body: {
+        thread_id: threadId,
+        upstream_root: upstreamRoot,
+        downstream_file_path: downstreamFile,
+      },
+    });
+    if (data && data.status === "pending_human_review") {
+      location.href = "/review?thread_id=" + encodeURIComponent(threadId);
+      return; // finally 仍会恢复按钮，但页面随即跳转，无影响
+    }
+    if (data && data.status === "completed") {
+      toast("批次已完成（无需人工审核）");
+    } else {
+      toast("批次已发起，状态：" + ((data && data.status) || "未知"));
+    }
+    refreshList(false);
+  } catch (e) {
+    if (e.status === 409) {
+      toast("批次号已存在，请换一个", 3500);
+    } else if (e.status === 422) {
+      toast(e.message, 5000); // 后端 detail 已指明哪个路径不存在
+    } else {
+      toast("发起失败：" + e.message, 4000);
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "发起批次";
+  }
+}
+
+/* ================= 批次列表 ================= */
+function statusBadge(status) {
+  switch (status) {
+    case "pending_review":
+      return '<span class="badge badge-err">待审核</span>';
+    case "running":
+      return '<span class="badge badge-warn">进行中</span>';
+    case "completed":
+      return '<span class="badge badge-ok">已完成</span>';
+    case "error":
+      return '<span class="badge badge-muted">异常</span>';
+    default:
+      return '<span class="badge badge-muted">未知</span>';
+  }
+}
+
+function progressText(progress) {
+  if (!progress || progress.total == null) return "-";
+  return esc(progress.done) + " / " + esc(progress.total);
+}
+
+function rowActions(b) {
+  const id = encodeURIComponent(b.thread_id);
+  let html = "";
+  if (b.status === "pending_review") {
+    html +=
+      '<a class="btn btn-primary btn-sm" href="/review?thread_id=' + id + '">去审核</a>';
+  }
+  html += '<a class="btn btn-sm" href="/batch/' + id + '">详情</a>';
+  html += '<a class="btn btn-sm" href="/chat?thread_id=' + id + '">对话</a>';
+  return html;
+}
+
+function renderRows(batches) {
+  const tbody = $("batch-tbody");
+  if (!batches || batches.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无批次，请在上方发起</td></tr>';
+    return;
+  }
+  tbody.innerHTML = batches
+    .map(
+      (b) =>
+        "<tr>" +
+        "<td><strong>" + esc(b.thread_id) + "</strong></td>" +
+        "<td>" + statusBadge(b.status) + "</td>" +
+        "<td>" + (b.current_factory ? esc(b.current_factory) : "-") + "</td>" +
+        "<td>" + progressText(b.progress) + "</td>" +
+        "<td>" + esc(fmtTime(b.created_at)) + "</td>" +
+        '<td class="col-actions">' + rowActions(b) + "</td>" +
+        "</tr>"
+    )
+    .join("");
+}
+
+/* manual=true 时失败弹 toast；静默刷新失败只记 console */
+async function refreshList(manual) {
+  try {
+    const data = await api("/api/v1/batches");
+    const batches = Array.isArray(data) ? data : (data && data.batches) || [];
+    renderRows(batches);
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    $("last-updated").textContent =
+      "最后更新 " + pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds());
+  } catch (e) {
+    if (manual) toast("批次列表加载失败：" + e.message, 4000);
+    else console.warn("静默刷新失败：", e);
+  }
+}
+
+/* 10s 自动静默刷新；有输入框聚焦时跳过本轮，避免打断操作 */
+function autoRefresh() {
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT")) {
+    return;
+  }
+  refreshList(false);
+}
+</script>
+</body>
+</html>
