@@ -144,6 +144,13 @@
 3. **同步先行**：FastAPI 同步接口 + `asyncio.to_thread`，Celery 接缝在 `service.py` 顶部注释
 4. **写回不碰原件**：Node6 写入 `app/output/` 副本
 5. **resume 请求体以代码为准**：`{"approved": bool, "items": [...]}`（设计文档的 modified_items 已过时）
+6. **生产三层路径策略**（2026-07-28 用户定，审计确认骨架线已符合）：
+   - 层1·根目录进配置：`settings.upstream_root`（env `UPSTREAM_ROOT` 可覆盖，
+     请求体可按批次再覆盖），Node2 路由与审核界面白名单共用同一棵树
+   - 层2·下游表随批次传：`ProcessRequest.downstream_file_path` → state，Node1/Node6/GT 全链路从 state 取
+   - 层3·单文件随事件给：`process_file(session, path)` 由调用方递入，agent 不"找"文件
+   - 别名映射表（alias_map.json）为持久配置，不随批次变；validation/ 内硬编码路径仅作测试基准
+   - 禁止按显示名硬编码任何文件名（U+00A0 陷阱），定位一律走 glob/扫描/内容判定
 
 ## 8. 待办清单（按优先级）
 
