@@ -88,6 +88,56 @@ def resume_order(thread_id: str, resume_data: dict) -> dict[str, Any]:
     }
 
 
+def rerun_with_paths(
+    thread_id: str,
+    upstream_root: str | None = None,
+    downstream_file_path: str | None = None,
+) -> dict[str, Any]:
+    """对话改路径后的当前批次重跑：带新路径从 Node1 重新执行到 Node5 挂起。
+
+    机制（langgraph 1.2.9 实测）：挂起线程有未完成的 interrupt 任务，
+    Command(goto=...) 输入会被旧任务卡死；必须先 update_state(as_node=START)
+    写入新路径并作废旧现场（下一个 checkpoint 从 Node1 重新开始），
+    再 invoke(None) 触发 Node1→Node5 全链重跑，Node5 产生新 interrupt payload。
+
+    仅当 thread 处于挂起等待状态时允许重跑；已完成的批次抛错
+    （路径修改已写 .env，对后续批次生效）。
+    """
+    from langgraph.graph import START
+
+    graph = get_graph()
+    cfg = _config(thread_id)
+    snap = graph.get_state(cfg)
+    if not snap.values:
+        raise ValueError(f"thread {thread_id} 不存在")
+    if not snap.next:
+        raise ValueError(
+            f"thread {thread_id} 已完成，无法重跑（路径修改已对后续批次生效）"
+        )
+
+    update: dict[str, Any] = {}
+    if upstream_root:
+        update["upstream_root"] = upstream_root
+    if downstream_file_path:
+        update["downstream_file_path"] = downstream_file_path
+
+    graph.update_state(cfg, update, as_node=START)
+    for event in graph.stream(None, cfg, stream_mode="updates"):
+        if "__interrupt__" in event:
+            return {
+                "status": "pending_human_review",
+                "thread_id": thread_id,
+                "review_data": event["__interrupt__"][0].value,
+            }
+
+    final = graph.get_state(cfg)
+    return {
+        "status": "completed",
+        "thread_id": thread_id,
+        "final_output_path": final.values.get("final_output_path"),
+    }
+
+
 def get_order_state(thread_id: str) -> dict[str, Any]:
     """查询指定 thread_id 的当前状态（前端轮询/调试入口）。"""
     graph = get_graph()

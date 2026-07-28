@@ -26,9 +26,13 @@ from extraction.session import (  # noqa: E402
     process_file,
 )
 from extraction.target_identifier import _name_score, scan_file  # noqa: E402
-from ground_truth import get_factory_ground_truth, list_factories  # noqa: E402
+from ground_truth import (  # noqa: E402
+    FACTORY_FOLDER,
+    get_factory_ground_truth,
+    list_factories,
+)
 
-BASE = "/Users/nz/Downloads/yamato/96/工厂"
+BASE = FACTORY_FOLDER  # 路径见 app/.env UPSTREAM_ROOT
 TOL = 0.01
 
 

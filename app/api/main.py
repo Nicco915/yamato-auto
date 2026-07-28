@@ -40,6 +40,18 @@ class ReviewSubmitRequest(BaseModel):
     items: List[Dict[str, Any]] = []            # 人工修改后的完整 items
 
 
+class AgentChatRequest(BaseModel):
+    """提取 Agent 对话（路径配置指令）。
+
+    两段式：先发 message 拿解析预览（pending_confirmation）；
+    确认后带 confirm=true + action（原样回传上一步的 action）执行。
+    """
+    thread_id: Optional[str] = None             # 携带时当前批次用新路径重跑
+    message: Optional[str] = None               # 自然语言指令（确认前）
+    confirm: bool = False
+    action: Optional[Dict[str, Any]] = None     # 确认执行时回传的解析结果
+
+
 # ---------- 路由 ----------
 
 @app.post("/api/v1/orders/process")
@@ -80,3 +92,32 @@ async def get_state(thread_id: str):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+# ---------- 提取 Agent 对话（路径配置，2026-07-28 用户授权）----------
+
+@app.post("/api/v1/agent/chat")
+async def agent_chat(request: AgentChatRequest):
+    """与提取 Agent 对话修改路径。
+
+    - 确认前：{"message": "工厂文件夹改到 /xxx"} → LLM 解析+校验+预览；
+    - 确认执行：{"confirm": true, "action": <上一步返回的 action>,
+      "thread_id": <可选，当前批次立即重跑>} → 写 .env + 刷新运行时 + 重跑。
+    """
+    from app import agent_chat as chat
+
+    if request.confirm:
+        if not request.action or not isinstance(request.action.get("paths"), dict):
+            raise HTTPException(status_code=400,
+                                detail="confirm=true 时必须回传上一步的 action（含 paths）")
+        try:
+            result = await asyncio.to_thread(
+                chat.apply_paths, request.action["paths"], request.thread_id
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"status": "applied", **result}
+
+    if not request.message:
+        raise HTTPException(status_code=400, detail="message 不能为空")
+    return await asyncio.to_thread(chat.handle_message, request.message)

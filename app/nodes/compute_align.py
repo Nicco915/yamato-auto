@@ -56,7 +56,9 @@ def compute_align(state: AgentState) -> dict:
     seen_skus: set[str] = set()
 
     for item in extracted:
-        sku = str(item.get("sku_name", "")).strip()
+        # 真实提取线：sku_code=13 位条码（与下游 SHOHIN_CD 对齐），sku_name=品名；
+        # mock/占位数据两者同值。条码优先，无条码条目落品名，交给人工模糊匹配。
+        sku = str(item.get("sku_code") or item.get("sku_name") or "").strip()
         seen_skus.add(sku)
         qty = item.get("total_quantity")
         net_total = item.get("total_net_weight")
@@ -99,6 +101,8 @@ def compute_align(state: AgentState) -> dict:
                 "total_gross_weight": gross_total,
                 "weight_unit": item.get("weight_unit", "KG"),
                 "source_file": item.get("source_file"),
+                "sku_name": item.get("sku_name"),  # 品名原文，供审核界面参照
+                "review_reason": item.get("review_reason"),
             },
             "calculation": {
                 "net_formula": net_formula,

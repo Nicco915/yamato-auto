@@ -16,7 +16,7 @@ sys.path.insert(0, str(APP_ROOT / "app"))
 
 from extraction.target_identifier import identify_targets  # noqa: E402
 
-BASE = "/Users/nz/Downloads/yamato/96/工厂"
+from ground_truth import FACTORY_FOLDER as BASE  # 路径见 app/.env UPSTREAM_ROOT
 
 # 人工核对确定的各工厂正确提取目标（只比对文件名，忽略子目录前缀）
 EXPECTED: dict[str, list[str]] = {

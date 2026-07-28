@@ -48,6 +48,9 @@ def human_review(state: AgentState) -> dict:
         "source_documents": cur.get("source_documents") or [],
         "missing_skus": cur.get("missing_skus") or [],
         "items": items_payload,
+        # Node3 提取 Agent 的结构化反馈与覆盖率（暂无箱单/目标为空/改单等）
+        "extraction_issues": cur.get("extraction_issues") or [],
+        "extraction_coverage": cur.get("extraction_coverage") or {},
     }
 
     print(f"[Node5] 🔴 挂起等待人工审核：工厂「{cur.get('factory_name')}」，"

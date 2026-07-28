@@ -12,17 +12,27 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
+from dotenv import load_dotenv
 
-GT_SOURCE = "/Users/nz/Downloads/yamato/96/ContentsOfTheContainer_202624_青島XD_20260708.xlsx"
+# 路径统一从 app/.env 读取（agent 已获用户授权对话修改该文件），缺省值为当前生产路径
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+GT_SOURCE = os.environ.get(
+    "GT_SOURCE",
+    "/Users/nz/Downloads/yamato/96/ContentsOfTheContainer_202624_青島XD_20260708.xlsx",
+)
 GT_SHEET = "バンニングリスト"
 # 兜底源：报关匹配.xlsx。ContentsOfTheContainer 是**待填**的下游表，部分行净重/毛重/件数
 # 为空（TOP KOPH 21 行真空，正是系统要填的行）；报关匹配.xlsx 是人工填好的同构表，
 # 行序一致（同 index 同 SHOHIN_CD），用于填补这些空单元格（2026-07-27 agent 端到端
 # 测试发现 TOP GT 全零/残缺即此原因）。
-GT_FALLBACK = "/Users/nz/Downloads/yamato/96/报关匹配.xlsx"
+GT_FALLBACK = os.environ.get(
+    "GT_FALLBACK", "/Users/nz/Downloads/yamato/96/报关匹配.xlsx"
+)
 CACHE_PATH = Path(__file__).parent / "results" / "ground_truth_cache.json"
 
 # 工厂文件夹名 → バンニングリスト中的 MAKER_MEI_KJ（日文工厂抬头）
@@ -39,7 +49,10 @@ FACTORY_MAKER_MAP: dict[str, list[str]] = {
     "TOP": ["TOP KOPH（青島）"],
 }
 
-FACTORY_FOLDER = "/Users/nz/Downloads/yamato/96/工厂"
+# 与 settings.upstream_root 同一环境变量，保持单一事实源
+FACTORY_FOLDER = os.environ.get(
+    "UPSTREAM_ROOT", "/Users/nz/Downloads/yamato/96/工厂"
+)
 
 
 def build_ground_truth(use_cache: bool = True) -> dict:
@@ -57,7 +70,12 @@ def build_ground_truth(use_cache: bool = True) -> dict:
     }
     """
     if use_cache and CACHE_PATH.exists():
-        return json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+        cached = json.loads(CACHE_PATH.read_text(encoding="utf-8"))
+        meta = cached.get("_meta") or {}
+        # 来源路径变化（.env 被改）→ 缓存自动作废重建，防用旧 GT 误判
+        if meta.get("source") == GT_SOURCE and meta.get("fallback") == GT_FALLBACK:
+            return cached["data"]
+        print(f"[GT] 来源已变为 {GT_SOURCE}，作废旧缓存重建")
 
     df = pd.read_excel(GT_SOURCE, sheet_name=GT_SHEET)
     # 行级填补：ContentsOfTheContainer 的空单元格用报关匹配同位置值补齐
@@ -87,7 +105,11 @@ def build_ground_truth(use_cache: bool = True) -> dict:
 
     CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
     CACHE_PATH.write_text(
-        json.dumps(gt, ensure_ascii=False, indent=1), encoding="utf-8"
+        json.dumps(
+            {"_meta": {"source": GT_SOURCE, "fallback": GT_FALLBACK}, "data": gt},
+            ensure_ascii=False, indent=1,
+        ),
+        encoding="utf-8",
     )
     return gt
 

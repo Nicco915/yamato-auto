@@ -1,1482 +1,1488 @@
 {
- "中地": {
-  "4549509515197": {
-   "total_quantity": 500.0,
-   "total_net_weight": 3100.0,
-   "total_gross_weight": 3600.0,
-   "names": [
-    "3件套",
-    "FUTON SET",
-    "◆ボリューム寝具３点セット　Ｓ"
-   ]
-  },
-  "4549509515203": {
-   "total_quantity": 48.0,
-   "total_net_weight": 345.6,
-   "total_gross_weight": 393.59999999999997,
-   "names": [
-    "3件套",
-    "FUTON SET",
-    "◆ボリューム寝具３点セット　ＳＤ"
-   ]
-  },
-  "4549509518860": {
-   "total_quantity": 255.0,
-   "total_net_weight": 1326.0,
-   "total_gross_weight": 2083.35,
-   "names": [
-    "CUSHION",
-    "◆ふんわり３層ロングフロアクッション中材６５×１１５",
-    "坐垫"
-   ]
-  },
-  "4549509518877": {
-   "total_quantity": 176.0,
-   "total_net_weight": 1213.6999999999991,
-   "total_gross_weight": 1644.5400000000009,
-   "names": [
-    "CUSHION",
-    "◆ふんわり３層ロングフロアクッション中材６５×１８０",
-    "坐垫"
-   ]
-  },
-  "4549509518884": {
-   "total_quantity": 110.0,
-   "total_net_weight": 1243.0,
-   "total_gross_weight": 1545.5,
-   "names": [
-    "CUSHION",
-    "◆へたりに強い５層ロングフロアクッション中材１１５",
-    "坐垫"
-   ]
-  },
-  "4549509518891": {
-   "total_quantity": 136.0,
-   "total_net_weight": 1833.2799999999997,
-   "total_gross_weight": 2224.96,
-   "names": [
-    "CUSHION",
-    "◆へたりに強い５層ロングフロアクッション中材１８０",
-    "坐垫"
-   ]
-  },
-  "4549509610960": {
-   "total_quantity": 138.0,
-   "total_net_weight": 434.7,
-   "total_gross_weight": 524.1199999999997,
-   "names": [
-    "PILLOW",
-    "◆ふっくらまくら　３５Ｘ５０",
-    "枕头"
-   ]
-  },
-  "4549509610977": {
-   "total_quantity": 110.0,
-   "total_net_weight": 455.3999999999999,
-   "total_gross_weight": 540.54,
-   "names": [
-    "PILLOW",
-    "◆ふっくらまくら　４３Ｘ６３　ふつう",
-    "枕头"
-   ]
-  },
-  "4549509610984": {
-   "total_quantity": 106.0,
-   "total_net_weight": 362.52000000000004,
-   "total_gross_weight": 442.6599999999999,
-   "names": [
-    "PILLOW",
-    "◆ふっくらまくら　４３Ｘ６３　高め",
-    "枕头"
-   ]
-  },
-  "4550596018201": {
-   "total_quantity": 2.0,
-   "total_net_weight": 1.0,
-   "total_gross_weight": 2.0,
-   "names": [
-    "CHAIR CUSHION NV",
-    "◆チェアクッション　ネイビー",
-    "坐垫"
-   ]
-  },
-  "4550596018256": {
-   "total_quantity": 46.0,
-   "total_net_weight": 43.7,
-   "total_gross_weight": 69.0,
-   "names": [
-    "CHAIR CUSHION GY",
-    "◆ふわふわチェアクッション　グレー",
-    "坐垫"
-   ]
-  },
-  "4550596109466": {
-   "total_quantity": 62.0,
-   "total_net_weight": 558.0,
-   "total_gross_weight": 633.64,
-   "names": [
-    "cusion",
-    "◆洗えるクッション中材　４５ｘ４５",
-    "坐垫"
-   ]
-  },
-  "4550596211831": {
-   "total_quantity": 2591.0,
-   "total_net_weight": 14716.880000000001,
-   "total_gross_weight": 17618.8,
-   "names": [
-    "6件套",
-    "bedding",
-    "◆すぐに使える寝具６点セット　ＢＥ"
-   ]
-  },
-  "4550596211848": {
-   "total_quantity": 2235.0,
-   "total_net_weight": 12694.8,
-   "total_gross_weight": 15198.0,
-   "names": [
-    "6件套",
-    "bedding",
-    "◆すぐに使える寝具６点セット　ＧＹ"
-   ]
-  }
+ "_meta": {
+  "source": "/Users/nz/Downloads/yamato/96/ContentsOfTheContainer_202624_青島XD_20260708.xlsx",
+  "fallback": "/Users/nz/Downloads/yamato/96/报关匹配.xlsx"
  },
- "正达": {
-  "4549509174042": {
-   "total_quantity": 341.0,
-   "total_net_weight": 1895.96,
-   "total_gross_weight": 2090.3299999999995,
-   "names": [
-    "MAT",
-    "◆・桐スノコ　ロールマットレスＳ１００×２００",
-    "被架床"
-   ]
-  },
-  "4549509174059": {
-   "total_quantity": 66.0,
-   "total_net_weight": 488.4,
-   "total_gross_weight": 541.2,
-   "names": [
-    "MAT",
-    "◆・桐スノコ　ロールマットレスＤ１４０×２００",
-    "被架床"
-   ]
-  },
-  "4549509280125": {
-   "total_quantity": 372.0,
-   "total_net_weight": 1971.6,
-   "total_gross_weight": 2362.2,
-   "names": [
-    "KITCHEN STOCKER",
-    "◆・Ｉ１　キッチンストッカー４段　ホワイト",
-    "木橱"
-   ]
-  },
-  "4549509315339": {
-   "total_quantity": 29.0,
-   "total_net_weight": 35.96,
-   "total_gross_weight": 49.3,
-   "names": [
-    "PAULOWNIA WOOD BASKET",
-    "◆・桐バスケット　Ｓ　ブラウン",
-    "木箱"
-   ]
-  },
-  "4549509412694": {
-   "total_quantity": 10.0,
-   "total_net_weight": 70.0,
-   "total_gross_weight": 74.0,
-   "names": [
-    "Pine Grates",
-    "◆・パイン製すのこ　３枚貼",
-    "木被架"
-   ]
-  },
-  "4549509412700": {
-   "total_quantity": 17.0,
-   "total_net_weight": 142.8,
-   "total_gross_weight": 151.3,
-   "names": [
-    "Pine Grates",
-    "◆・パイン製すのこ　４枚貼",
-    "木被架"
-   ]
-  },
-  "4549509412717": {
-   "total_quantity": 188.0,
-   "total_net_weight": 2143.2,
-   "total_gross_weight": 2256.0,
-   "names": [
-    "Pine Grates",
-    "◆・パイン製すのこ　５枚貼",
-    "木被架"
-   ]
-  },
-  "4549509412724": {
-   "total_quantity": 312.0,
-   "total_net_weight": 4555.200000000001,
-   "total_gross_weight": 4773.600000000001,
-   "names": [
-    "Pine Grates",
-    "◆・パイン製すのこ　６枚貼",
-    "木被架"
-   ]
-  },
-  "4549509412748": {
-   "total_quantity": 400.0,
-   "total_net_weight": 1320.0,
-   "total_gross_weight": 1520.0,
-   "names": [
-    "Pine Grates",
-    "◆・パイン製キャスター付すのこ　Ｓ",
-    "木被架"
-   ]
-  },
-  "4549509588306": {
-   "total_quantity": 40.0,
-   "total_net_weight": 240.0,
-   "total_gross_weight": 256.0,
-   "names": [
-    "DIY  Grates",
-    "◆・杉ダメージカラーすのこＬ　ＢＲ",
-    "木被架"
-   ]
-  },
-  "4549509588313": {
-   "total_quantity": 5.0,
-   "total_net_weight": 30.0,
-   "total_gross_weight": 32.0,
-   "names": [
-    "DIY  Grates",
-    "◆・杉ダメージカラーすのこＬ　ＷＨ",
-    "木被架"
-   ]
-  },
-  "4549509656876": {
-   "total_quantity": 283.0,
-   "total_net_weight": 1528.2,
-   "total_gross_weight": 1799.88,
-   "names": [
-    "BED",
-    "◆・すのこパレット　４枚セット",
-    "被架床"
-   ]
-  },
-  "4549509659709": {
-   "total_quantity": 104.0,
-   "total_net_weight": 863.2,
-   "total_gross_weight": 946.3999999999999,
-   "names": [
-    "MATTRESS",
-    "◆・布団が干せるひのきスノコ四つ折りマットレスＳ",
-    "被架床"
-   ]
-  },
-  "4549509761778": {
-   "total_quantity": 283.0,
-   "total_net_weight": 3254.5,
-   "total_gross_weight": 3537.5,
-   "names": [
-    "CLOSET DRAINBOARD 2P 75X75",
-    "◆・桐押入れすのこ８枚貼り（７５ｘ７５）２枚入",
-    "橱柜搁架"
-   ]
-  },
-  "4549509849865": {
-   "total_quantity": 98.0,
-   "total_net_weight": 784.0,
-   "total_gross_weight": 833.0,
-   "names": [
-    "SUNOKO 2PCS/SET CLOSET",
-    "◆・桐すのこ２枚組　クローゼット",
-    "木被架"
-   ]
-  },
-  "4549509849872": {
-   "total_quantity": 4.0,
-   "total_net_weight": 12.0,
-   "total_gross_weight": 13.4,
-   "names": [
-    "SUNOKO 2PCS/SET MINISIZE",
-    "◆・桐すのこ２枚組　ミニサイズ",
-    "木被架"
-   ]
-  },
-  "4549509849889": {
-   "total_quantity": 18.0,
-   "total_net_weight": 153.0,
-   "total_gross_weight": 163.79999999999998,
-   "names": [
-    "SUNOKO 2PCS/SET FOR STORAGEBOX74CM",
-    "◆・すのこ２枚組　コロ付き収納ケース７４ｃｍ用",
-    "木被架"
-   ]
-  },
-  "4549509849896": {
-   "total_quantity": 6.0,
-   "total_net_weight": 32.4,
-   "total_gross_weight": 34.92,
-   "names": [
-    "SUNOKO 2PCS/SET FOR STORAGEBOX50CM",
-    "◆・桐すのこ２枚組　コロ付き収納ケース５０ｃｍ用",
-    "木被架"
-   ]
-  },
-  "4550596018607": {
-   "total_quantity": 829.0,
-   "total_net_weight": 3398.9,
-   "total_gross_weight": 4393.7,
-   "names": [
-    "44木架",
-    "wooden rack",
-    "◆・Ｃ２０　木製ラック４６　３段"
-   ]
-  },
-  "4550596018614": {
-   "total_quantity": 322.0,
-   "total_net_weight": 1738.8000000000002,
-   "total_gross_weight": 2318.3999999999996,
-   "names": [
-    "44木架",
-    "wooden rack",
-    "◆・Ｃ２１　木製ラック４６　４段"
-   ]
-  },
-  "4550596018638": {
-   "total_quantity": 40.0,
-   "total_net_weight": 128.0,
-   "total_gross_weight": 156.0,
-   "names": [
-    "44木架",
-    "wooden rack special board",
-    "◆・Ｃ２３　木製ラック４６　専用棚板"
-   ]
-  },
-  "4550596018652": {
-   "total_quantity": 153.0,
-   "total_net_weight": 1086.3,
-   "total_gross_weight": 1361.7,
-   "names": [
-    "44木架",
-    "wooden rack",
-    "◆・Ｃ２５　木製ラック６７　４段"
-   ]
-  },
-  "4550596018669": {
-   "total_quantity": 150.0,
-   "total_net_weight": 1335.0,
-   "total_gross_weight": 1680.0,
-   "names": [
-    "44木架",
-    "wooden rack",
-    "◆・Ｃ２６　木製ラック６７　５段"
-   ]
-  },
-  "4550596092843": {
-   "total_quantity": 10.0,
-   "total_net_weight": 77.99999999999999,
-   "total_gross_weight": 86.0,
-   "names": [
-    "WOODEN LID FOR SOFT CASE HALF",
-    "◆・インテリアソフトケース木製フタ　ハーフ",
-    "木盖"
-   ]
-  },
-  "4550596112121": {
-   "total_quantity": 300.0,
-   "total_net_weight": 1680.0,
-   "total_gross_weight": 2100.0,
-   "names": [
-    "PINE SUNOKO 75CM",
-    "◆・押入れ用キャスター付きすのこ",
-    "木被架"
-   ]
-  },
-  "4550596112138": {
-   "total_quantity": 294.0,
-   "total_net_weight": 1352.4,
-   "total_gross_weight": 1705.2,
-   "names": [
-    "PINE SUNOKO 55CM",
-    "◆・クローゼット用キャスター付きすのこ",
-    "木被架"
-   ]
-  },
-  "4550596139470": {
-   "total_quantity": 89.0,
-   "total_net_weight": 409.4,
-   "total_gross_weight": 480.6,
-   "names": [
-    "WOODEN LADDER S",
-    "◆・パイン製踏み台Ｓ　３２１７",
-    "木制凳子"
-   ]
-  },
-  "4550596139487": {
-   "total_quantity": 143.0,
-   "total_net_weight": 972.4000000000001,
-   "total_gross_weight": 1029.6,
-   "names": [
-    "WOODEN LADDER L",
-    "◆・パイン製踏み台Ｌ　４４２２",
-    "木制凳子"
-   ]
-  },
-  "4550596139494": {
-   "total_quantity": 100.0,
-   "total_net_weight": 620.0,
-   "total_gross_weight": 720.0,
-   "names": [
-    "WOODEN LADDER W",
-    "◆・パイン製踏み台Ｗ　４４１２",
-    "木制凳子"
-   ]
-  },
-  "4550596139500": {
-   "total_quantity": 118.0,
-   "total_net_weight": 483.8,
-   "total_gross_weight": 566.4,
-   "names": [
-    "WOODEN BASKET 3 TIER",
-    "◆・キャスター付き木製積重ねバスケット３段",
-    "木筐"
-   ]
-  },
-  "4550596145884": {
-   "total_quantity": 75.0,
-   "total_net_weight": 120.0,
-   "total_gross_weight": 157.5,
-   "names": [
-    "wooden scratching case",
-    "◆・木製爪とぎケースシングル",
-    "木制抓挠盒"
-   ]
-  },
-  "4550596145891": {
-   "total_quantity": 65.0,
-   "total_net_weight": 162.5,
-   "total_gross_weight": 191.75,
-   "names": [
-    "wooden scratching case",
-    "◆・木製爪とぎケースダブル",
-    "木制抓挠盒"
-   ]
-  },
-  "4550596145907": {
-   "total_quantity": 30.0,
-   "total_net_weight": 57.0,
-   "total_gross_weight": 73.5,
-   "names": [
-    "wooden scratching case",
-    "◆・木製爪とぎケース丸形",
-    "木制抓挠盒"
-   ]
-  },
-  "4550596164328": {
-   "total_quantity": 65.0,
-   "total_net_weight": 101.39999999999999,
-   "total_gross_weight": 116.34999999999998,
-   "names": [
-    "paulownia cutting board",
-    "◆・桐マナ板　Ｓ",
-    "木制菜板"
-   ]
-  },
-  "4550596164335": {
-   "total_quantity": 100.0,
-   "total_net_weight": 209.99999999999997,
-   "total_gross_weight": 230.00000000000003,
-   "names": [
-    "paulownia cutting board",
-    "◆・桐マナ板　Ｍ",
-    "木制菜板"
-   ]
-  },
-  "4550596164342": {
-   "total_quantity": 40.0,
-   "total_net_weight": 126.4,
-   "total_gross_weight": 145.59999999999997,
-   "names": [
-    "paulownia cutting board",
-    "◆・桐マナ板　Ｌ",
-    "木制菜板"
-   ]
-  },
-  "4550596184838": {
-   "total_quantity": 17.0,
-   "total_net_weight": 102.0,
-   "total_gross_weight": 110.5,
-   "names": [
-    "LID FOR STEEL WAGON",
-    "◆・高さ調整できるスチールワゴン用木製フタ",
-    "木盖"
-   ]
-  },
-  "4550596202044": {
-   "total_quantity": 25.0,
-   "total_net_weight": 110.0,
-   "total_gross_weight": 120.0,
-   "names": [
-    "44木架",
-    "RUBBER WOOD DISPLAY RACK NA",
-    "◆・天然木ディスプレイラック　ＮＡ"
-   ]
-  },
-  "4550596227849": {
-   "total_quantity": 50.0,
-   "total_net_weight": 274.0,
-   "total_gross_weight": 305.0,
-   "names": [
-    "HINOKI SUNOKO 580x439x39mm",
-    "◆・桧すのこ５枚貼り　５８０ｘ４３９ｘ３９ｍｍ",
-    "木被架"
-   ]
-  },
-  "4550596227856": {
-   "total_quantity": 50.0,
-   "total_net_weight": 375.0,
-   "total_gross_weight": 425.0,
-   "names": [
-    "HINOKI SUNOKO 850x439x39mm",
-    "◆・桧すのこ５枚貼り　８５０ｘ４３９ｘ３９ｍｍ",
-    "木被架"
-   ]
-  },
-  "4550596227863": {
-   "total_quantity": 50.0,
-   "total_net_weight": 255.00000000000003,
-   "total_gross_weight": 305.0,
-   "names": [
-    "HINOKI SUNOKO 1150x439x39mm",
-    "◆・桧すのこ５枚貼り　１１５０ｘ４３９ｘ３９ｍｍ",
-    "木被架"
-   ]
-  },
-  "4550596227870": {
-   "total_quantity": 75.0,
-   "total_net_weight": 697.5,
-   "total_gross_weight": 780.0,
-   "names": [
-    "HINOKI SUNOKO 850x528x39mm",
-    "◆・桧すのこ６枚貼り　８５０ｘ５２８ｘ３９ｍｍ",
-    "木被架"
-   ]
-  },
-  "4550596227887": {
-   "total_quantity": 50.0,
-   "total_net_weight": 310.0,
-   "total_gross_weight": 365.0,
-   "names": [
-    "HINOKI SUNOKO 1150x528x39mm",
-    "◆・桧すのこ６枚貼り　１１５０ｘ５２８ｘ３９ｍｍ",
-    "木被架"
-   ]
-  }
- },
- "达安": {
-  "4936695359672": {
-   "total_quantity": 75.0,
-   "total_net_weight": 738.0000000000001,
-   "total_gross_weight": 790.5,
-   "names": [
-    "SILICA GEL",
-    "◆サラサラネコ砂　３Ｌ",
-    "硅胶猫砂"
-   ]
-  }
- },
- "兆丰": {
-  "4549509623861": {
-   "total_quantity": 200.0,
-   "total_net_weight": 778.6,
-   "total_gross_weight": 972.0,
-   "names": [
-    "INNERBOX PP BROWN",
-    "◆インナーボックス　ＰＰ（ブラウン）",
-    "收纳筐"
-   ]
-  },
-  "4549509623878": {
-   "total_quantity": 80.0,
-   "total_net_weight": 243.84000000000003,
-   "total_gross_weight": 304.00000000000006,
-   "names": [
-    "INNERBOX PP BROWN SHALLOW",
-    "◆インナーボックス　ＰＰ（ブラウン）　浅型",
-    "收纳筐"
-   ]
-  },
-  "4549509623885": {
-   "total_quantity": 186.0,
-   "total_net_weight": 526.9400000000006,
-   "total_gross_weight": 665.8800000000001,
-   "names": [
-    "INNERBOX PP BROWN HALF",
-    "◆インナーボックス　ＰＰ（ブラウン）　ハーフ",
-    "收纳筐"
-   ]
-  },
-  "4549509623892": {
-   "total_quantity": 157.0,
-   "total_net_weight": 435.5199999999996,
-   "total_gross_weight": 525.9499999999999,
-   "names": [
-    "INNERBOX PP BROWN S",
-    "◆インナーボックス　ＰＰ（ブラウン）　Ｓ",
-    "收纳筐"
-   ]
-  },
-  "4549509623908": {
-   "total_quantity": 200.0,
-   "total_net_weight": 770.6,
-   "total_gross_weight": 964.0,
-   "names": [
-    "INNERBOX PP BEIGE",
-    "◆インナーボックス　ＰＰ（ベージュ）",
-    "收纳筐"
-   ]
-  },
-  "4549509623915": {
-   "total_quantity": 80.0,
-   "total_net_weight": 243.84000000000003,
-   "total_gross_weight": 304.0,
-   "names": [
-    "INNERBOX PP BEIGE SHALLOW",
-    "◆インナーボックス　ＰＰ（ベージュ）　浅型",
-    "收纳筐"
-   ]
-  },
-  "4549509623922": {
-   "total_quantity": 50.0,
-   "total_net_weight": 141.65,
-   "total_gross_weight": 179.0,
-   "names": [
-    "INNERBOX PP BEIGE HALF",
-    "◆インナーボックス　ＰＰ（ベージュ）　ハーフ",
-    "收纳筐"
-   ]
-  },
-  "4549509623939": {
-   "total_quantity": 133.0,
-   "total_net_weight": 370.2700000000005,
-   "total_gross_weight": 446.88000000000005,
-   "names": [
-    "INNERBOX PP BEIGE S",
-    "◆インナーボックス　ＰＰ（ベージュ）　Ｓ",
-    "收纳筐"
-   ]
-  },
-  "4549509729358": {
-   "total_quantity": 72.0,
-   "total_net_weight": 158.4,
-   "total_gross_weight": 216.0,
-   "names": [
-    "LID FOR INNERBOX PP BR",
-    "◆インナーボックス用フタ　ＰＰ（ブラウン）",
-    "收纳筐"
-   ]
-  },
-  "4549509729365": {
-   "total_quantity": 51.0,
-   "total_net_weight": 112.19999999999999,
-   "total_gross_weight": 153.0,
-   "names": [
-    "LID FOR INNERBOX PP BE",
-    "◆インナーボックス用フタ　ＰＰ（ベージュ）",
-    "收纳筐"
-   ]
-  },
-  "4549509769378": {
-   "total_quantity": 202.0,
-   "total_net_weight": 525.1999999999999,
-   "total_gross_weight": 929.1999999999999,
-   "names": [
-    "SLIM INNER BOX PP BR",
-    "◆持ち運べるスリムインナーボックスＰＰ　ＢＲ",
-    "收纳筐"
-   ]
-  },
-  "4549509769385": {
-   "total_quantity": 79.0,
-   "total_net_weight": 205.4,
-   "total_gross_weight": 363.3999999999999,
-   "names": [
-    "SLIM INNER BOX PP BE",
-    "◆持ち運べるスリムインナーボックスＰＰ　ＢＥ",
-    "收纳筐"
-   ]
-  }
- },
- "东基恒": {
-  "4550596044859": {
-   "total_quantity": 220.0,
-   "total_net_weight": 1847.9999999999998,
-   "total_gross_weight": 2068.0,
-   "names": [
-    "sandbags",
-    "◆土のう　４８×６２ｃｍ　１０枚入",
-    "编织袋"
-   ]
-  },
-  "4550596044866": {
-   "total_quantity": 250.0,
-   "total_net_weight": 4200.0,
-   "total_gross_weight": 4225.0,
-   "names": [
-    "sandbags",
-    "◆土のう　４８×６２ｃｍ　５０枚入",
-    "编织袋"
-   ]
-  },
-  "4550596044897": {
-   "total_quantity": 50.0,
-   "total_net_weight": 650.0,
-   "total_gross_weight": 700.0,
-   "names": [
-    "sandbag",
-    "◆ＵＶブラック土のう（３年耐候）　４８×６２ｃｍ　１０枚入",
-    "编织袋"
-   ]
-  },
-  "4550596044903": {
-   "total_quantity": 40.0,
-   "total_net_weight": 520.0,
-   "total_gross_weight": 524.0,
-   "names": [
-    "sandbag",
-    "◆ＵＶブラック土のう（３年耐候）　４８×６２ｃｍ　５０枚入",
-    "编织袋"
-   ]
-  },
-  "4550596044910": {
-   "total_quantity": 90.0,
-   "total_net_weight": 900.0,
-   "total_gross_weight": 909.0,
-   "names": [
-    "junk bag",
-    "◆ガラ袋　６０×９０ｃｍ　２５枚入",
-    "编织袋"
-   ]
-  },
-  "4550596044927": {
-   "total_quantity": 100.0,
-   "total_net_weight": 1500.0,
-   "total_gross_weight": 1600.0,
-   "names": [
-    "junk bag",
-    "◆丈夫なガラ袋　６０×９０ｃｍ　１０枚入",
-    "编织袋"
-   ]
-  },
-  "4550596044934": {
-   "total_quantity": 55.0,
-   "total_net_weight": 605.0,
-   "total_gross_weight": 660.0,
-   "names": [
-    "junk bag",
-    "◆丈夫なガラ袋　７０×１２０ｃｍ　１０枚入",
-    "编织袋"
-   ]
-  },
-  "4550596044941": {
-   "total_quantity": 30.0,
-   "total_net_weight": 360.0,
-   "total_gross_weight": 390.0,
-   "names": [
-    "junk bag",
-    "◆透明ガラ袋　６０×９０ｃｍ　１０枚入",
-    "编织袋"
-   ]
-  },
-  "4550596045696": {
-   "total_quantity": 10.0,
-   "total_net_weight": 150.0,
-   "total_gross_weight": 160.0,
-   "names": [
-    "junk bag",
-    "◆分別ガラ袋　６０×９０ｃｍ　１０枚入",
-    "编织袋"
-   ]
-  }
- },
- "益尚": {
-  "4549509379904": {
-   "total_quantity": 100.0,
-   "total_net_weight": 395.0,
-   "total_gross_weight": 476.99999999999994,
-   "names": [
-    "INNER BOX",
-    "◆インナーボックス（ナチュラル）",
-    "工艺篮"
-   ]
-  },
-  "4549509379911": {
-   "total_quantity": 60.0,
-   "total_net_weight": 186.0,
-   "total_gross_weight": 210.6,
-   "names": [
-    "INNER BOX",
-    "◆インナーボックス（ナチュラル）浅型",
-    "工艺篮"
-   ]
-  },
-  "4549509379928": {
-   "total_quantity": 48.0,
-   "total_net_weight": 130.56,
-   "total_gross_weight": 156.48000000000002,
-   "names": [
-    "INNER BOX",
-    "◆インナーボックス（ナチュラル）ハーフ",
-    "工艺篮"
-   ]
-  },
-  "4549509379935": {
-   "total_quantity": 82.0,
-   "total_net_weight": 213.2,
-   "total_gross_weight": 228.78,
-   "names": [
-    "INNER BOX",
-    "◆インナーボックス（ナチュラル）Ｓ",
-    "工艺篮"
-   ]
-  },
-  "4549509379942": {
-   "total_quantity": 60.0,
-   "total_net_weight": 237.0,
-   "total_gross_weight": 286.2,
-   "names": [
-    "INNER BOX",
-    "◆インナーボックス（ブラウン）",
-    "工艺篮"
-   ]
-  },
-  "4549509379959": {
-   "total_quantity": 35.0,
-   "total_net_weight": 108.5,
-   "total_gross_weight": 122.85,
-   "names": [
-    "INNER BOX",
-    "◆インナーボックス（ブラウン）浅型",
-    "工艺篮"
-   ]
-  },
-  "4549509379966": {
-   "total_quantity": 36.0,
-   "total_net_weight": 97.92,
-   "total_gross_weight": 117.35999999999999,
-   "names": [
-    "INNER BOX",
-    "◆インナーボックス（ブラウン）ハーフ",
-    "工艺篮"
-   ]
-  },
-  "4549509379973": {
-   "total_quantity": 10.0,
-   "total_net_weight": 26.0,
-   "total_gross_weight": 27.9,
-   "names": [
-    "INNER BOX",
-    "◆インナーボックス（ブラウン）Ｓ",
-    "工艺篮"
-   ]
-  },
-  "4549509900474": {
-   "total_quantity": 10.0,
-   "total_net_weight": 23.0,
-   "total_gross_weight": 28.0,
-   "names": [
-    "PP BASKET",
-    "◆◆レンジで使えるバスケット　オーバルＭ　ＢＲ",
-    "篮子"
-   ]
-  },
-  "4550596183039": {
-   "total_quantity": 10.0,
-   "total_net_weight": 107.0,
-   "total_gross_weight": 125.99999999999999,
-   "names": [
-    "laundry box",
-    "◆たためるランドリーボックス　１段タイプ",
-    "收纳用篮筐"
-   ]
-  }
- },
- "贝来": {
-  "4549509299950": {
-   "total_quantity": 35.0,
-   "total_net_weight": 224.00000000000003,
-   "total_gross_weight": 280.0,
-   "names": [
-    "MEMO BOARD",
-    "◆・軽い両面コルクボード　６０ｘ９０",
-    "软木板"
-   ]
-  },
-  "4549509340188": {
-   "total_quantity": 3.0,
-   "total_net_weight": 9.600000000000001,
-   "total_gross_weight": 11.100000000000001,
-   "names": [
-    "MEMO BOARD",
-    "◆・壁に掛けやすい軽いコルクボード　３０×３０",
-    "软木板"
-   ]
-  },
-  "4549509340195": {
-   "total_quantity": 7.0,
-   "total_net_weight": 30.8,
-   "total_gross_weight": 32.9,
-   "names": [
-    "MEMO BOARD",
-    "◆・壁に掛けやすい軽いコルクボード　３０×４０",
-    "软木板"
-   ]
-  },
-  "4549509340201": {
-   "total_quantity": 21.0,
-   "total_net_weight": 134.4,
-   "total_gross_weight": 157.5,
-   "names": [
-    "MEMO BOARD",
-    "◆・壁に掛けやすい軽いコルクボード　４０×６０",
-    "软木板"
-   ]
-  },
-  "4549509341550": {
-   "total_quantity": 20.0,
-   "total_net_weight": 60.0,
-   "total_gross_weight": 68.0,
-   "names": [
-    "WHIE BOARD",
-    "◆壁に掛けやすい軽いホワイトボード　３０×４０",
-    "写字板"
-   ]
-  },
-  "4549509341567": {
-   "total_quantity": 38.0,
-   "total_net_weight": 205.20000000000002,
-   "total_gross_weight": 228.0,
-   "names": [
-    "WHIE BOARD",
-    "◆壁に掛けやすい軽いホワイトボード　４０×６０",
-    "写字板"
-   ]
-  },
-  "4549509444770": {
-   "total_quantity": 25.0,
-   "total_net_weight": 236.0,
-   "total_gross_weight": 332.0,
-   "names": [
-    "WRITING BOARD",
-    "◆アルミ枠ホワイトボード無地６０Ｘ４５",
-    "写字板"
-   ]
-  },
-  "4549509637264": {
-   "total_quantity": 20.0,
-   "total_net_weight": 160.0,
-   "total_gross_weight": 172.0,
-   "names": [
-    "WRITING BOARD",
-    "◆ブラックボード３０Ｘ４０",
-    "写字板"
-   ]
-  },
-  "4549509637288": {
-   "total_quantity": 40.0,
-   "total_net_weight": 624.0,
-   "total_gross_weight": 740.0,
-   "names": [
-    "WRITING BOARD",
-    "◆ブラックボード６０Ｘ９０",
-    "写字板"
-   ]
-  },
-  "4549509845539": {
-   "total_quantity": 67.0,
-   "total_net_weight": 522.5999999999999,
-   "total_gross_weight": 576.2,
-   "names": [
-    "whiteboard",
-    "◆両面使えるホワイトボード６０ｘ９０ｃｍ",
-    "写字板"
-   ]
-  }
- },
- "亿钻": {
-  "4549509419679": {
-   "total_quantity": 40.0,
-   "total_net_weight": 252.0,
-   "total_gross_weight": 274.0,
-   "names": [
-    "WHEEL",
-    "◆◆ＰＵノーパンク用替えタイヤ　２２ｃｍ",
-    "轮子"
-   ]
-  },
-  "4549509419693": {
-   "total_quantity": 10.0,
-   "total_net_weight": 100.0,
-   "total_gross_weight": 107.0,
-   "names": [
-    "WHEEL",
-    "◆◆ＰＵノーパンクタイヤ２２ｃｍ　固定キャスター",
-    "轮子"
-   ]
-  },
-  "4550596052397": {
-   "total_quantity": 6.0,
-   "total_net_weight": 60.0,
-   "total_gross_weight": 63.0,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー丸ゴム　９ｍｍ×５０ｃｍ　ブラック",
-    "弹力绳"
-   ]
-  },
-  "4550596052403": {
-   "total_quantity": 3.0,
-   "total_net_weight": 30.0,
-   "total_gross_weight": 31.5,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー丸ゴム　９ｍｍ×５０ｃｍ　グリーン",
-    "弹力绳"
-   ]
-  },
-  "4550596052410": {
-   "total_quantity": 1.0,
-   "total_net_weight": 10.0,
-   "total_gross_weight": 10.5,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー丸ゴム　９ｍｍ×５０ｃｍ　ベージュ",
-    "弹力绳"
-   ]
-  },
-  "4550596052427": {
-   "total_quantity": 5.0,
-   "total_net_weight": 67.5,
-   "total_gross_weight": 71.0,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー丸ゴム　９ｍｍ×１００ｃｍ　ブラック",
-    "弹力绳"
-   ]
-  },
-  "4550596052434": {
-   "total_quantity": 2.0,
-   "total_net_weight": 27.0,
-   "total_gross_weight": 28.4,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー丸ゴム　９ｍｍ×１００ｃｍ　グリーン",
-    "弹力绳"
-   ]
-  },
-  "4550596052441": {
-   "total_quantity": 1.0,
-   "total_net_weight": 13.5,
-   "total_gross_weight": 14.2,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー丸ゴム　９ｍｍ×１００ｃｍ　ベージュ",
-    "弹力绳"
-   ]
-  },
-  "4550596052458": {
-   "total_quantity": 4.0,
-   "total_net_weight": 46.0,
-   "total_gross_weight": 48.0,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー平ゴム　１７ｍｍ×１００ｃｍ　ブラック",
-    "弹力绳"
-   ]
-  },
-  "4550596052465": {
-   "total_quantity": 3.0,
-   "total_net_weight": 34.5,
-   "total_gross_weight": 36.0,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー平ゴム　１７ｍｍ×１００ｃｍ　グリーン",
-    "弹力绳"
-   ]
-  },
-  "4550596052472": {
-   "total_quantity": 2.0,
-   "total_net_weight": 23.0,
-   "total_gross_weight": 24.0,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー平ゴム　１７ｍｍ×１００ｃｍ　ベージュ",
-    "弹力绳"
-   ]
-  },
-  "4550596052489": {
-   "total_quantity": 3.0,
-   "total_net_weight": 55.5,
-   "total_gross_weight": 57.6,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー平ゴム　１７ｍｍ×２００ｃｍ　ブラック",
-    "弹力绳"
-   ]
-  },
-  "4550596052496": {
-   "total_quantity": 2.0,
-   "total_net_weight": 37.0,
-   "total_gross_weight": 38.4,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー平ゴム　１７ｍｍ×２００ｃｍ　グリーン",
-    "弹力绳"
-   ]
-  },
-  "4550596052502": {
-   "total_quantity": 1.0,
-   "total_net_weight": 18.5,
-   "total_gross_weight": 19.2,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー平ゴム　１７ｍｍ×２００ｃｍ　ベージュ",
-    "弹力绳"
-   ]
-  },
-  "4550596052519": {
-   "total_quantity": 6.0,
-   "total_net_weight": 46.98,
-   "total_gross_weight": 49.2,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー平ゴム（カラビナ付）　１７×１００ＢＫ",
-    "弹力绳"
-   ]
-  },
-  "4550596052540": {
-   "total_quantity": 1.0,
-   "total_net_weight": 12.2,
-   "total_gross_weight": 13.3,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー平ゴム（カラビナ付）　１７×２００ＢＫ",
-    "弹力绳"
-   ]
-  },
-  "4550596052557": {
-   "total_quantity": 1.0,
-   "total_net_weight": 12.2,
-   "total_gross_weight": 13.3,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー平ゴム（カラビナ付）　１７×２００ＧＲ",
-    "弹力绳"
-   ]
-  },
-  "4550596052564": {
-   "total_quantity": 1.0,
-   "total_net_weight": 12.2,
-   "total_gross_weight": 13.3,
-   "names": [
-    "ELASTIC ROPE",
-    "◆◆バンジー平ゴム（カラビナ付）　１７×２００ＢＥ",
-    "弹力绳"
-   ]
-  },
-  "4550596153346": {
-   "total_quantity": 50.0,
-   "total_net_weight": 600.0,
-   "total_gross_weight": 650.0,
-   "names": [
-    "CONDUCTIVE ROPE",
-    "◆◆電気柵通電ロープ　ステン６本入　２５０Ｍ",
-    "通电绳"
-   ]
-  },
-  "4936695680998": {
-   "total_quantity": 40.0,
-   "total_net_weight": 370.0,
-   "total_gross_weight": 414.0,
-   "names": [
-    "ASHTRAY",
-    "◆屋外用　灰皿　スタンド付き",
-    "烟灰缸"
-   ]
-  },
-  "4936695681001": {
-   "total_quantity": 40.0,
-   "total_net_weight": 90.0,
-   "total_gross_weight": 106.0,
-   "names": [
-    "BASKET",
-    "◆吸殻収集缶",
-    "铁桶"
-   ]
-  },
-  "4936695731898": {
-   "total_quantity": 297.0,
-   "total_net_weight": 3801.6,
-   "total_gross_weight": 4098.6,
-   "names": [
-    "RECYCLED RUBBER MAT",
-    "◆レンガ調ゴムマット　３０×３０",
-    "再生胶垫"
-   ]
-  },
-  "4936695732147": {
-   "total_quantity": 4.0,
-   "total_net_weight": 63.0,
-   "total_gross_weight": 66.0,
-   "names": [
-    "ROPE",
-    "◆ＰＶロープ　（約）径６ｍｍＸ長さ５０ｍ",
-    "绳子"
-   ]
-  },
-  "4936695732154": {
-   "total_quantity": 2.0,
-   "total_net_weight": 28.8,
-   "total_gross_weight": 30.0,
-   "names": [
-    "ROPE",
-    "◆ＰＶロープ　（約）径９ｍｍＸ長さ１０ｍ",
-    "绳子"
-   ]
-  },
-  "4936695732192": {
-   "total_quantity": 8.0,
-   "total_net_weight": 18.0,
-   "total_gross_weight": 21.6,
-   "names": [
-    "ROPE",
-    "◆ＰＶロープ　（約）径３ｍｍＸ長さ１０ｍ",
-    "绳子"
-   ]
-  },
-  "4936695732208": {
-   "total_quantity": 12.0,
-   "total_net_weight": 45.0,
-   "total_gross_weight": 50.4,
-   "names": [
-    "ROPE",
-    "◆ＰＶロープ　（約）径４ｍｍＸ長さ１０ｍ",
-    "绳子"
-   ]
-  },
-  "4936695732239": {
-   "total_quantity": 4.0,
-   "total_net_weight": 37.8,
-   "total_gross_weight": 42.4,
-   "names": [
-    "ROPE",
-    "◆ＰＶロープ　（約）径８ｍｍＸ長さ１０ｍ",
-    "绳子"
-   ]
-  },
-  "4936695732246": {
-   "total_quantity": 7.0,
-   "total_net_weight": 47.25,
-   "total_gross_weight": 59.85,
-   "names": [
-    "ROPE",
-    "◆◆ＰＶロープ　（約）径３ｍｍＸ長さ５０ｍ",
-    "绳子"
-   ]
-  },
-  "4936695732253": {
-   "total_quantity": 3.0,
-   "total_net_weight": 27.75,
-   "total_gross_weight": 29.1,
-   "names": [
-    "ROPE",
-    "◆◆ＰＶロープ　（約）径４ｍｍＸ長さ３０ｍ",
-    "绳子"
-   ]
-  },
-  "4936695732260": {
-   "total_quantity": 4.0,
-   "total_net_weight": 58.52,
-   "total_gross_weight": 62.0,
-   "names": [
-    "ROPE",
-    "◆ＰＶロープ　（約）径６ｍｍＸ長さ３０ｍ",
-    "绳子"
-   ]
-  },
-  "4936695732277": {
-   "total_quantity": 20.0,
-   "total_net_weight": 43.6,
-   "total_gross_weight": 52.0,
-   "names": [
-    "ROPE",
-    "◆ＰＶロープ　（約）１６ｍｍ×長さ１０ｍ",
-    "绳子"
-   ]
-  },
-  "4936695732284": {
-   "total_quantity": 4.0,
-   "total_net_weight": 51.2,
-   "total_gross_weight": 53.2,
-   "names": [
-    "ROPE",
-    "◆ＰＶカットロープ　（約）９ｍｍＸ長さ２０ｍ",
-    "绳子"
-   ]
-  }
- },
- "华旭阳": {
-  "4549509492948": {
-   "total_quantity": 20.0,
-   "total_net_weight": 105.6,
-   "total_gross_weight": 138.0,
-   "names": [
-    "Multi",
-    "◆カットしやすい菜園マルチ黒０．０２×９５×５０ｍ",
-    "农用非泡沫聚乙烯薄膜"
-   ]
-  },
-  "4549509492955": {
-   "total_quantity": 100.0,
-   "total_net_weight": 528.0,
-   "total_gross_weight": 690.0,
-   "names": [
-    "Multi",
-    "◆菜園穴あきマルチ黒９２３０　５０ｍ",
-    "农用非泡沫聚乙烯薄膜"
-   ]
-  },
-  "4549509492979": {
-   "total_quantity": 20.0,
-   "total_net_weight": 105.6,
-   "total_gross_weight": 138.00000000000003,
-   "names": [
-    "Multi",
-    "◆穴あけ簡単菜園マルチ黒　０．０２×９５×５０ｍ",
-    "农用非泡沫聚乙烯薄膜"
-   ]
-  },
-  "4549509559597": {
-   "total_quantity": 40.0,
-   "total_net_weight": 302.4,
-   "total_gross_weight": 400.0,
-   "names": [
-    "Multi",
-    "◆菜園マルチ　黒　０．０２×１３５×５０ｍ",
-    "农用非泡沫聚乙烯薄膜"
-   ]
-  },
-  "4549509559603": {
-   "total_quantity": 70.0,
-   "total_net_weight": 369.6,
-   "total_gross_weight": 483.0,
-   "names": [
-    "Multi",
-    "◆菜園マルチ　透明　０．０２×９５×５０ｍ",
-    "农用非泡沫聚乙烯薄膜"
-   ]
-  },
-  "4549509559610": {
-   "total_quantity": 100.0,
-   "total_net_weight": 756.0,
-   "total_gross_weight": 1000.0,
-   "names": [
-    "Multi",
-    "◆菜園マルチ　透明　０．０２×１３５×５０ｍ",
-    "农用非泡沫聚乙烯薄膜"
-   ]
-  }
- },
- "TOP": {
-  "4549509703198": {
-   "total_quantity": 19.0,
-   "total_net_weight": 72.96000000000001,
-   "total_gross_weight": 80.56,
-   "names": [
-    "PAPER BRAID",
-    "◆紙紐　エコベアー１０号　１．５ｍｍ×１００ｍ",
-    "纸绳"
-   ]
-  },
-  "4549509703204": {
-   "total_quantity": 29.0,
-   "total_net_weight": 139.2,
-   "total_gross_weight": 150.8,
-   "names": [
-    "PAPER BRAID",
-    "◆紙紐　エコベアー１５号　２．０ｍｍ×１００ｍ",
-    "纸绳"
-   ]
-  },
-  "4549509703211": {
-   "total_quantity": 45.0,
-   "total_net_weight": 270.0,
-   "total_gross_weight": 288.0,
-   "names": [
-    "PAPER BRAID",
-    "◆紙紐　エコベアー２０号　２．５ｍｍ×１００ｍ",
-    "纸绳"
-   ]
-  },
-  "4549509766513": {
-   "total_quantity": 160.0,
-   "total_net_weight": 820.8,
-   "total_gross_weight": 854.4000000000001,
-   "names": [
-    "PE TAPE 50mmx500m WH",
-    "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　白",
-    "捆扎带"
-   ]
-  },
-  "4549509766520": {
-   "total_quantity": 50.0,
-   "total_net_weight": 256.5,
-   "total_gross_weight": 266.99999999999994,
-   "names": [
-    "PE TAPE 50mmx500m RE",
-    "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　赤",
-    "捆扎带"
-   ]
-  },
-  "4549509766537": {
-   "total_quantity": 70.0,
-   "total_net_weight": 359.1,
-   "total_gross_weight": 373.8,
-   "names": [
-    "PE TAPE 50mmx500m BL",
-    "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　青",
-    "捆扎带"
-   ]
-  },
-  "4549509766544": {
-   "total_quantity": 41.0,
-   "total_net_weight": 210.33,
-   "total_gross_weight": 218.94,
-   "names": [
-    "PE TAPE 50mmx500m YE",
-    "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　黄",
-    "捆扎带"
-   ]
-  },
-  "4549509766551": {
-   "total_quantity": 50.0,
-   "total_net_weight": 256.5,
-   "total_gross_weight": 266.99999999999994,
-   "names": [
-    "PE TAPE 50mmx500m GN",
-    "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　緑",
-    "捆扎带"
-   ]
-  },
-  "4549509766568": {
-   "total_quantity": 30.0,
-   "total_net_weight": 153.89999999999998,
-   "total_gross_weight": 160.20000000000002,
-   "names": [
-    "PE TAPE 50mmx500m PE",
-    "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　紫",
-    "捆扎带"
-   ]
+ "data": {
+  "中地": {
+   "4549509515197": {
+    "total_quantity": 500.0,
+    "total_net_weight": 3100.0,
+    "total_gross_weight": 3600.0,
+    "names": [
+     "3件套",
+     "FUTON SET",
+     "◆ボリューム寝具３点セット　Ｓ"
+    ]
+   },
+   "4549509515203": {
+    "total_quantity": 48.0,
+    "total_net_weight": 345.6,
+    "total_gross_weight": 393.59999999999997,
+    "names": [
+     "3件套",
+     "FUTON SET",
+     "◆ボリューム寝具３点セット　ＳＤ"
+    ]
+   },
+   "4549509518860": {
+    "total_quantity": 255.0,
+    "total_net_weight": 1326.0,
+    "total_gross_weight": 2083.35,
+    "names": [
+     "CUSHION",
+     "◆ふんわり３層ロングフロアクッション中材６５×１１５",
+     "坐垫"
+    ]
+   },
+   "4549509518877": {
+    "total_quantity": 176.0,
+    "total_net_weight": 1213.6999999999991,
+    "total_gross_weight": 1644.5400000000009,
+    "names": [
+     "CUSHION",
+     "◆ふんわり３層ロングフロアクッション中材６５×１８０",
+     "坐垫"
+    ]
+   },
+   "4549509518884": {
+    "total_quantity": 110.0,
+    "total_net_weight": 1243.0,
+    "total_gross_weight": 1545.5,
+    "names": [
+     "CUSHION",
+     "◆へたりに強い５層ロングフロアクッション中材１１５",
+     "坐垫"
+    ]
+   },
+   "4549509518891": {
+    "total_quantity": 136.0,
+    "total_net_weight": 1833.2799999999997,
+    "total_gross_weight": 2224.96,
+    "names": [
+     "CUSHION",
+     "◆へたりに強い５層ロングフロアクッション中材１８０",
+     "坐垫"
+    ]
+   },
+   "4549509610960": {
+    "total_quantity": 138.0,
+    "total_net_weight": 434.7,
+    "total_gross_weight": 524.1199999999997,
+    "names": [
+     "PILLOW",
+     "◆ふっくらまくら　３５Ｘ５０",
+     "枕头"
+    ]
+   },
+   "4549509610977": {
+    "total_quantity": 110.0,
+    "total_net_weight": 455.3999999999999,
+    "total_gross_weight": 540.54,
+    "names": [
+     "PILLOW",
+     "◆ふっくらまくら　４３Ｘ６３　ふつう",
+     "枕头"
+    ]
+   },
+   "4549509610984": {
+    "total_quantity": 106.0,
+    "total_net_weight": 362.52000000000004,
+    "total_gross_weight": 442.6599999999999,
+    "names": [
+     "PILLOW",
+     "◆ふっくらまくら　４３Ｘ６３　高め",
+     "枕头"
+    ]
+   },
+   "4550596018201": {
+    "total_quantity": 2.0,
+    "total_net_weight": 1.0,
+    "total_gross_weight": 2.0,
+    "names": [
+     "CHAIR CUSHION NV",
+     "◆チェアクッション　ネイビー",
+     "坐垫"
+    ]
+   },
+   "4550596018256": {
+    "total_quantity": 46.0,
+    "total_net_weight": 43.7,
+    "total_gross_weight": 69.0,
+    "names": [
+     "CHAIR CUSHION GY",
+     "◆ふわふわチェアクッション　グレー",
+     "坐垫"
+    ]
+   },
+   "4550596109466": {
+    "total_quantity": 62.0,
+    "total_net_weight": 558.0,
+    "total_gross_weight": 633.64,
+    "names": [
+     "cusion",
+     "◆洗えるクッション中材　４５ｘ４５",
+     "坐垫"
+    ]
+   },
+   "4550596211831": {
+    "total_quantity": 2591.0,
+    "total_net_weight": 14716.880000000001,
+    "total_gross_weight": 17618.8,
+    "names": [
+     "6件套",
+     "bedding",
+     "◆すぐに使える寝具６点セット　ＢＥ"
+    ]
+   },
+   "4550596211848": {
+    "total_quantity": 2235.0,
+    "total_net_weight": 12694.8,
+    "total_gross_weight": 15198.0,
+    "names": [
+     "6件套",
+     "bedding",
+     "◆すぐに使える寝具６点セット　ＧＹ"
+    ]
+   }
+  },
+  "正达": {
+   "4549509174042": {
+    "total_quantity": 341.0,
+    "total_net_weight": 1895.96,
+    "total_gross_weight": 2090.3299999999995,
+    "names": [
+     "MAT",
+     "◆・桐スノコ　ロールマットレスＳ１００×２００",
+     "被架床"
+    ]
+   },
+   "4549509174059": {
+    "total_quantity": 66.0,
+    "total_net_weight": 488.4,
+    "total_gross_weight": 541.2,
+    "names": [
+     "MAT",
+     "◆・桐スノコ　ロールマットレスＤ１４０×２００",
+     "被架床"
+    ]
+   },
+   "4549509280125": {
+    "total_quantity": 372.0,
+    "total_net_weight": 1971.6,
+    "total_gross_weight": 2362.2,
+    "names": [
+     "KITCHEN STOCKER",
+     "◆・Ｉ１　キッチンストッカー４段　ホワイト",
+     "木橱"
+    ]
+   },
+   "4549509315339": {
+    "total_quantity": 29.0,
+    "total_net_weight": 35.96,
+    "total_gross_weight": 49.3,
+    "names": [
+     "PAULOWNIA WOOD BASKET",
+     "◆・桐バスケット　Ｓ　ブラウン",
+     "木箱"
+    ]
+   },
+   "4549509412694": {
+    "total_quantity": 10.0,
+    "total_net_weight": 70.0,
+    "total_gross_weight": 74.0,
+    "names": [
+     "Pine Grates",
+     "◆・パイン製すのこ　３枚貼",
+     "木被架"
+    ]
+   },
+   "4549509412700": {
+    "total_quantity": 17.0,
+    "total_net_weight": 142.8,
+    "total_gross_weight": 151.3,
+    "names": [
+     "Pine Grates",
+     "◆・パイン製すのこ　４枚貼",
+     "木被架"
+    ]
+   },
+   "4549509412717": {
+    "total_quantity": 188.0,
+    "total_net_weight": 2143.2,
+    "total_gross_weight": 2256.0,
+    "names": [
+     "Pine Grates",
+     "◆・パイン製すのこ　５枚貼",
+     "木被架"
+    ]
+   },
+   "4549509412724": {
+    "total_quantity": 312.0,
+    "total_net_weight": 4555.200000000001,
+    "total_gross_weight": 4773.600000000001,
+    "names": [
+     "Pine Grates",
+     "◆・パイン製すのこ　６枚貼",
+     "木被架"
+    ]
+   },
+   "4549509412748": {
+    "total_quantity": 400.0,
+    "total_net_weight": 1320.0,
+    "total_gross_weight": 1520.0,
+    "names": [
+     "Pine Grates",
+     "◆・パイン製キャスター付すのこ　Ｓ",
+     "木被架"
+    ]
+   },
+   "4549509588306": {
+    "total_quantity": 40.0,
+    "total_net_weight": 240.0,
+    "total_gross_weight": 256.0,
+    "names": [
+     "DIY  Grates",
+     "◆・杉ダメージカラーすのこＬ　ＢＲ",
+     "木被架"
+    ]
+   },
+   "4549509588313": {
+    "total_quantity": 5.0,
+    "total_net_weight": 30.0,
+    "total_gross_weight": 32.0,
+    "names": [
+     "DIY  Grates",
+     "◆・杉ダメージカラーすのこＬ　ＷＨ",
+     "木被架"
+    ]
+   },
+   "4549509656876": {
+    "total_quantity": 283.0,
+    "total_net_weight": 1528.2,
+    "total_gross_weight": 1799.88,
+    "names": [
+     "BED",
+     "◆・すのこパレット　４枚セット",
+     "被架床"
+    ]
+   },
+   "4549509659709": {
+    "total_quantity": 104.0,
+    "total_net_weight": 863.2,
+    "total_gross_weight": 946.3999999999999,
+    "names": [
+     "MATTRESS",
+     "◆・布団が干せるひのきスノコ四つ折りマットレスＳ",
+     "被架床"
+    ]
+   },
+   "4549509761778": {
+    "total_quantity": 283.0,
+    "total_net_weight": 3254.5,
+    "total_gross_weight": 3537.5,
+    "names": [
+     "CLOSET DRAINBOARD 2P 75X75",
+     "◆・桐押入れすのこ８枚貼り（７５ｘ７５）２枚入",
+     "橱柜搁架"
+    ]
+   },
+   "4549509849865": {
+    "total_quantity": 98.0,
+    "total_net_weight": 784.0,
+    "total_gross_weight": 833.0,
+    "names": [
+     "SUNOKO 2PCS/SET CLOSET",
+     "◆・桐すのこ２枚組　クローゼット",
+     "木被架"
+    ]
+   },
+   "4549509849872": {
+    "total_quantity": 4.0,
+    "total_net_weight": 12.0,
+    "total_gross_weight": 13.4,
+    "names": [
+     "SUNOKO 2PCS/SET MINISIZE",
+     "◆・桐すのこ２枚組　ミニサイズ",
+     "木被架"
+    ]
+   },
+   "4549509849889": {
+    "total_quantity": 18.0,
+    "total_net_weight": 153.0,
+    "total_gross_weight": 163.79999999999998,
+    "names": [
+     "SUNOKO 2PCS/SET FOR STORAGEBOX74CM",
+     "◆・すのこ２枚組　コロ付き収納ケース７４ｃｍ用",
+     "木被架"
+    ]
+   },
+   "4549509849896": {
+    "total_quantity": 6.0,
+    "total_net_weight": 32.4,
+    "total_gross_weight": 34.92,
+    "names": [
+     "SUNOKO 2PCS/SET FOR STORAGEBOX50CM",
+     "◆・桐すのこ２枚組　コロ付き収納ケース５０ｃｍ用",
+     "木被架"
+    ]
+   },
+   "4550596018607": {
+    "total_quantity": 829.0,
+    "total_net_weight": 3398.9,
+    "total_gross_weight": 4393.7,
+    "names": [
+     "44木架",
+     "wooden rack",
+     "◆・Ｃ２０　木製ラック４６　３段"
+    ]
+   },
+   "4550596018614": {
+    "total_quantity": 322.0,
+    "total_net_weight": 1738.8000000000002,
+    "total_gross_weight": 2318.3999999999996,
+    "names": [
+     "44木架",
+     "wooden rack",
+     "◆・Ｃ２１　木製ラック４６　４段"
+    ]
+   },
+   "4550596018638": {
+    "total_quantity": 40.0,
+    "total_net_weight": 128.0,
+    "total_gross_weight": 156.0,
+    "names": [
+     "44木架",
+     "wooden rack special board",
+     "◆・Ｃ２３　木製ラック４６　専用棚板"
+    ]
+   },
+   "4550596018652": {
+    "total_quantity": 153.0,
+    "total_net_weight": 1086.3,
+    "total_gross_weight": 1361.7,
+    "names": [
+     "44木架",
+     "wooden rack",
+     "◆・Ｃ２５　木製ラック６７　４段"
+    ]
+   },
+   "4550596018669": {
+    "total_quantity": 150.0,
+    "total_net_weight": 1335.0,
+    "total_gross_weight": 1680.0,
+    "names": [
+     "44木架",
+     "wooden rack",
+     "◆・Ｃ２６　木製ラック６７　５段"
+    ]
+   },
+   "4550596092843": {
+    "total_quantity": 10.0,
+    "total_net_weight": 77.99999999999999,
+    "total_gross_weight": 86.0,
+    "names": [
+     "WOODEN LID FOR SOFT CASE HALF",
+     "◆・インテリアソフトケース木製フタ　ハーフ",
+     "木盖"
+    ]
+   },
+   "4550596112121": {
+    "total_quantity": 300.0,
+    "total_net_weight": 1680.0,
+    "total_gross_weight": 2100.0,
+    "names": [
+     "PINE SUNOKO 75CM",
+     "◆・押入れ用キャスター付きすのこ",
+     "木被架"
+    ]
+   },
+   "4550596112138": {
+    "total_quantity": 294.0,
+    "total_net_weight": 1352.4,
+    "total_gross_weight": 1705.2,
+    "names": [
+     "PINE SUNOKO 55CM",
+     "◆・クローゼット用キャスター付きすのこ",
+     "木被架"
+    ]
+   },
+   "4550596139470": {
+    "total_quantity": 89.0,
+    "total_net_weight": 409.4,
+    "total_gross_weight": 480.6,
+    "names": [
+     "WOODEN LADDER S",
+     "◆・パイン製踏み台Ｓ　３２１７",
+     "木制凳子"
+    ]
+   },
+   "4550596139487": {
+    "total_quantity": 143.0,
+    "total_net_weight": 972.4000000000001,
+    "total_gross_weight": 1029.6,
+    "names": [
+     "WOODEN LADDER L",
+     "◆・パイン製踏み台Ｌ　４４２２",
+     "木制凳子"
+    ]
+   },
+   "4550596139494": {
+    "total_quantity": 100.0,
+    "total_net_weight": 620.0,
+    "total_gross_weight": 720.0,
+    "names": [
+     "WOODEN LADDER W",
+     "◆・パイン製踏み台Ｗ　４４１２",
+     "木制凳子"
+    ]
+   },
+   "4550596139500": {
+    "total_quantity": 118.0,
+    "total_net_weight": 483.8,
+    "total_gross_weight": 566.4,
+    "names": [
+     "WOODEN BASKET 3 TIER",
+     "◆・キャスター付き木製積重ねバスケット３段",
+     "木筐"
+    ]
+   },
+   "4550596145884": {
+    "total_quantity": 75.0,
+    "total_net_weight": 120.0,
+    "total_gross_weight": 157.5,
+    "names": [
+     "wooden scratching case",
+     "◆・木製爪とぎケースシングル",
+     "木制抓挠盒"
+    ]
+   },
+   "4550596145891": {
+    "total_quantity": 65.0,
+    "total_net_weight": 162.5,
+    "total_gross_weight": 191.75,
+    "names": [
+     "wooden scratching case",
+     "◆・木製爪とぎケースダブル",
+     "木制抓挠盒"
+    ]
+   },
+   "4550596145907": {
+    "total_quantity": 30.0,
+    "total_net_weight": 57.0,
+    "total_gross_weight": 73.5,
+    "names": [
+     "wooden scratching case",
+     "◆・木製爪とぎケース丸形",
+     "木制抓挠盒"
+    ]
+   },
+   "4550596164328": {
+    "total_quantity": 65.0,
+    "total_net_weight": 101.39999999999999,
+    "total_gross_weight": 116.34999999999998,
+    "names": [
+     "paulownia cutting board",
+     "◆・桐マナ板　Ｓ",
+     "木制菜板"
+    ]
+   },
+   "4550596164335": {
+    "total_quantity": 100.0,
+    "total_net_weight": 209.99999999999997,
+    "total_gross_weight": 230.00000000000003,
+    "names": [
+     "paulownia cutting board",
+     "◆・桐マナ板　Ｍ",
+     "木制菜板"
+    ]
+   },
+   "4550596164342": {
+    "total_quantity": 40.0,
+    "total_net_weight": 126.4,
+    "total_gross_weight": 145.59999999999997,
+    "names": [
+     "paulownia cutting board",
+     "◆・桐マナ板　Ｌ",
+     "木制菜板"
+    ]
+   },
+   "4550596184838": {
+    "total_quantity": 17.0,
+    "total_net_weight": 102.0,
+    "total_gross_weight": 110.5,
+    "names": [
+     "LID FOR STEEL WAGON",
+     "◆・高さ調整できるスチールワゴン用木製フタ",
+     "木盖"
+    ]
+   },
+   "4550596202044": {
+    "total_quantity": 25.0,
+    "total_net_weight": 110.0,
+    "total_gross_weight": 120.0,
+    "names": [
+     "44木架",
+     "RUBBER WOOD DISPLAY RACK NA",
+     "◆・天然木ディスプレイラック　ＮＡ"
+    ]
+   },
+   "4550596227849": {
+    "total_quantity": 50.0,
+    "total_net_weight": 274.0,
+    "total_gross_weight": 305.0,
+    "names": [
+     "HINOKI SUNOKO 580x439x39mm",
+     "◆・桧すのこ５枚貼り　５８０ｘ４３９ｘ３９ｍｍ",
+     "木被架"
+    ]
+   },
+   "4550596227856": {
+    "total_quantity": 50.0,
+    "total_net_weight": 375.0,
+    "total_gross_weight": 425.0,
+    "names": [
+     "HINOKI SUNOKO 850x439x39mm",
+     "◆・桧すのこ５枚貼り　８５０ｘ４３９ｘ３９ｍｍ",
+     "木被架"
+    ]
+   },
+   "4550596227863": {
+    "total_quantity": 50.0,
+    "total_net_weight": 255.00000000000003,
+    "total_gross_weight": 305.0,
+    "names": [
+     "HINOKI SUNOKO 1150x439x39mm",
+     "◆・桧すのこ５枚貼り　１１５０ｘ４３９ｘ３９ｍｍ",
+     "木被架"
+    ]
+   },
+   "4550596227870": {
+    "total_quantity": 75.0,
+    "total_net_weight": 697.5,
+    "total_gross_weight": 780.0,
+    "names": [
+     "HINOKI SUNOKO 850x528x39mm",
+     "◆・桧すのこ６枚貼り　８５０ｘ５２８ｘ３９ｍｍ",
+     "木被架"
+    ]
+   },
+   "4550596227887": {
+    "total_quantity": 50.0,
+    "total_net_weight": 310.0,
+    "total_gross_weight": 365.0,
+    "names": [
+     "HINOKI SUNOKO 1150x528x39mm",
+     "◆・桧すのこ６枚貼り　１１５０ｘ５２８ｘ３９ｍｍ",
+     "木被架"
+    ]
+   }
+  },
+  "达安": {
+   "4936695359672": {
+    "total_quantity": 75.0,
+    "total_net_weight": 738.0000000000001,
+    "total_gross_weight": 790.5,
+    "names": [
+     "SILICA GEL",
+     "◆サラサラネコ砂　３Ｌ",
+     "硅胶猫砂"
+    ]
+   }
+  },
+  "兆丰": {
+   "4549509623861": {
+    "total_quantity": 200.0,
+    "total_net_weight": 778.6,
+    "total_gross_weight": 972.0,
+    "names": [
+     "INNERBOX PP BROWN",
+     "◆インナーボックス　ＰＰ（ブラウン）",
+     "收纳筐"
+    ]
+   },
+   "4549509623878": {
+    "total_quantity": 80.0,
+    "total_net_weight": 243.84000000000003,
+    "total_gross_weight": 304.00000000000006,
+    "names": [
+     "INNERBOX PP BROWN SHALLOW",
+     "◆インナーボックス　ＰＰ（ブラウン）　浅型",
+     "收纳筐"
+    ]
+   },
+   "4549509623885": {
+    "total_quantity": 186.0,
+    "total_net_weight": 526.9400000000006,
+    "total_gross_weight": 665.8800000000001,
+    "names": [
+     "INNERBOX PP BROWN HALF",
+     "◆インナーボックス　ＰＰ（ブラウン）　ハーフ",
+     "收纳筐"
+    ]
+   },
+   "4549509623892": {
+    "total_quantity": 157.0,
+    "total_net_weight": 435.5199999999996,
+    "total_gross_weight": 525.9499999999999,
+    "names": [
+     "INNERBOX PP BROWN S",
+     "◆インナーボックス　ＰＰ（ブラウン）　Ｓ",
+     "收纳筐"
+    ]
+   },
+   "4549509623908": {
+    "total_quantity": 200.0,
+    "total_net_weight": 770.6,
+    "total_gross_weight": 964.0,
+    "names": [
+     "INNERBOX PP BEIGE",
+     "◆インナーボックス　ＰＰ（ベージュ）",
+     "收纳筐"
+    ]
+   },
+   "4549509623915": {
+    "total_quantity": 80.0,
+    "total_net_weight": 243.84000000000003,
+    "total_gross_weight": 304.0,
+    "names": [
+     "INNERBOX PP BEIGE SHALLOW",
+     "◆インナーボックス　ＰＰ（ベージュ）　浅型",
+     "收纳筐"
+    ]
+   },
+   "4549509623922": {
+    "total_quantity": 50.0,
+    "total_net_weight": 141.65,
+    "total_gross_weight": 179.0,
+    "names": [
+     "INNERBOX PP BEIGE HALF",
+     "◆インナーボックス　ＰＰ（ベージュ）　ハーフ",
+     "收纳筐"
+    ]
+   },
+   "4549509623939": {
+    "total_quantity": 133.0,
+    "total_net_weight": 370.2700000000005,
+    "total_gross_weight": 446.88000000000005,
+    "names": [
+     "INNERBOX PP BEIGE S",
+     "◆インナーボックス　ＰＰ（ベージュ）　Ｓ",
+     "收纳筐"
+    ]
+   },
+   "4549509729358": {
+    "total_quantity": 72.0,
+    "total_net_weight": 158.4,
+    "total_gross_weight": 216.0,
+    "names": [
+     "LID FOR INNERBOX PP BR",
+     "◆インナーボックス用フタ　ＰＰ（ブラウン）",
+     "收纳筐"
+    ]
+   },
+   "4549509729365": {
+    "total_quantity": 51.0,
+    "total_net_weight": 112.19999999999999,
+    "total_gross_weight": 153.0,
+    "names": [
+     "LID FOR INNERBOX PP BE",
+     "◆インナーボックス用フタ　ＰＰ（ベージュ）",
+     "收纳筐"
+    ]
+   },
+   "4549509769378": {
+    "total_quantity": 202.0,
+    "total_net_weight": 525.1999999999999,
+    "total_gross_weight": 929.1999999999999,
+    "names": [
+     "SLIM INNER BOX PP BR",
+     "◆持ち運べるスリムインナーボックスＰＰ　ＢＲ",
+     "收纳筐"
+    ]
+   },
+   "4549509769385": {
+    "total_quantity": 79.0,
+    "total_net_weight": 205.4,
+    "total_gross_weight": 363.3999999999999,
+    "names": [
+     "SLIM INNER BOX PP BE",
+     "◆持ち運べるスリムインナーボックスＰＰ　ＢＥ",
+     "收纳筐"
+    ]
+   }
+  },
+  "东基恒": {
+   "4550596044859": {
+    "total_quantity": 220.0,
+    "total_net_weight": 1847.9999999999998,
+    "total_gross_weight": 2068.0,
+    "names": [
+     "sandbags",
+     "◆土のう　４８×６２ｃｍ　１０枚入",
+     "编织袋"
+    ]
+   },
+   "4550596044866": {
+    "total_quantity": 250.0,
+    "total_net_weight": 4200.0,
+    "total_gross_weight": 4225.0,
+    "names": [
+     "sandbags",
+     "◆土のう　４８×６２ｃｍ　５０枚入",
+     "编织袋"
+    ]
+   },
+   "4550596044897": {
+    "total_quantity": 50.0,
+    "total_net_weight": 650.0,
+    "total_gross_weight": 700.0,
+    "names": [
+     "sandbag",
+     "◆ＵＶブラック土のう（３年耐候）　４８×６２ｃｍ　１０枚入",
+     "编织袋"
+    ]
+   },
+   "4550596044903": {
+    "total_quantity": 40.0,
+    "total_net_weight": 520.0,
+    "total_gross_weight": 524.0,
+    "names": [
+     "sandbag",
+     "◆ＵＶブラック土のう（３年耐候）　４８×６２ｃｍ　５０枚入",
+     "编织袋"
+    ]
+   },
+   "4550596044910": {
+    "total_quantity": 90.0,
+    "total_net_weight": 900.0,
+    "total_gross_weight": 909.0,
+    "names": [
+     "junk bag",
+     "◆ガラ袋　６０×９０ｃｍ　２５枚入",
+     "编织袋"
+    ]
+   },
+   "4550596044927": {
+    "total_quantity": 100.0,
+    "total_net_weight": 1500.0,
+    "total_gross_weight": 1600.0,
+    "names": [
+     "junk bag",
+     "◆丈夫なガラ袋　６０×９０ｃｍ　１０枚入",
+     "编织袋"
+    ]
+   },
+   "4550596044934": {
+    "total_quantity": 55.0,
+    "total_net_weight": 605.0,
+    "total_gross_weight": 660.0,
+    "names": [
+     "junk bag",
+     "◆丈夫なガラ袋　７０×１２０ｃｍ　１０枚入",
+     "编织袋"
+    ]
+   },
+   "4550596044941": {
+    "total_quantity": 30.0,
+    "total_net_weight": 360.0,
+    "total_gross_weight": 390.0,
+    "names": [
+     "junk bag",
+     "◆透明ガラ袋　６０×９０ｃｍ　１０枚入",
+     "编织袋"
+    ]
+   },
+   "4550596045696": {
+    "total_quantity": 10.0,
+    "total_net_weight": 150.0,
+    "total_gross_weight": 160.0,
+    "names": [
+     "junk bag",
+     "◆分別ガラ袋　６０×９０ｃｍ　１０枚入",
+     "编织袋"
+    ]
+   }
+  },
+  "益尚": {
+   "4549509379904": {
+    "total_quantity": 100.0,
+    "total_net_weight": 395.0,
+    "total_gross_weight": 476.99999999999994,
+    "names": [
+     "INNER BOX",
+     "◆インナーボックス（ナチュラル）",
+     "工艺篮"
+    ]
+   },
+   "4549509379911": {
+    "total_quantity": 60.0,
+    "total_net_weight": 186.0,
+    "total_gross_weight": 210.6,
+    "names": [
+     "INNER BOX",
+     "◆インナーボックス（ナチュラル）浅型",
+     "工艺篮"
+    ]
+   },
+   "4549509379928": {
+    "total_quantity": 48.0,
+    "total_net_weight": 130.56,
+    "total_gross_weight": 156.48000000000002,
+    "names": [
+     "INNER BOX",
+     "◆インナーボックス（ナチュラル）ハーフ",
+     "工艺篮"
+    ]
+   },
+   "4549509379935": {
+    "total_quantity": 82.0,
+    "total_net_weight": 213.2,
+    "total_gross_weight": 228.78,
+    "names": [
+     "INNER BOX",
+     "◆インナーボックス（ナチュラル）Ｓ",
+     "工艺篮"
+    ]
+   },
+   "4549509379942": {
+    "total_quantity": 60.0,
+    "total_net_weight": 237.0,
+    "total_gross_weight": 286.2,
+    "names": [
+     "INNER BOX",
+     "◆インナーボックス（ブラウン）",
+     "工艺篮"
+    ]
+   },
+   "4549509379959": {
+    "total_quantity": 35.0,
+    "total_net_weight": 108.5,
+    "total_gross_weight": 122.85,
+    "names": [
+     "INNER BOX",
+     "◆インナーボックス（ブラウン）浅型",
+     "工艺篮"
+    ]
+   },
+   "4549509379966": {
+    "total_quantity": 36.0,
+    "total_net_weight": 97.92,
+    "total_gross_weight": 117.35999999999999,
+    "names": [
+     "INNER BOX",
+     "◆インナーボックス（ブラウン）ハーフ",
+     "工艺篮"
+    ]
+   },
+   "4549509379973": {
+    "total_quantity": 10.0,
+    "total_net_weight": 26.0,
+    "total_gross_weight": 27.9,
+    "names": [
+     "INNER BOX",
+     "◆インナーボックス（ブラウン）Ｓ",
+     "工艺篮"
+    ]
+   },
+   "4549509900474": {
+    "total_quantity": 10.0,
+    "total_net_weight": 23.0,
+    "total_gross_weight": 28.0,
+    "names": [
+     "PP BASKET",
+     "◆◆レンジで使えるバスケット　オーバルＭ　ＢＲ",
+     "篮子"
+    ]
+   },
+   "4550596183039": {
+    "total_quantity": 10.0,
+    "total_net_weight": 107.0,
+    "total_gross_weight": 125.99999999999999,
+    "names": [
+     "laundry box",
+     "◆たためるランドリーボックス　１段タイプ",
+     "收纳用篮筐"
+    ]
+   }
+  },
+  "贝来": {
+   "4549509299950": {
+    "total_quantity": 35.0,
+    "total_net_weight": 224.00000000000003,
+    "total_gross_weight": 280.0,
+    "names": [
+     "MEMO BOARD",
+     "◆・軽い両面コルクボード　６０ｘ９０",
+     "软木板"
+    ]
+   },
+   "4549509340188": {
+    "total_quantity": 3.0,
+    "total_net_weight": 9.600000000000001,
+    "total_gross_weight": 11.100000000000001,
+    "names": [
+     "MEMO BOARD",
+     "◆・壁に掛けやすい軽いコルクボード　３０×３０",
+     "软木板"
+    ]
+   },
+   "4549509340195": {
+    "total_quantity": 7.0,
+    "total_net_weight": 30.8,
+    "total_gross_weight": 32.9,
+    "names": [
+     "MEMO BOARD",
+     "◆・壁に掛けやすい軽いコルクボード　３０×４０",
+     "软木板"
+    ]
+   },
+   "4549509340201": {
+    "total_quantity": 21.0,
+    "total_net_weight": 134.4,
+    "total_gross_weight": 157.5,
+    "names": [
+     "MEMO BOARD",
+     "◆・壁に掛けやすい軽いコルクボード　４０×６０",
+     "软木板"
+    ]
+   },
+   "4549509341550": {
+    "total_quantity": 20.0,
+    "total_net_weight": 60.0,
+    "total_gross_weight": 68.0,
+    "names": [
+     "WHIE BOARD",
+     "◆壁に掛けやすい軽いホワイトボード　３０×４０",
+     "写字板"
+    ]
+   },
+   "4549509341567": {
+    "total_quantity": 38.0,
+    "total_net_weight": 205.20000000000002,
+    "total_gross_weight": 228.0,
+    "names": [
+     "WHIE BOARD",
+     "◆壁に掛けやすい軽いホワイトボード　４０×６０",
+     "写字板"
+    ]
+   },
+   "4549509444770": {
+    "total_quantity": 25.0,
+    "total_net_weight": 236.0,
+    "total_gross_weight": 332.0,
+    "names": [
+     "WRITING BOARD",
+     "◆アルミ枠ホワイトボード無地６０Ｘ４５",
+     "写字板"
+    ]
+   },
+   "4549509637264": {
+    "total_quantity": 20.0,
+    "total_net_weight": 160.0,
+    "total_gross_weight": 172.0,
+    "names": [
+     "WRITING BOARD",
+     "◆ブラックボード３０Ｘ４０",
+     "写字板"
+    ]
+   },
+   "4549509637288": {
+    "total_quantity": 40.0,
+    "total_net_weight": 624.0,
+    "total_gross_weight": 740.0,
+    "names": [
+     "WRITING BOARD",
+     "◆ブラックボード６０Ｘ９０",
+     "写字板"
+    ]
+   },
+   "4549509845539": {
+    "total_quantity": 67.0,
+    "total_net_weight": 522.5999999999999,
+    "total_gross_weight": 576.2,
+    "names": [
+     "whiteboard",
+     "◆両面使えるホワイトボード６０ｘ９０ｃｍ",
+     "写字板"
+    ]
+   }
+  },
+  "亿钻": {
+   "4549509419679": {
+    "total_quantity": 40.0,
+    "total_net_weight": 252.0,
+    "total_gross_weight": 274.0,
+    "names": [
+     "WHEEL",
+     "◆◆ＰＵノーパンク用替えタイヤ　２２ｃｍ",
+     "轮子"
+    ]
+   },
+   "4549509419693": {
+    "total_quantity": 10.0,
+    "total_net_weight": 100.0,
+    "total_gross_weight": 107.0,
+    "names": [
+     "WHEEL",
+     "◆◆ＰＵノーパンクタイヤ２２ｃｍ　固定キャスター",
+     "轮子"
+    ]
+   },
+   "4550596052397": {
+    "total_quantity": 6.0,
+    "total_net_weight": 60.0,
+    "total_gross_weight": 63.0,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー丸ゴム　９ｍｍ×５０ｃｍ　ブラック",
+     "弹力绳"
+    ]
+   },
+   "4550596052403": {
+    "total_quantity": 3.0,
+    "total_net_weight": 30.0,
+    "total_gross_weight": 31.5,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー丸ゴム　９ｍｍ×５０ｃｍ　グリーン",
+     "弹力绳"
+    ]
+   },
+   "4550596052410": {
+    "total_quantity": 1.0,
+    "total_net_weight": 10.0,
+    "total_gross_weight": 10.5,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー丸ゴム　９ｍｍ×５０ｃｍ　ベージュ",
+     "弹力绳"
+    ]
+   },
+   "4550596052427": {
+    "total_quantity": 5.0,
+    "total_net_weight": 67.5,
+    "total_gross_weight": 71.0,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー丸ゴム　９ｍｍ×１００ｃｍ　ブラック",
+     "弹力绳"
+    ]
+   },
+   "4550596052434": {
+    "total_quantity": 2.0,
+    "total_net_weight": 27.0,
+    "total_gross_weight": 28.4,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー丸ゴム　９ｍｍ×１００ｃｍ　グリーン",
+     "弹力绳"
+    ]
+   },
+   "4550596052441": {
+    "total_quantity": 1.0,
+    "total_net_weight": 13.5,
+    "total_gross_weight": 14.2,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー丸ゴム　９ｍｍ×１００ｃｍ　ベージュ",
+     "弹力绳"
+    ]
+   },
+   "4550596052458": {
+    "total_quantity": 4.0,
+    "total_net_weight": 46.0,
+    "total_gross_weight": 48.0,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー平ゴム　１７ｍｍ×１００ｃｍ　ブラック",
+     "弹力绳"
+    ]
+   },
+   "4550596052465": {
+    "total_quantity": 3.0,
+    "total_net_weight": 34.5,
+    "total_gross_weight": 36.0,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー平ゴム　１７ｍｍ×１００ｃｍ　グリーン",
+     "弹力绳"
+    ]
+   },
+   "4550596052472": {
+    "total_quantity": 2.0,
+    "total_net_weight": 23.0,
+    "total_gross_weight": 24.0,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー平ゴム　１７ｍｍ×１００ｃｍ　ベージュ",
+     "弹力绳"
+    ]
+   },
+   "4550596052489": {
+    "total_quantity": 3.0,
+    "total_net_weight": 55.5,
+    "total_gross_weight": 57.6,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー平ゴム　１７ｍｍ×２００ｃｍ　ブラック",
+     "弹力绳"
+    ]
+   },
+   "4550596052496": {
+    "total_quantity": 2.0,
+    "total_net_weight": 37.0,
+    "total_gross_weight": 38.4,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー平ゴム　１７ｍｍ×２００ｃｍ　グリーン",
+     "弹力绳"
+    ]
+   },
+   "4550596052502": {
+    "total_quantity": 1.0,
+    "total_net_weight": 18.5,
+    "total_gross_weight": 19.2,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー平ゴム　１７ｍｍ×２００ｃｍ　ベージュ",
+     "弹力绳"
+    ]
+   },
+   "4550596052519": {
+    "total_quantity": 6.0,
+    "total_net_weight": 46.98,
+    "total_gross_weight": 49.2,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー平ゴム（カラビナ付）　１７×１００ＢＫ",
+     "弹力绳"
+    ]
+   },
+   "4550596052540": {
+    "total_quantity": 1.0,
+    "total_net_weight": 12.2,
+    "total_gross_weight": 13.3,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー平ゴム（カラビナ付）　１７×２００ＢＫ",
+     "弹力绳"
+    ]
+   },
+   "4550596052557": {
+    "total_quantity": 1.0,
+    "total_net_weight": 12.2,
+    "total_gross_weight": 13.3,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー平ゴム（カラビナ付）　１７×２００ＧＲ",
+     "弹力绳"
+    ]
+   },
+   "4550596052564": {
+    "total_quantity": 1.0,
+    "total_net_weight": 12.2,
+    "total_gross_weight": 13.3,
+    "names": [
+     "ELASTIC ROPE",
+     "◆◆バンジー平ゴム（カラビナ付）　１７×２００ＢＥ",
+     "弹力绳"
+    ]
+   },
+   "4550596153346": {
+    "total_quantity": 50.0,
+    "total_net_weight": 600.0,
+    "total_gross_weight": 650.0,
+    "names": [
+     "CONDUCTIVE ROPE",
+     "◆◆電気柵通電ロープ　ステン６本入　２５０Ｍ",
+     "通电绳"
+    ]
+   },
+   "4936695680998": {
+    "total_quantity": 40.0,
+    "total_net_weight": 370.0,
+    "total_gross_weight": 414.0,
+    "names": [
+     "ASHTRAY",
+     "◆屋外用　灰皿　スタンド付き",
+     "烟灰缸"
+    ]
+   },
+   "4936695681001": {
+    "total_quantity": 40.0,
+    "total_net_weight": 90.0,
+    "total_gross_weight": 106.0,
+    "names": [
+     "BASKET",
+     "◆吸殻収集缶",
+     "铁桶"
+    ]
+   },
+   "4936695731898": {
+    "total_quantity": 297.0,
+    "total_net_weight": 3801.6,
+    "total_gross_weight": 4098.6,
+    "names": [
+     "RECYCLED RUBBER MAT",
+     "◆レンガ調ゴムマット　３０×３０",
+     "再生胶垫"
+    ]
+   },
+   "4936695732147": {
+    "total_quantity": 4.0,
+    "total_net_weight": 63.0,
+    "total_gross_weight": 66.0,
+    "names": [
+     "ROPE",
+     "◆ＰＶロープ　（約）径６ｍｍＸ長さ５０ｍ",
+     "绳子"
+    ]
+   },
+   "4936695732154": {
+    "total_quantity": 2.0,
+    "total_net_weight": 28.8,
+    "total_gross_weight": 30.0,
+    "names": [
+     "ROPE",
+     "◆ＰＶロープ　（約）径９ｍｍＸ長さ１０ｍ",
+     "绳子"
+    ]
+   },
+   "4936695732192": {
+    "total_quantity": 8.0,
+    "total_net_weight": 18.0,
+    "total_gross_weight": 21.6,
+    "names": [
+     "ROPE",
+     "◆ＰＶロープ　（約）径３ｍｍＸ長さ１０ｍ",
+     "绳子"
+    ]
+   },
+   "4936695732208": {
+    "total_quantity": 12.0,
+    "total_net_weight": 45.0,
+    "total_gross_weight": 50.4,
+    "names": [
+     "ROPE",
+     "◆ＰＶロープ　（約）径４ｍｍＸ長さ１０ｍ",
+     "绳子"
+    ]
+   },
+   "4936695732239": {
+    "total_quantity": 4.0,
+    "total_net_weight": 37.8,
+    "total_gross_weight": 42.4,
+    "names": [
+     "ROPE",
+     "◆ＰＶロープ　（約）径８ｍｍＸ長さ１０ｍ",
+     "绳子"
+    ]
+   },
+   "4936695732246": {
+    "total_quantity": 7.0,
+    "total_net_weight": 47.25,
+    "total_gross_weight": 59.85,
+    "names": [
+     "ROPE",
+     "◆◆ＰＶロープ　（約）径３ｍｍＸ長さ５０ｍ",
+     "绳子"
+    ]
+   },
+   "4936695732253": {
+    "total_quantity": 3.0,
+    "total_net_weight": 27.75,
+    "total_gross_weight": 29.1,
+    "names": [
+     "ROPE",
+     "◆◆ＰＶロープ　（約）径４ｍｍＸ長さ３０ｍ",
+     "绳子"
+    ]
+   },
+   "4936695732260": {
+    "total_quantity": 4.0,
+    "total_net_weight": 58.52,
+    "total_gross_weight": 62.0,
+    "names": [
+     "ROPE",
+     "◆ＰＶロープ　（約）径６ｍｍＸ長さ３０ｍ",
+     "绳子"
+    ]
+   },
+   "4936695732277": {
+    "total_quantity": 20.0,
+    "total_net_weight": 43.6,
+    "total_gross_weight": 52.0,
+    "names": [
+     "ROPE",
+     "◆ＰＶロープ　（約）１６ｍｍ×長さ１０ｍ",
+     "绳子"
+    ]
+   },
+   "4936695732284": {
+    "total_quantity": 4.0,
+    "total_net_weight": 51.2,
+    "total_gross_weight": 53.2,
+    "names": [
+     "ROPE",
+     "◆ＰＶカットロープ　（約）９ｍｍＸ長さ２０ｍ",
+     "绳子"
+    ]
+   }
+  },
+  "华旭阳": {
+   "4549509492948": {
+    "total_quantity": 20.0,
+    "total_net_weight": 105.6,
+    "total_gross_weight": 138.0,
+    "names": [
+     "Multi",
+     "◆カットしやすい菜園マルチ黒０．０２×９５×５０ｍ",
+     "农用非泡沫聚乙烯薄膜"
+    ]
+   },
+   "4549509492955": {
+    "total_quantity": 100.0,
+    "total_net_weight": 528.0,
+    "total_gross_weight": 690.0,
+    "names": [
+     "Multi",
+     "◆菜園穴あきマルチ黒９２３０　５０ｍ",
+     "农用非泡沫聚乙烯薄膜"
+    ]
+   },
+   "4549509492979": {
+    "total_quantity": 20.0,
+    "total_net_weight": 105.6,
+    "total_gross_weight": 138.00000000000003,
+    "names": [
+     "Multi",
+     "◆穴あけ簡単菜園マルチ黒　０．０２×９５×５０ｍ",
+     "农用非泡沫聚乙烯薄膜"
+    ]
+   },
+   "4549509559597": {
+    "total_quantity": 40.0,
+    "total_net_weight": 302.4,
+    "total_gross_weight": 400.0,
+    "names": [
+     "Multi",
+     "◆菜園マルチ　黒　０．０２×１３５×５０ｍ",
+     "农用非泡沫聚乙烯薄膜"
+    ]
+   },
+   "4549509559603": {
+    "total_quantity": 70.0,
+    "total_net_weight": 369.6,
+    "total_gross_weight": 483.0,
+    "names": [
+     "Multi",
+     "◆菜園マルチ　透明　０．０２×９５×５０ｍ",
+     "农用非泡沫聚乙烯薄膜"
+    ]
+   },
+   "4549509559610": {
+    "total_quantity": 100.0,
+    "total_net_weight": 756.0,
+    "total_gross_weight": 1000.0,
+    "names": [
+     "Multi",
+     "◆菜園マルチ　透明　０．０２×１３５×５０ｍ",
+     "农用非泡沫聚乙烯薄膜"
+    ]
+   }
+  },
+  "TOP": {
+   "4549509703198": {
+    "total_quantity": 19.0,
+    "total_net_weight": 72.96000000000001,
+    "total_gross_weight": 80.56,
+    "names": [
+     "PAPER BRAID",
+     "◆紙紐　エコベアー１０号　１．５ｍｍ×１００ｍ",
+     "纸绳"
+    ]
+   },
+   "4549509703204": {
+    "total_quantity": 29.0,
+    "total_net_weight": 139.2,
+    "total_gross_weight": 150.8,
+    "names": [
+     "PAPER BRAID",
+     "◆紙紐　エコベアー１５号　２．０ｍｍ×１００ｍ",
+     "纸绳"
+    ]
+   },
+   "4549509703211": {
+    "total_quantity": 45.0,
+    "total_net_weight": 270.0,
+    "total_gross_weight": 288.0,
+    "names": [
+     "PAPER BRAID",
+     "◆紙紐　エコベアー２０号　２．５ｍｍ×１００ｍ",
+     "纸绳"
+    ]
+   },
+   "4549509766513": {
+    "total_quantity": 160.0,
+    "total_net_weight": 820.8,
+    "total_gross_weight": 854.4000000000001,
+    "names": [
+     "PE TAPE 50mmx500m WH",
+     "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　白",
+     "捆扎带"
+    ]
+   },
+   "4549509766520": {
+    "total_quantity": 50.0,
+    "total_net_weight": 256.5,
+    "total_gross_weight": 266.99999999999994,
+    "names": [
+     "PE TAPE 50mmx500m RE",
+     "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　赤",
+     "捆扎带"
+    ]
+   },
+   "4549509766537": {
+    "total_quantity": 70.0,
+    "total_net_weight": 359.1,
+    "total_gross_weight": 373.8,
+    "names": [
+     "PE TAPE 50mmx500m BL",
+     "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　青",
+     "捆扎带"
+    ]
+   },
+   "4549509766544": {
+    "total_quantity": 41.0,
+    "total_net_weight": 210.33,
+    "total_gross_weight": 218.94,
+    "names": [
+     "PE TAPE 50mmx500m YE",
+     "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　黄",
+     "捆扎带"
+    ]
+   },
+   "4549509766551": {
+    "total_quantity": 50.0,
+    "total_net_weight": 256.5,
+    "total_gross_weight": 266.99999999999994,
+    "names": [
+     "PE TAPE 50mmx500m GN",
+     "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　緑",
+     "捆扎带"
+    ]
+   },
+   "4549509766568": {
+    "total_quantity": 30.0,
+    "total_net_weight": 153.89999999999998,
+    "total_gross_weight": 160.20000000000002,
+    "names": [
+     "PE TAPE 50mmx500m PE",
+     "◆ＰＥレコード巻きテープ　幅５０ｍｍＸ５００ｍ　紫",
+     "捆扎带"
+    ]
+   }
   }
  }
 }

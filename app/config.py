@@ -47,9 +47,11 @@ class Settings(BaseSettings):
     # ----- 下游装箱单关键列名（日本买家标准模板）-----
     col_factory: str = "MAKER_MEI_KJ"   # 工厂名（日文/英文）
     col_sku: str = "SHOHIN_CD"          # SKU 代码
-    col_net: str = "净重"               # 待填：净重
-    col_gross: str = "毛重"             # 待填：毛重
-    col_qty: str = "D_HACCHU_SU"        # 该行发注数量（用于按行分摊总重）
+    col_net: str = "净重"               # 待填：净重（原文件无此列，Node6 首次写入时添加）
+    col_gross: str = "毛重"             # 待填：毛重（同上）
+    col_name_cn: str = "中文品名"       # 待填：中文品名（同上，填主数据 name_cn）
+    # 外箱发注数量：净重/毛重 = 单重 × 该列（2026-07-28 用户定，与 GT 聚合口径一致）
+    col_qty: str = "SOTOBAKO_D_HACCHU_SU"
 
     def resolve(self, p: str) -> Path:
         """把相对路径解析为基于项目根的绝对路径。"""

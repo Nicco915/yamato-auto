@@ -2,15 +2,20 @@
 
 1. 写业务表：把人工确认后的精确数据写回下游 Excel 副本
    （先复制到 output/ 目录，绝不覆盖原件）；
-   每个 (工厂, SKU) 可能对应多行，按行分摊：行净重 = 单件净重 × 该行发注数量。
+   写入规则（2026-07-28 用户定）：
+   - 原文件没有 中文品名/净重/毛重 三列：首次写入时在 SHOHIN_MEI_E 后插入
+     （与既有填好文件布局一致：第 32/33/34 列），已存在则跳过；
+   - 净重 = 单件净重 × SOTOBAKO_D_HACCHU_SU，毛重同理，2 位小数；
+   - 中文品名 = 主数据 name_cn（新 SKU 经 Node5 人工补录）；
+   - 表格格式严格不变：全程 openpyxl，禁止 pandas 写入。
 2. 写数据库（Upsert）：
    - 新 SKU：INSERT 人工补录的多语言品名/HS 编码/单件重量；
    - 老 SKU：人工微调过重量时 UPDATE 刷新历史重量。
 """
 import shutil
+from copy import copy
 from pathlib import Path
 
-import pandas as pd
 from openpyxl import load_workbook
 from sqlalchemy import select
 
@@ -18,6 +23,10 @@ from app.config import get_settings
 from app.db.models import Factory, FactorySKU
 from app.db.session import get_session
 from app.state import AgentState
+
+# 待添加的三列（插入到 SHOHIN_MEI_E 之后，与既有填好文件布局一致）
+NEW_COL_NAMES = ("中文品名", "净重", "毛重")
+INSERT_AFTER_COL = "SHOHIN_MEI_E"
 
 
 def _ensure_output_copy(state: AgentState) -> Path:
@@ -31,39 +40,61 @@ def _ensure_output_copy(state: AgentState) -> Path:
     return dst
 
 
+def _ensure_three_columns(ws) -> None:
+    """表头缺 中文品名/净重/毛重 时在 SHOHIN_MEI_E 后插入；已存在则跳过。
+
+    部分缺失属于异常布局（非原文件也非既有填好文件），零容错直接报错交人工。
+    """
+    header = [c.value for c in ws[1]]
+    missing = [n for n in NEW_COL_NAMES if n not in header]
+    if not missing:
+        return
+    if len(missing) != len(NEW_COL_NAMES):
+        raise ValueError(f"下游表列布局异常：三列部分缺失 {missing}，请人工确认")
+    anchor = header.index(INSERT_AFTER_COL) + 1  # 1 基列号
+    ws.insert_cols(anchor + 1, len(NEW_COL_NAMES))
+    # 表头样式照搬锚点列（字体/边框/填充），保证格式严格不变
+    for j, name in enumerate(NEW_COL_NAMES):
+        cell = ws.cell(row=1, column=anchor + 1 + j, value=name)
+        cell._style = copy(ws.cell(row=1, column=anchor)._style)
+    print(f"[Node6] 原文件无 {list(NEW_COL_NAMES)} 三列，已在 {INSERT_AFTER_COL} 后插入")
+
+
 def _write_excel(state: AgentState, out_path: Path) -> int:
-    """按行号精准写回 净重/毛重 单元格，返回写入的单元格数量。"""
+    """按行号精准写回 中文品名/净重/毛重 单元格，返回写入的行数。"""
     settings = get_settings()
     cur = state.get("current_factory_data") or {}
     factory = cur.get("factory_name")
     row_map = (state.get("downstream_row_map") or {}).get(factory) or {}
 
-    # 用 pandas 取每行的发注数量（行号 -> 数量）
-    df = pd.read_excel(
-        state["downstream_file_path"], sheet_name=0,
-        dtype={settings.col_sku: str}, usecols=[settings.col_qty],
-    )
-
     wb = load_workbook(out_path)
     ws = wb[wb.sheetnames[0]]
+    _ensure_three_columns(ws)
+
+    # 插入列后按表头名重新定位（列位可能已右移）
     header = [c.value for c in ws[1]]
     col_net = header.index(settings.col_net) + 1
     col_gross = header.index(settings.col_gross) + 1
+    col_cn = header.index(settings.col_name_cn) + 1
+    col_qty = header.index(settings.col_qty) + 1
 
     written = 0
     for item in cur.get("calculated_items") or []:
         calc = item.get("calculation") or {}
         unit_net = calc.get("calculated_unit_net")
         unit_gross = calc.get("calculated_unit_gross")
-        if unit_net is None and unit_gross is None:
+        name_cn = item.get("name_cn") or (item.get("db_record") or {}).get("name_cn")
+        if unit_net is None and unit_gross is None and not name_cn:
             continue  # Error 项无有效单重，留给人工线下处理
         for excel_row in row_map.get(str(item.get("sku")), []):
-            qty = df.iloc[excel_row - 2][settings.col_qty]
-            qty = float(qty) if pd.notna(qty) else 0.0
+            qty = ws.cell(row=excel_row, column=col_qty).value
+            qty = float(qty) if isinstance(qty, (int, float)) else 0.0
+            if name_cn:
+                ws.cell(row=excel_row, column=col_cn, value=name_cn)
             if unit_net is not None:
-                ws.cell(row=excel_row, column=col_net, value=round(unit_net * qty, 3))
+                ws.cell(row=excel_row, column=col_net, value=round(unit_net * qty, 2))
             if unit_gross is not None:
-                ws.cell(row=excel_row, column=col_gross, value=round(unit_gross * qty, 3))
+                ws.cell(row=excel_row, column=col_gross, value=round(unit_gross * qty, 2))
             written += 1
     wb.save(out_path)
     return written

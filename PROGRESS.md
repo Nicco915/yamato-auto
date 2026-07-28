@@ -1,6 +1,6 @@
 # 供应链单证自动化 — 项目进度总览
 
-> 最后更新：2026-07-28（提取 Agent 三层构建完成：批处理 145/146 + 增量重放 9/10 全绿）
+> 最后更新：2026-07-28（提取 Agent 对话式路径配置上线：LLM 解析+人工确认+持久/当前批次双生效）
 > 设计文档：`../agent设计/`（第一/二/三阶段、api接口以及异步机制、人工审核界面设计、提取agent背景prompt）
 
 ## 1. 项目目标
@@ -29,7 +29,7 @@
 | 验证线：人工逐个核对 | ✅ 10/10 | 全部工厂全字段 100%（146 SKU），见第 5 节 |
 | 提取 Agent：三层结构 | ✅ 完成 | 目标识别器 10/10；批处理 extract_factory 145/146；增量 FactorySession 重放 9/10 全绿（见第 5.1 节） |
 | 审核界面：双屏 UI | ✅ 完成 | 已并入主服务，集成实测 8/8 通过（见第 6 节） |
-| Node3 真实联调 | ⏳ 待办 | 去 mock 接真实 qwen3.7-plus 端到端（等人工核对完成后进行） |
+| Node3 真实联调 | ✅ 完成 | 去 mock 接真实 qwen3.7-plus，山東中地端到端 14/14 全绿（见第 6.1 节） |
 
 ## 4. 提取引擎（app/extraction/）
 
@@ -136,7 +136,68 @@
 - 提交 → `POST /api/v1/orders/{thread_id}/resume` → 多工厂循环自动进入下一工厂审核
 - 集成实测 8/8 通过；payload 从 checkpoint `tasks[].interrupts` 读取，刷新页面可恢复现场
 
+## 6.1 Node3 真实联调（2026-07-28 完成）
+
+Node3 真实分支改为以**增量会话 FactorySession** 驱动（与生产"单据陆续到达"同语义）：
+
+- `set_expected_skus()` 直接对接 Node1 的下游期望 SKU → 每次处理产出覆盖率，
+  状态自动进 `complete_auto`；负向候选（报关 PDF）只登记不调 LLM；
+- 会话 JSON 落盘 `app/data/sessions/<工厂名>.json` 供审计；
+- `extraction_issues` / `extraction_coverage` 写入 state 并透传进 Node5 审核 payload；
+- 提取为空时全量占位交人工补录（零容错，不空转）。
+
+配套契约对齐：
+- Node4 sku 键改 `sku_code or sku_name`（条码优先，无条码条目落品名交人工），
+  extracted_data 透传品名原文与 review_reason；
+- Node2 SUPPORTED_EXTS 补 `.doc/.docx`（亿钻 doc 箱单进审核界面文件列表）。
+
+联调脚本 `validation/integ_graph_real.py`（`LLM_ENABLE_THINKING=0 python3 validation/integ_graph_real.py --reset`）：
+山東中地端到端——8 个文件仅 1 次 LLM 调用（PackingList.xlsx），发票/6 份报关 PDF
+全部规则拦截；14/14 SKU 对 GT 全字段一致；resume approved 后写 Excel 124 行 +
+落库 INSERT 14，落库单重 = GT 总重/件数 逐项断言通过。mock 冒烟（tests/smoke_test.py）
+同步回归通过。
+
+## 6.2 下游表写回规则（2026-07-28 用户定，已实现+实测）
+
+- **原文件**：`96/ContentsOfTheContainer_202624_青島XD_20260708_原文件.xlsx` 是客户
+  最原始文件（57 列，无 中文品名/净重/毛重）。生产输入**不**改配置默认值，
+  按批次用请求体 `downstream_file_path` 传入（层2 路径策略不变）；
+- **首次写入加列**：Node6 `_ensure_three_columns` 在 SHOHIN_MEI_E 后插入
+  中文品名(32)/净重(33)/毛重(34)，表头样式照搬锚点列；已存在则跳过（幂等，
+  多工厂循环复用同一副本安全）；三列部分缺失属异常布局，直接报错交人工；
+- **写入值**：净重 = 单件净重 × SOTOBAKO_D_HACCHU_SU，毛重同理，**2 位小数**；
+  中文品名 = 主数据 name_cn（新 SKU 经 Node5 人工补录）；
+- **格式严格不变**：writer 全程 openpyxl（pandas 只读不写），实测其余 57 列
+  与原文件逐格一致；`col_qty` 配置默认已从 D_HACCHU_SU 改为 SOTOBAKO_D_HACCHU_SU；
+- 联调脚本 `validation/integ_graph_real.py` 同步覆盖以上全部断言（124 行中地数据）。
+
+## 6.3 提取 Agent 对话式路径配置（2026-07-28 用户授权，已实现+实测）
+
+生产环境人工指令通道：**操作员与提取 Agent 对话改路径，Agent 被授权直接修改**。
+
+- **API**：`POST /api/v1/agent/chat`，两段式——
+  ① `{"message": "工厂文件都在 /xxx 下面"}` → LLM 解析（只解析不决策）+
+  纯 Python 校验 + 旧值→新值预览（`pending_confirmation`）；
+  ② `{"confirm": true, "action": <回传>, "thread_id": <可选>}` → 执行。
+- **授权白名单**（仅此三项，其他一律拒绝）：`upstream_root`（工厂文件夹，目录须存在）/
+  `downstream_file_path`（下游表，文件须存在）/`gt_source`（GT 基准，文件须存在）；
+  相对路径、不存在路径、白名单外配置项（如 api_key）全部被拦截。
+- **生效范围**（用户定：持久+当前批次）：写回 .env（先备份 .env.bak，行级 upsert
+  不动其他行）+ 刷新运行时配置 + 携带 thread_id 时当前批次从 Node1 重跑。
+  重跑机制（langgraph 1.2.9 实测关键）：挂起线程有未完成 interrupt 任务，
+  `Command(goto=)` 会被旧任务卡死，必须 `update_state(as_node=START)` 作废旧现场
+  再 `invoke(None)`。
+- 实测 `validation/chat_paths_test.py`：错路径启动→占位挂起→自然语言对话→确认→
+  .env 更新+当前批次重跑命中中地；负例（不存在路径/闲聊/相对路径/白名单外）全拒。
+
 ## 7. 关键设计决策记录
+
+0. **路径集中配置 + agent 对话可改**（2026-07-28 用户授权）：`app/.env`「业务路径」节
+   统一管理 `UPSTREAM_ROOT`（工厂文件夹）/`DOWNSTREAM_FILE_PATH`（下游表默认）/
+   `GT_SOURCE`/`GT_FALLBACK`（GT 主源/兜底）；validation 各脚本硬编码路径已收编到
+   该文件（ground_truth.FACTORY_FOLDER = UPSTREAM_ROOT）；GT 缓存带 _meta 来源校验，
+   改路径自动作废重建；联调脚本下游表用 `INTEG_DOWNSTREAM_FILE` 覆盖（默认_原文件）。
+   生产侧的对话修改通道见第 6.3 节（/api/v1/agent/chat，LLM 解析+人工确认）
 
 1. **计算隔离**：LLM 只提取，所有除法/对齐/写回均为纯 Python，从根源杜绝计算幻觉
 2. **别名映射表**（`app/alias_map.json`）：下游工厂名是全角日文（`山東中地`），与本地中文文件夹名
@@ -154,14 +215,18 @@
 
 ## 8. 待办清单（按优先级）
 
-1. **TOP 4549509766544 业务裁决**（用户已定暂时忽略）：Contents 第 112 行 3 箱 vs
-   箱单原文/报关匹配 60 箱，确认后修正 GT 或标记例外
-2. Node3 真实联调：把 extraction.agent / session 接入 LangGraph Node2/3
-   （去 EXTRACTION_MOCK，山東中地端到端；增量模式与 Node1 expected_skus 对接）
-3. `--consolidate` 更新 10 工厂汇总报告（用修复后的通道重跑或基于人工核对结论更新）
-4. **业务确认**：下游表净重/毛重列多为公式单元格（仅 TOP KOPH 21 行真空），当前按
-   "覆写=单重×行数量"实现，是否符合填表习惯待确认
-5. 按需：Celery 迁移、LibreOffice 安装（brew 网络停滞，非必需，textutil 已兜底）
+1. **全量真实批次跑通（投产前最后一块）**：真实图端到端目前只走过山東中地
+   （14 SKU）。下一步对其余 9 个工厂（正达 43 / 亿钻 32 / 中地外全部）
+   走真实流程：process → /review 逐厂人工审核 → resume → 写回+落库，
+   重点观察亿钻（doc 通道+每箱重口径）、TOP（毛净列倒置+GT 分歧 SKU）。
+   可整批一次 process（多工厂循环）或按 factory_filter 逐个来
+2. **TOP 4549509766544 业务裁决**（用户已定暂时忽略）：Contents 第 112 行 3 箱 vs
+   箱单原文/报关匹配 60 箱，确认后修正 GT 或标记例外——全量跑到 TOP 前必须有结论
+3. **审核界面渲染 extraction_issues/coverage**：Node5 payload 已透传（6.1 节），
+   前端 /review 尚未展示「暂无箱单/改单/冲突」等 Agent 反馈条
+4. `--consolidate` 更新 10 工厂汇总报告（用修复后的通道重跑或基于人工核对结论更新）
+5. 按需：Celery 迁移、LibreOffice 安装（brew 网络停滞，非必需，textutil 已兜底）、
+   /chat 对话界面（当前仅 API）
 
 ## 9. 环境备忘
 

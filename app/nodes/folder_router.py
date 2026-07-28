@@ -16,8 +16,9 @@ from rapidfuzz import fuzz, process
 from app.config import get_settings
 from app.state import AgentState
 
-# 支持的上游单据扩展名
-SUPPORTED_EXTS = {".pdf", ".xlsx", ".xls", ".jpg", ".jpeg", ".png", ".csv"}
+# 支持的上游单据扩展名（.doc/.docx 走 doc_channel：soffice/textutil 转换）
+SUPPORTED_EXTS = {".pdf", ".xlsx", ".xls", ".jpg", ".jpeg", ".png", ".csv",
+                  ".doc", ".docx"}
 
 
 def _normalize(name: str) -> str:

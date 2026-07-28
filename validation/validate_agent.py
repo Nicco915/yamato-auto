@@ -17,13 +17,13 @@ sys.path.insert(0, str(APP_ROOT / "app"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from extraction.agent import extract_factory, format_report  # noqa: E402
-from ground_truth import get_factory_ground_truth, list_factories  # noqa: E402
+from ground_truth import FACTORY_FOLDER, get_factory_ground_truth, list_factories  # noqa: E402
 
 TOL = 0.01
 
 
 def check_factory(factory: str) -> dict:
-    folder = f"/Users/nz/Downloads/yamato/96/工厂/{factory}"
+    folder = f"{FACTORY_FOLDER}/{factory}"
     gt = get_factory_ground_truth(factory)
     t0 = time.time()
     report = extract_factory(folder)
