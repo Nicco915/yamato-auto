@@ -132,6 +132,91 @@ def _is_retryable(exc: Exception) -> bool:
     return False
 
 
+def _create_with_retry(kwargs: dict, model: str, kind: str,
+                       source_file: str):
+    """带重试与用量记录的 chat.completions.create 公共内部函数。
+
+    - 429/5xx 指数退避重试最多 MAX_API_RETRIES 次；
+    - 每次调用（含失败）记录 token 用量到 usage_tracker；
+    - 成功返回原始 ChatCompletion 响应对象（由调用方取 content / tool_calls）。
+    """
+    client = _get_client()
+    last_exc: Exception | None = None
+    for attempt in range(MAX_API_RETRIES + 1):
+        t0 = time.time()
+        try:
+            resp = client.chat.completions.create(**kwargs)
+            elapsed = time.time() - t0
+            usage = getattr(resp, "usage", None)
+            usage_tracker.add(
+                UsageRecord(
+                    model=model,
+                    kind=kind,
+                    source_file=source_file,
+                    prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                    completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+                    total_tokens=getattr(usage, "total_tokens", 0) or 0,
+                    elapsed_sec=round(elapsed, 2),
+                    success=True,
+                )
+            )
+            return resp
+        except APIError as e:
+            # 部分模型不支持 response_format，降级一次后按正常重试流程走
+            if "response_format" in kwargs and "response_format" in str(e).lower():
+                kwargs.pop("response_format", None)
+                continue
+            last_exc = e
+            elapsed = time.time() - t0
+            retryable = _is_retryable(e) and attempt < MAX_API_RETRIES
+            usage_tracker.add(
+                UsageRecord(
+                    model=model,
+                    kind=kind,
+                    source_file=source_file,
+                    elapsed_sec=round(elapsed, 2),
+                    success=False,
+                    error=f"{type(e).__name__}: {str(e)[:200]}",
+                )
+            )
+            if retryable:
+                # 指数退避：1s, 2s, 4s + 抖动
+                time.sleep((2**attempt) + random.uniform(0, 0.5))
+                continue
+            raise
+        except APITimeoutError as e:
+            last_exc = e
+            usage_tracker.add(
+                UsageRecord(
+                    model=model,
+                    kind=kind,
+                    source_file=source_file,
+                    success=False,
+                    error=f"APITimeoutError: {str(e)[:200]}",
+                )
+            )
+            if attempt < MAX_API_RETRIES:
+                time.sleep((2**attempt) + random.uniform(0, 0.5))
+                continue
+            raise
+    assert last_exc is not None
+    raise last_exc
+
+
+def _base_kwargs(messages: list[dict], model: str, temperature: float,
+                 max_tokens: int) -> dict:
+    kwargs: dict = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+    }
+    if not thinking_enabled():
+        # 关闭思考模式：reasoning_tokens 归零，响应大幅提速
+        kwargs["extra_body"] = {"enable_thinking": False}
+    return kwargs
+
+
 def chat_completion(
     messages: list[dict],
     *,
@@ -149,82 +234,49 @@ def chat_completion(
     - token 用量记入 usage_tracker。
     """
     s = get_settings()
-    client = _get_client()
     use_model = model or (s["vision_model"] if vision else s["text_model"])
     kind = "vision" if vision else "text"
 
-    kwargs: dict = {
-        "model": use_model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
+    kwargs = _base_kwargs(messages, use_model, temperature, max_tokens)
     if json_mode:
         # 硅基流动 Qwen 系列支持强制 JSON 输出；若模型不支持会在 API 层报错，
-        # 此时降级为普通输出（由调用方做 JSON 解析重试）。
+        # 此时降级为普通输出（由 _create_with_retry 摘掉 response_format 重试）。
         kwargs["response_format"] = {"type": "json_object"}
-    if not thinking_enabled():
-        # 关闭思考模式：reasoning_tokens 归零，响应大幅提速
-        kwargs["extra_body"] = {"enable_thinking": False}
 
-    last_exc: Exception | None = None
-    for attempt in range(MAX_API_RETRIES + 1):
-        t0 = time.time()
-        try:
-            resp = client.chat.completions.create(**kwargs)
-            elapsed = time.time() - t0
-            usage = getattr(resp, "usage", None)
-            usage_tracker.add(
-                UsageRecord(
-                    model=use_model,
-                    kind=kind,
-                    source_file=source_file,
-                    prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-                    completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                    total_tokens=getattr(usage, "total_tokens", 0) or 0,
-                    elapsed_sec=round(elapsed, 2),
-                    success=True,
-                )
-            )
-            return resp.choices[0].message.content or ""
-        except APIError as e:
-            # 部分模型不支持 response_format，降级一次后按正常重试流程走
-            if json_mode and "response_format" in str(e).lower():
-                kwargs.pop("response_format", None)
-                json_mode = False
-                continue
-            last_exc = e
-            elapsed = time.time() - t0
-            retryable = _is_retryable(e) and attempt < MAX_API_RETRIES
-            usage_tracker.add(
-                UsageRecord(
-                    model=use_model,
-                    kind=kind,
-                    source_file=source_file,
-                    elapsed_sec=round(elapsed, 2),
-                    success=False,
-                    error=f"{type(e).__name__}: {str(e)[:200]}",
-                )
-            )
-            if retryable:
-                # 指数退避：1s, 2s, 4s + 抖动
-                time.sleep((2**attempt) + random.uniform(0, 0.5))
-                continue
-            raise
-        except APITimeoutError as e:
-            last_exc = e
-            usage_tracker.add(
-                UsageRecord(
-                    model=use_model,
-                    kind=kind,
-                    source_file=source_file,
-                    success=False,
-                    error=f"APITimeoutError: {str(e)[:200]}",
-                )
-            )
-            if attempt < MAX_API_RETRIES:
-                time.sleep((2**attempt) + random.uniform(0, 0.5))
-                continue
-            raise
-    assert last_exc is not None
-    raise last_exc
+    resp = _create_with_retry(kwargs, use_model, kind, source_file)
+    return resp.choices[0].message.content or ""
+
+
+def chat_completion_with_tools(
+    messages: list[dict],
+    *,
+    tools: list[dict],
+    source_file: str = "dispatcher",
+    model: str | None = None,
+    temperature: float = 0.0,
+    max_tokens: int = 4096,
+) -> dict:
+    """OpenAI 原生 tool-calling 调用，返回 {"content", "tool_calls"}。
+
+    供调度 Agent 使用（llm_client 主通道只服务提取流水线，签名不动）：
+    - tools 为 OpenAI 格式的工具定义列表；与 response_format 互斥，本函数不设；
+    - tool_calls 中 arguments 为 JSON 字符串，由调用方解析并校验；
+    - 重试/退避/用量记录与 chat_completion 共用 _create_with_retry。
+    """
+    s = get_settings()
+    use_model = model or s["text_model"]
+
+    kwargs = _base_kwargs(messages, use_model, temperature, max_tokens)
+    kwargs["tools"] = tools
+
+    resp = _create_with_retry(kwargs, use_model, "text", source_file)
+    msg = resp.choices[0].message
+    tool_calls = [
+        {
+            "id": tc.id,
+            "name": tc.function.name,
+            "arguments": tc.function.arguments or "",
+        }
+        for tc in (msg.tool_calls or [])
+    ]
+    return {"content": msg.content, "tool_calls": tool_calls}

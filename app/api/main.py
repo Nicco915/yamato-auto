@@ -66,6 +66,19 @@ class AgentChatRequest(BaseModel):
     action: Optional[Dict[str, Any]] = None     # 确认执行时回传的解析结果
 
 
+class DispatcherChatRequest(BaseModel):
+    """调度 Agent 对话（批次管理智能体系统前台）。
+
+    两段式：先发 message，调度循环调只读工具直接回答；遇到写操作返回
+    pending_confirmation（action 信封 kind="dispatcher_tool"）；
+    确认后带 confirm=true（action 可省略——服务端 session 留存优先）执行。
+    """
+    session_id: Optional[str] = None            # 会话标识（服务端留存 pending action）
+    message: Optional[str] = None               # 自然语言指令（确认前）
+    confirm: bool = False
+    action: Optional[Dict[str, Any]] = None     # 无 session 时的降级回传
+
+
 # ---------- 路由 ----------
 
 @app.post("/api/v1/orders/process")
@@ -138,4 +151,32 @@ async def agent_chat(request: AgentChatRequest):
         raise HTTPException(status_code=400, detail="message 不能为空")
     return await asyncio.to_thread(
         chat.handle_message, request.message, None, request.session_id
+    )
+
+
+# ---------- 调度 Agent 对话（批次管理前台，只读一期已开通）----------
+
+@app.post("/api/v1/dispatcher/chat")
+async def dispatcher_chat(request: DispatcherChatRequest):
+    """与调度 Agent 对话：查批次、解释错误、发起/重跑/审核/改路径。
+
+    - 确认前：{"message": "现在有哪些批次待审核？"} → tool-calling 循环，
+      只读工具直接回答；写操作返回 pending_confirmation（含预览）；
+    - 确认执行：{"confirm": true, "session_id": <同前>} → 执行服务端留存的
+      pending action（无 session 时需回传 action 信封，且会再过一次校验）。
+    """
+    from app import dispatcher
+
+    if request.confirm:
+        result = await asyncio.to_thread(
+            dispatcher.confirm, request.session_id, request.action
+        )
+        if result.get("status") == "error":
+            raise HTTPException(status_code=400, detail=result.get("message"))
+        return result
+
+    if not request.message:
+        raise HTTPException(status_code=400, detail="message 不能为空")
+    return await asyncio.to_thread(
+        dispatcher.handle_message, request.message, request.session_id
     )

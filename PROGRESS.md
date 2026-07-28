@@ -32,6 +32,7 @@
 | Node3 真实联调 | ✅ 完成 | 去 mock 接真实 qwen3.7-plus，山東中地端到端 14/14 全绿（见第 6.1 节） |
 | 生产前端：工作台/详情/对话/审核加固 | ✅ 完成 | 4 页面 + 批次管理 API + review_audits 审计落库，全链路测试通过（见第 6.5 节） |
 | 对话 Agent：L1 会话记忆 | ✅ 完成 | 多轮补充信息（先路径后类别）可合并，A+B 双层实现，实测通过（见第 6.6 节） |
+| 调度 Agent：智能体系统前台 | ✅ 完成 | 11 工具注册表 + 双适配器循环 + 确认门 + 操作指导，测试 21/21（见第 6.7 节） |
 
 ## 4. 提取引擎（app/extraction/）
 
@@ -327,6 +328,79 @@ usage scope）→ 审核 payload（weight_diff_warn_ratio=0.05）→ resume（�
 真实 LLM 两轮端到端（裸路径 → 拒绝但记住 → "刚才那个是工厂文件夹" → 合并出
 pending_confirmation）+ 缺省 session_id 无状态兼容，全绿；FastAPI TestClient
 冒烟（confirm/message 分支 session_id 透传）通过。
+
+## 6.7 调度 Agent（2026-07-28 完成，sub-agent 并行实施）
+
+**演进**：原系统全靠 HTTP 端点/UI 直接操作（发动批次/查状态/改路径/改数审核/重跑），
+操作员必须逐个点按钮。新增调度 Agent 作为系统大脑/前台，操作员自然语言对话完成
+所有操作；提取流水线（LangGraph 7 节点）不变作为 worker role 被调用。原路径配置
+Agent（6.3 节）的 `set_paths` 作为调度 Agent 的一个工具整合进来。
+
+**包结构** `app/app/dispatcher/`：
+- `tools.py`：声明式 `Tool` dataclass + `TOOLS` 注册表（11 工具：7 只读 + 4 写）。
+  `visible_tools(phase)` / `openai_tool_defs(phase)` / `validate_args(args, schema)`。
+  只读 func 内部不抛异常（错误走 `{"error": ...}`），写工具带 preview + execute。
+- `loop.py`：`llm_step` 双适配器（`DISPATCHER_STEP_MODE=native|json` 环境变量一键切），
+  `run_dispatch(message, session, phase)`、`execute_confirmed(session, client_action)`。
+  `DISPATCHER_MOCK=1` 时走 `_MOCK_SCRIPT` 剧本队列（确定性测试关键口）。
+  `MAX_ROUNDS=6` / `TOOL_RESULT_CAP=6000` / `ACTION_TTL_SEC=30min`。
+- `sessions.py`：`DispatcherSession`（独立于 `agent_chat._SESSIONS`，
+  模式复制后扩展 `pending_action` / `tool_history`），`get_session` / `record_turn`
+  / `record_tool` / `clear_pending`。
+- `prompts.py`：`system_prompt(phase)`，phase>=2 包含写工具段落，
+  含"操作指导 vs 数据查询"说明。
+- `explain.py`：`explain_errors(thread_id, factory=None)` → 数据收集 + `ISSUE_KB`
+  规则表（建议动作只来自代码规则表，LLM 只负责措辞，**禁止发明动作**）+ LLM
+  翻译 + 模板降级（`EXPLAIN_MOCK=1` 跳过 LLM）。
+- `guide.py`：`ask_guide(question, thread_id=None)` → 操作指导问答。`GUIDE_KB`
+  知识库（8 场景：新手引导、改路径、解释错误、重跑、**发起批次**、改数审核、
+  最佳实践、FAQ）+ 上下文收集 + LLM 问答 + 模板降级（`GUIDE_MOCK=1`）。
+
+**端点**：`POST /api/v1/dispatcher/chat`（`api/main.py`），请求
+`DispatcherChatRequest{session_id, message, confirm, action}`。
+现有 `/api/v1/agent/chat` **一字未动**（生产授权通道保持独立）。
+
+**11 个工具**：
+| 工具 | 类型 | 作用 |
+|------|------|------|
+| `list_batches` | 查数据 | 批次列表（可选 status_filter） |
+| `get_batch_status` | 查数据 | 单批次轻量摘要 |
+| `get_batch_detail` | 查数据 | 批次详情（factories/session/audit/usage） |
+| `get_review_payload` | 查数据 | Node5 挂起审核包 |
+| `explain_errors` | 解释 | 批次错误翻译（LLM+规则表） |
+| `get_usage` | 查数据 | LLM 用量 |
+| `ask_guide` | 指导 | 操作指导问答（知识库+LLM） |
+| `create_batch` | 写操作 | 发起批次（路径展开+查重预检→confirm→跑图） |
+| `rerun` | 写操作 | 重跑挂起批次（状态检查+路径 diff→confirm→重跑） |
+| `submit_review` | 写操作 | 改数审核（代码侧 diff 预览→confirm→resume+审计落库） |
+| `set_paths` | 写操作 | 改路径配置（复用 agent_chat.validate/preview/apply） |
+
+**确认门**（铁律：LLM 只解析不做决策，写操作必须人工确认）：
+- 写工具拦截 → `session.pending_action` 存信封（`kind:dispatcher_tool`）→ 循环立即终止
+- confirm 优先用 session 留存版本（防客户端伪造），TTL 30 分钟，`validate_args` 复核，
+  `execute` 内部二次校验
+- 一次一确认：一条消息最多产出一个 pending action
+
+**双适配器实测**（qwen3.7-plus via DashScope token-plan 端点）：
+| 模式 | 耗时 | tokens | 特点 |
+|------|------|--------|------|
+| native（OpenAI tool_calls） | 23.6s | 5421 | 符合标准，多工具并行结构清晰，换模型容易 |
+| json（自解析协议） | 18.4s | 5535 | 更快，可控性强，调试容易 |
+**建议**：保持 native 为默认，保留 json 切换能力（环境变量一键切）。
+
+**测试矩阵**：
+- `validation/dispatcher_read_test.py`（8/8，`DISPATCHER_MOCK=1 EXPLAIN_MOCK=1`）：
+  查询问答/多轮工具/未知工具/坏参数/轮数上限/explain 降级/json 适配器/端点冒烟
+- `validation/dispatcher_write_test.py`（8/8，含 chat_paths 回归）：
+  拦截未执行/confirm 执行/篡改防护/过期拒绝/diff 预览+审计落库/rerun/set_paths/回归
+- `validation/dispatcher_guide_test.py`（5/5）：
+  接口正常/知识库匹配/未知问题兜底/调度 Agent 调用 ask_guide/真实 LLM
+- 现有 `chat_paths_test.py`、`ui_api_test.py` 全绿（零回归）
+- **真实 LLM 调用验证**：
+  - 调度循环（native 模式）：操作员问"现在有哪些批次？" → agent 调 list_batches →
+    工具返回 → 继续推理生成人话回复（含表格）
+  - 操作指导：操作员问"怎么发起新批次？" → agent 调 ask_guide → 返回知识库匹配 +
+    LLM 润色后的操作指引
 
 ## 7. 关键设计决策记录
 
