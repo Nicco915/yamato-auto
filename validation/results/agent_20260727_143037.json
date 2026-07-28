@@ -1,0 +1,2632 @@
+[
+ {
+  "factory": "TOP",
+  "elapsed_sec": 18.7,
+  "sku_total": 9,
+  "sku_hit": 5,
+  "blocking": false,
+  "issues": [],
+  "targets": [
+   "/Users/nz/Downloads/yamato/96/工厂/TOP/XD-269766-----请款资料.xls"
+  ],
+  "stats": {
+   "files_total": 2,
+   "targets_used": 1,
+   "items_extracted": 9,
+   "json_attempts": 1,
+   "json_parse_failures": 0,
+   "token_usage": {
+    "calls": 1,
+    "failed_calls": 0,
+    "prompt_tokens": 3070,
+    "completion_tokens": 1010,
+    "total_tokens": 4080
+   }
+  },
+  "per_sku": {
+   "4549509703198": {
+    "gt": {
+     "total_quantity": 19.0,
+     "total_net_weight": 72.96000000000001,
+     "total_gross_weight": 80.56
+    },
+    "extracted": [
+     {
+      "qty": 19.0,
+      "nw": 72.96,
+      "gw": 80.56,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509703204": {
+    "gt": {
+     "total_quantity": 29.0,
+     "total_net_weight": 139.2,
+     "total_gross_weight": 150.8
+    },
+    "extracted": [
+     {
+      "qty": 29.0,
+      "nw": 139.2,
+      "gw": 150.8,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509703211": {
+    "gt": {
+     "total_quantity": 45.0,
+     "total_net_weight": 270.0,
+     "total_gross_weight": 288.0
+    },
+    "extracted": [
+     {
+      "qty": 45.0,
+      "nw": 270.0,
+      "gw": 288.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509766513": {
+    "gt": {
+     "total_quantity": 160.0,
+     "total_net_weight": 820.8,
+     "total_gross_weight": 854.4000000000001
+    },
+    "extracted": [
+     {
+      "qty": 160.0,
+      "nw": 820.8,
+      "gw": 854.4,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509766520": {
+    "gt": {
+     "total_quantity": 0.0,
+     "total_net_weight": 0.0,
+     "total_gross_weight": 0.0
+    },
+    "extracted": [
+     {
+      "qty": 50.0,
+      "nw": 256.5,
+      "gw": 267.0,
+      "review": false
+     }
+    ],
+    "hit": false
+   },
+   "4549509766537": {
+    "gt": {
+     "total_quantity": 0.0,
+     "total_net_weight": 0.0,
+     "total_gross_weight": 0.0
+    },
+    "extracted": [
+     {
+      "qty": 70.0,
+      "nw": 359.1,
+      "gw": 373.8,
+      "review": false
+     }
+    ],
+    "hit": false
+   },
+   "4549509766544": {
+    "gt": {
+     "total_quantity": 41.0,
+     "total_net_weight": 210.33,
+     "total_gross_weight": 218.94
+    },
+    "extracted": [
+     {
+      "qty": 60.0,
+      "nw": 307.8,
+      "gw": 320.4,
+      "review": false
+     }
+    ],
+    "hit": false
+   },
+   "4549509766551": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 256.5,
+     "total_gross_weight": 266.99999999999994
+    },
+    "extracted": [
+     {
+      "qty": 50.0,
+      "nw": 256.5,
+      "gw": 267.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509766568": {
+    "gt": {
+     "total_quantity": 0.0,
+     "total_net_weight": 0.0,
+     "total_gross_weight": 0.0
+    },
+    "extracted": [
+     {
+      "qty": 30.0,
+      "nw": 153.9,
+      "gw": 160.2,
+      "review": false
+     }
+    ],
+    "hit": false
+   }
+  }
+ },
+ {
+  "factory": "东基恒",
+  "elapsed_sec": 19.4,
+  "sku_total": 9,
+  "sku_hit": 9,
+  "blocking": false,
+  "issues": [],
+  "targets": [
+   "/Users/nz/Downloads/yamato/96/工厂/东基恒/请款资料/PACKING.pdf"
+  ],
+  "stats": {
+   "files_total": 4,
+   "targets_used": 1,
+   "items_extracted": 9,
+   "json_attempts": 1,
+   "json_parse_failures": 0,
+   "token_usage": {
+    "calls": 1,
+    "failed_calls": 0,
+    "prompt_tokens": 1751,
+    "completion_tokens": 1080,
+    "total_tokens": 2831
+   }
+  },
+  "per_sku": {
+   "4550596044859": {
+    "gt": {
+     "total_quantity": 220.0,
+     "total_net_weight": 1847.9999999999998,
+     "total_gross_weight": 2068.0
+    },
+    "extracted": [
+     {
+      "qty": 220.0,
+      "nw": 1848.0,
+      "gw": 2068.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596044866": {
+    "gt": {
+     "total_quantity": 250.0,
+     "total_net_weight": 4200.0,
+     "total_gross_weight": 4225.0
+    },
+    "extracted": [
+     {
+      "qty": 250.0,
+      "nw": 4200.0,
+      "gw": 4225.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596044897": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 650.0,
+     "total_gross_weight": 700.0
+    },
+    "extracted": [
+     {
+      "qty": 50.0,
+      "nw": 650.0,
+      "gw": 700.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596044903": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 520.0,
+     "total_gross_weight": 524.0
+    },
+    "extracted": [
+     {
+      "qty": 40.0,
+      "nw": 520.0,
+      "gw": 524.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596044910": {
+    "gt": {
+     "total_quantity": 90.0,
+     "total_net_weight": 900.0,
+     "total_gross_weight": 909.0
+    },
+    "extracted": [
+     {
+      "qty": 90.0,
+      "nw": 900.0,
+      "gw": 909.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596044927": {
+    "gt": {
+     "total_quantity": 100.0,
+     "total_net_weight": 1500.0,
+     "total_gross_weight": 1600.0
+    },
+    "extracted": [
+     {
+      "qty": 100.0,
+      "nw": 1500.0,
+      "gw": 1600.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596044934": {
+    "gt": {
+     "total_quantity": 55.0,
+     "total_net_weight": 605.0,
+     "total_gross_weight": 660.0
+    },
+    "extracted": [
+     {
+      "qty": 55.0,
+      "nw": 605.0,
+      "gw": 660.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596044941": {
+    "gt": {
+     "total_quantity": 30.0,
+     "total_net_weight": 360.0,
+     "total_gross_weight": 390.0
+    },
+    "extracted": [
+     {
+      "qty": 30.0,
+      "nw": 360.0,
+      "gw": 390.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596045696": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 150.0,
+     "total_gross_weight": 160.0
+    },
+    "extracted": [
+     {
+      "qty": 10.0,
+      "nw": 150.0,
+      "gw": 160.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   }
+  }
+ },
+ {
+  "factory": "中地",
+  "elapsed_sec": 31.8,
+  "sku_total": 14,
+  "sku_hit": 14,
+  "blocking": false,
+  "issues": [],
+  "targets": [
+   "/Users/nz/Downloads/yamato/96/工厂/中地/XD-269760PackingList.xlsx"
+  ],
+  "stats": {
+   "files_total": 8,
+   "targets_used": 1,
+   "items_extracted": 14,
+   "json_attempts": 1,
+   "json_parse_failures": 0,
+   "token_usage": {
+    "calls": 1,
+    "failed_calls": 0,
+    "prompt_tokens": 3641,
+    "completion_tokens": 1780,
+    "total_tokens": 5421
+   }
+  },
+  "per_sku": {
+   "4549509515197": {
+    "gt": {
+     "total_quantity": 500.0,
+     "total_net_weight": 3100.0,
+     "total_gross_weight": 3600.0
+    },
+    "extracted": [
+     {
+      "qty": 500.0,
+      "nw": 3100.0,
+      "gw": 3600.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509515203": {
+    "gt": {
+     "total_quantity": 48.0,
+     "total_net_weight": 345.6,
+     "total_gross_weight": 393.59999999999997
+    },
+    "extracted": [
+     {
+      "qty": 48.0,
+      "nw": 345.6,
+      "gw": 393.6,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509518860": {
+    "gt": {
+     "total_quantity": 255.0,
+     "total_net_weight": 1326.0,
+     "total_gross_weight": 2083.35
+    },
+    "extracted": [
+     {
+      "qty": 255.0,
+      "nw": 1326.0,
+      "gw": 2083.35,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509518877": {
+    "gt": {
+     "total_quantity": 176.0,
+     "total_net_weight": 1213.6999999999991,
+     "total_gross_weight": 1644.5400000000009
+    },
+    "extracted": [
+     {
+      "qty": 176.0,
+      "nw": 1213.7,
+      "gw": 1644.54,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509518884": {
+    "gt": {
+     "total_quantity": 110.0,
+     "total_net_weight": 1243.0,
+     "total_gross_weight": 1545.5
+    },
+    "extracted": [
+     {
+      "qty": 110.0,
+      "nw": 1243.0,
+      "gw": 1545.5,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509518891": {
+    "gt": {
+     "total_quantity": 136.0,
+     "total_net_weight": 1833.2799999999997,
+     "total_gross_weight": 2224.96
+    },
+    "extracted": [
+     {
+      "qty": 136.0,
+      "nw": 1833.28,
+      "gw": 2224.96,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509610960": {
+    "gt": {
+     "total_quantity": 138.0,
+     "total_net_weight": 434.7,
+     "total_gross_weight": 524.1199999999997
+    },
+    "extracted": [
+     {
+      "qty": 138.0,
+      "nw": 434.7,
+      "gw": 524.12,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509610977": {
+    "gt": {
+     "total_quantity": 110.0,
+     "total_net_weight": 455.3999999999999,
+     "total_gross_weight": 540.54
+    },
+    "extracted": [
+     {
+      "qty": 110.0,
+      "nw": 455.4,
+      "gw": 540.54,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509610984": {
+    "gt": {
+     "total_quantity": 106.0,
+     "total_net_weight": 362.52000000000004,
+     "total_gross_weight": 442.6599999999999
+    },
+    "extracted": [
+     {
+      "qty": 106.0,
+      "nw": 362.52,
+      "gw": 442.66,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596018201": {
+    "gt": {
+     "total_quantity": 2.0,
+     "total_net_weight": 1.0,
+     "total_gross_weight": 2.0
+    },
+    "extracted": [
+     {
+      "qty": 2.0,
+      "nw": 1.0,
+      "gw": 2.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596018256": {
+    "gt": {
+     "total_quantity": 46.0,
+     "total_net_weight": 43.7,
+     "total_gross_weight": 69.0
+    },
+    "extracted": [
+     {
+      "qty": 46.0,
+      "nw": 43.7,
+      "gw": 69.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596109466": {
+    "gt": {
+     "total_quantity": 62.0,
+     "total_net_weight": 558.0,
+     "total_gross_weight": 633.64
+    },
+    "extracted": [
+     {
+      "qty": 62.0,
+      "nw": 558.0,
+      "gw": 633.64,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596211831": {
+    "gt": {
+     "total_quantity": 2591.0,
+     "total_net_weight": 14716.880000000001,
+     "total_gross_weight": 17618.8
+    },
+    "extracted": [
+     {
+      "qty": 2591.0,
+      "nw": 14716.88,
+      "gw": 17618.8,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596211848": {
+    "gt": {
+     "total_quantity": 2235.0,
+     "total_net_weight": 12694.8,
+     "total_gross_weight": 15198.0
+    },
+    "extracted": [
+     {
+      "qty": 2235.0,
+      "nw": 12694.8,
+      "gw": 15198.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   }
+  }
+ },
+ {
+  "factory": "亿钻",
+  "elapsed_sec": 89.2,
+  "sku_total": 32,
+  "sku_hit": 32,
+  "blocking": false,
+  "issues": [
+   {
+    "level": "info",
+    "type": "ITEMS_NEED_REVIEW",
+    "message": "30 个提取项被通道标记 needs_human_review",
+    "file": ""
+   }
+  ],
+  "targets": [
+   "/Users/nz/Downloads/yamato/96/工厂/亿钻/装箱单通用RWS261232@.pdf",
+   "/Users/nz/Downloads/yamato/96/工厂/亿钻/装箱单通用RWS261233@.doc"
+  ],
+  "stats": {
+   "files_total": 11,
+   "targets_used": 2,
+   "items_extracted": 32,
+   "json_attempts": 2,
+   "json_parse_failures": 0,
+   "token_usage": {
+    "calls": 2,
+    "failed_calls": 0,
+    "prompt_tokens": 10439,
+    "completion_tokens": 5071,
+    "total_tokens": 15510
+   }
+  },
+  "per_sku": {
+   "4549509419679": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 252.0,
+     "total_gross_weight": 274.0
+    },
+    "extracted": [
+     {
+      "qty": 40.0,
+      "nw": 252.0,
+      "gw": 274.0,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4549509419693": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 100.0,
+     "total_gross_weight": 107.0
+    },
+    "extracted": [
+     {
+      "qty": 10.0,
+      "nw": 100.0,
+      "gw": 107.0,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052397": {
+    "gt": {
+     "total_quantity": 6.0,
+     "total_net_weight": 60.0,
+     "total_gross_weight": 63.0
+    },
+    "extracted": [
+     {
+      "qty": 6.0,
+      "nw": 60.0,
+      "gw": 63.0,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052403": {
+    "gt": {
+     "total_quantity": 3.0,
+     "total_net_weight": 30.0,
+     "total_gross_weight": 31.5
+    },
+    "extracted": [
+     {
+      "qty": 3.0,
+      "nw": 30.0,
+      "gw": 31.5,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052410": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 10.0,
+     "total_gross_weight": 10.5
+    },
+    "extracted": [
+     {
+      "qty": 1.0,
+      "nw": 10.0,
+      "gw": 10.5,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052427": {
+    "gt": {
+     "total_quantity": 5.0,
+     "total_net_weight": 67.5,
+     "total_gross_weight": 71.0
+    },
+    "extracted": [
+     {
+      "qty": 5.0,
+      "nw": 67.5,
+      "gw": 71.0,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052434": {
+    "gt": {
+     "total_quantity": 2.0,
+     "total_net_weight": 27.0,
+     "total_gross_weight": 28.4
+    },
+    "extracted": [
+     {
+      "qty": 2.0,
+      "nw": 27.0,
+      "gw": 28.4,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052441": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 13.5,
+     "total_gross_weight": 14.2
+    },
+    "extracted": [
+     {
+      "qty": 1.0,
+      "nw": 13.5,
+      "gw": 14.2,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052458": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 46.0,
+     "total_gross_weight": 48.0
+    },
+    "extracted": [
+     {
+      "qty": 4.0,
+      "nw": 46.0,
+      "gw": 48.0,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052465": {
+    "gt": {
+     "total_quantity": 3.0,
+     "total_net_weight": 34.5,
+     "total_gross_weight": 36.0
+    },
+    "extracted": [
+     {
+      "qty": 3.0,
+      "nw": 34.5,
+      "gw": 36.0,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052472": {
+    "gt": {
+     "total_quantity": 2.0,
+     "total_net_weight": 23.0,
+     "total_gross_weight": 24.0
+    },
+    "extracted": [
+     {
+      "qty": 2.0,
+      "nw": 23.0,
+      "gw": 24.0,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052489": {
+    "gt": {
+     "total_quantity": 3.0,
+     "total_net_weight": 55.5,
+     "total_gross_weight": 57.6
+    },
+    "extracted": [
+     {
+      "qty": 3.0,
+      "nw": 55.5,
+      "gw": 57.6,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052496": {
+    "gt": {
+     "total_quantity": 2.0,
+     "total_net_weight": 37.0,
+     "total_gross_weight": 38.4
+    },
+    "extracted": [
+     {
+      "qty": 2.0,
+      "nw": 37.0,
+      "gw": 38.4,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052502": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 18.5,
+     "total_gross_weight": 19.2
+    },
+    "extracted": [
+     {
+      "qty": 1.0,
+      "nw": 18.5,
+      "gw": 19.2,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052519": {
+    "gt": {
+     "total_quantity": 6.0,
+     "total_net_weight": 46.98,
+     "total_gross_weight": 49.2
+    },
+    "extracted": [
+     {
+      "qty": 6.0,
+      "nw": 46.98,
+      "gw": 49.2,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052540": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 12.2,
+     "total_gross_weight": 13.3
+    },
+    "extracted": [
+     {
+      "qty": 1.0,
+      "nw": 12.2,
+      "gw": 13.3,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052557": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 12.2,
+     "total_gross_weight": 13.3
+    },
+    "extracted": [
+     {
+      "qty": 1.0,
+      "nw": 12.2,
+      "gw": 13.3,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596052564": {
+    "gt": {
+     "total_quantity": 1.0,
+     "total_net_weight": 12.2,
+     "total_gross_weight": 13.3
+    },
+    "extracted": [
+     {
+      "qty": 1.0,
+      "nw": 12.2,
+      "gw": 13.3,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4550596153346": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 600.0,
+     "total_gross_weight": 650.0
+    },
+    "extracted": [
+     {
+      "qty": 50.0,
+      "nw": 600.0,
+      "gw": 650.0,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4936695680998": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 370.0,
+     "total_gross_weight": 414.0
+    },
+    "extracted": [
+     {
+      "qty": 40.0,
+      "nw": 370.0,
+      "gw": 414.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4936695681001": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 90.0,
+     "total_gross_weight": 106.0
+    },
+    "extracted": [
+     {
+      "qty": 40.0,
+      "nw": 90.0,
+      "gw": 106.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4936695731898": {
+    "gt": {
+     "total_quantity": 297.0,
+     "total_net_weight": 3801.6,
+     "total_gross_weight": 4098.6
+    },
+    "extracted": [
+     {
+      "qty": 297.0,
+      "nw": 3801.6,
+      "gw": 4098.6,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4936695732147": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 63.0,
+     "total_gross_weight": 66.0
+    },
+    "extracted": [
+     {
+      "qty": 4.0,
+      "nw": 63.0,
+      "gw": 66.0,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4936695732154": {
+    "gt": {
+     "total_quantity": 2.0,
+     "total_net_weight": 28.8,
+     "total_gross_weight": 30.0
+    },
+    "extracted": [
+     {
+      "qty": 2.0,
+      "nw": 28.8,
+      "gw": 30.0,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4936695732192": {
+    "gt": {
+     "total_quantity": 8.0,
+     "total_net_weight": 18.0,
+     "total_gross_weight": 21.6
+    },
+    "extracted": [
+     {
+      "qty": 8.0,
+      "nw": 18.0,
+      "gw": 21.6,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4936695732208": {
+    "gt": {
+     "total_quantity": 12.0,
+     "total_net_weight": 45.0,
+     "total_gross_weight": 50.4
+    },
+    "extracted": [
+     {
+      "qty": 12.0,
+      "nw": 45.0,
+      "gw": 50.4,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4936695732239": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 37.8,
+     "total_gross_weight": 42.4
+    },
+    "extracted": [
+     {
+      "qty": 4.0,
+      "nw": 37.8,
+      "gw": 42.4,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4936695732246": {
+    "gt": {
+     "total_quantity": 7.0,
+     "total_net_weight": 47.25,
+     "total_gross_weight": 59.85
+    },
+    "extracted": [
+     {
+      "qty": 7.0,
+      "nw": 47.25,
+      "gw": 59.85,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4936695732253": {
+    "gt": {
+     "total_quantity": 3.0,
+     "total_net_weight": 27.75,
+     "total_gross_weight": 29.1
+    },
+    "extracted": [
+     {
+      "qty": 3.0,
+      "nw": 27.75,
+      "gw": 29.1,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4936695732260": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 58.52,
+     "total_gross_weight": 62.0
+    },
+    "extracted": [
+     {
+      "qty": 4.0,
+      "nw": 58.52,
+      "gw": 62.0,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4936695732277": {
+    "gt": {
+     "total_quantity": 20.0,
+     "total_net_weight": 43.6,
+     "total_gross_weight": 52.0
+    },
+    "extracted": [
+     {
+      "qty": 20.0,
+      "nw": 43.6,
+      "gw": 52.0,
+      "review": true
+     }
+    ],
+    "hit": true
+   },
+   "4936695732284": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 51.2,
+     "total_gross_weight": 53.2
+    },
+    "extracted": [
+     {
+      "qty": 4.0,
+      "nw": 51.2,
+      "gw": 53.2,
+      "review": true
+     }
+    ],
+    "hit": true
+   }
+  }
+ },
+ {
+  "factory": "兆丰",
+  "elapsed_sec": 26.7,
+  "sku_total": 12,
+  "sku_hit": 12,
+  "blocking": false,
+  "issues": [],
+  "targets": [
+   "/Users/nz/Downloads/yamato/96/工厂/兆丰/总 清款资料/Packing XD-269765-001-7.13.xlsx"
+  ],
+  "stats": {
+   "files_total": 10,
+   "targets_used": 1,
+   "items_extracted": 12,
+   "json_attempts": 1,
+   "json_parse_failures": 0,
+   "token_usage": {
+    "calls": 1,
+    "failed_calls": 0,
+    "prompt_tokens": 4484,
+    "completion_tokens": 1449,
+    "total_tokens": 5933
+   }
+  },
+  "per_sku": {
+   "4549509623861": {
+    "gt": {
+     "total_quantity": 200.0,
+     "total_net_weight": 778.6,
+     "total_gross_weight": 972.0
+    },
+    "extracted": [
+     {
+      "qty": 200.0,
+      "nw": 778.6,
+      "gw": 972.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509623878": {
+    "gt": {
+     "total_quantity": 80.0,
+     "total_net_weight": 243.84000000000003,
+     "total_gross_weight": 304.00000000000006
+    },
+    "extracted": [
+     {
+      "qty": 80.0,
+      "nw": 243.84,
+      "gw": 304.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509623885": {
+    "gt": {
+     "total_quantity": 186.0,
+     "total_net_weight": 526.9400000000006,
+     "total_gross_weight": 665.8800000000001
+    },
+    "extracted": [
+     {
+      "qty": 186.0,
+      "nw": 526.938,
+      "gw": 665.88,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509623892": {
+    "gt": {
+     "total_quantity": 157.0,
+     "total_net_weight": 435.5199999999996,
+     "total_gross_weight": 525.9499999999999
+    },
+    "extracted": [
+     {
+      "qty": 157.0,
+      "nw": 435.518,
+      "gw": 525.95,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509623908": {
+    "gt": {
+     "total_quantity": 200.0,
+     "total_net_weight": 770.6,
+     "total_gross_weight": 964.0
+    },
+    "extracted": [
+     {
+      "qty": 200.0,
+      "nw": 770.6,
+      "gw": 964.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509623915": {
+    "gt": {
+     "total_quantity": 80.0,
+     "total_net_weight": 243.84000000000003,
+     "total_gross_weight": 304.0
+    },
+    "extracted": [
+     {
+      "qty": 80.0,
+      "nw": 243.84,
+      "gw": 304.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509623922": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 141.65,
+     "total_gross_weight": 179.0
+    },
+    "extracted": [
+     {
+      "qty": 50.0,
+      "nw": 141.65,
+      "gw": 179.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509623939": {
+    "gt": {
+     "total_quantity": 133.0,
+     "total_net_weight": 370.2700000000005,
+     "total_gross_weight": 446.88000000000005
+    },
+    "extracted": [
+     {
+      "qty": 133.0,
+      "nw": 370.272,
+      "gw": 446.88,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509729358": {
+    "gt": {
+     "total_quantity": 72.0,
+     "total_net_weight": 158.4,
+     "total_gross_weight": 216.0
+    },
+    "extracted": [
+     {
+      "qty": 72.0,
+      "nw": 158.4,
+      "gw": 216.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509729365": {
+    "gt": {
+     "total_quantity": 51.0,
+     "total_net_weight": 112.19999999999999,
+     "total_gross_weight": 153.0
+    },
+    "extracted": [
+     {
+      "qty": 51.0,
+      "nw": 112.2,
+      "gw": 153.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509769378": {
+    "gt": {
+     "total_quantity": 202.0,
+     "total_net_weight": 525.1999999999999,
+     "total_gross_weight": 929.1999999999999
+    },
+    "extracted": [
+     {
+      "qty": 202.0,
+      "nw": 525.2,
+      "gw": 929.2,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509769385": {
+    "gt": {
+     "total_quantity": 79.0,
+     "total_net_weight": 205.4,
+     "total_gross_weight": 363.3999999999999
+    },
+    "extracted": [
+     {
+      "qty": 79.0,
+      "nw": 205.4,
+      "gw": 363.4,
+      "review": false
+     }
+    ],
+    "hit": true
+   }
+  }
+ },
+ {
+  "factory": "华旭阳",
+  "elapsed_sec": 15.7,
+  "sku_total": 6,
+  "sku_hit": 6,
+  "blocking": false,
+  "issues": [
+   {
+    "level": "info",
+    "type": "IMAGES_IGNORED",
+    "message": "1 个图片文件未作为提取目标（识别器无法扫描图片内容，如其中含箱单请人工指出）。",
+    "file": ""
+   }
+  ],
+  "targets": [
+   "/Users/nz/Downloads/yamato/96/工厂/华旭阳/XD269764-001 pl&ci.xls"
+  ],
+  "stats": {
+   "files_total": 3,
+   "targets_used": 1,
+   "items_extracted": 6,
+   "json_attempts": 1,
+   "json_parse_failures": 0,
+   "token_usage": {
+    "calls": 1,
+    "failed_calls": 0,
+    "prompt_tokens": 3300,
+    "completion_tokens": 843,
+    "total_tokens": 4143
+   }
+  },
+  "per_sku": {
+   "4549509492948": {
+    "gt": {
+     "total_quantity": 20.0,
+     "total_net_weight": 105.6,
+     "total_gross_weight": 138.0
+    },
+    "extracted": [
+     {
+      "qty": 20.0,
+      "nw": 105.60000000000001,
+      "gw": 138.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509492955": {
+    "gt": {
+     "total_quantity": 100.0,
+     "total_net_weight": 528.0,
+     "total_gross_weight": 690.0
+    },
+    "extracted": [
+     {
+      "qty": 100.0,
+      "nw": 528.0,
+      "gw": 690.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509492979": {
+    "gt": {
+     "total_quantity": 20.0,
+     "total_net_weight": 105.6,
+     "total_gross_weight": 138.00000000000003
+    },
+    "extracted": [
+     {
+      "qty": 20.0,
+      "nw": 105.60000000000001,
+      "gw": 138.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509559597": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 302.4,
+     "total_gross_weight": 400.0
+    },
+    "extracted": [
+     {
+      "qty": 40.0,
+      "nw": 302.40000000000003,
+      "gw": 400.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509559603": {
+    "gt": {
+     "total_quantity": 70.0,
+     "total_net_weight": 369.6,
+     "total_gross_weight": 483.0
+    },
+    "extracted": [
+     {
+      "qty": 70.0,
+      "nw": 369.6,
+      "gw": 483.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509559610": {
+    "gt": {
+     "total_quantity": 100.0,
+     "total_net_weight": 756.0,
+     "total_gross_weight": 1000.0
+    },
+    "extracted": [
+     {
+      "qty": 100.0,
+      "nw": 756.0,
+      "gw": 1000.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   }
+  }
+ },
+ {
+  "factory": "正达",
+  "elapsed_sec": 85.1,
+  "sku_total": 43,
+  "sku_hit": 43,
+  "blocking": false,
+  "issues": [],
+  "targets": [
+   "/Users/nz/Downloads/yamato/96/工厂/正达/XD INV PL  请款用.xls"
+  ],
+  "stats": {
+   "files_total": 10,
+   "targets_used": 1,
+   "items_extracted": 43,
+   "json_attempts": 1,
+   "json_parse_failures": 0,
+   "token_usage": {
+    "calls": 1,
+    "failed_calls": 0,
+    "prompt_tokens": 6292,
+    "completion_tokens": 4849,
+    "total_tokens": 11141
+   }
+  },
+  "per_sku": {
+   "4549509174042": {
+    "gt": {
+     "total_quantity": 341.0,
+     "total_net_weight": 1895.96,
+     "total_gross_weight": 2090.3299999999995
+    },
+    "extracted": [
+     {
+      "qty": 341.0,
+      "nw": 1895.96,
+      "gw": 2090.33,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509174059": {
+    "gt": {
+     "total_quantity": 66.0,
+     "total_net_weight": 488.4,
+     "total_gross_weight": 541.2
+    },
+    "extracted": [
+     {
+      "qty": 66.0,
+      "nw": 488.40000000000003,
+      "gw": 541.1999999999999,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509280125": {
+    "gt": {
+     "total_quantity": 372.0,
+     "total_net_weight": 1971.6,
+     "total_gross_weight": 2362.2
+    },
+    "extracted": [
+     {
+      "qty": 372.0,
+      "nw": 1971.6,
+      "gw": 2362.2,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509315339": {
+    "gt": {
+     "total_quantity": 29.0,
+     "total_net_weight": 35.96,
+     "total_gross_weight": 49.3
+    },
+    "extracted": [
+     {
+      "qty": 29.0,
+      "nw": 35.96,
+      "gw": 49.3,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509412694": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 70.0,
+     "total_gross_weight": 74.0
+    },
+    "extracted": [
+     {
+      "qty": 10.0,
+      "nw": 70.0,
+      "gw": 74.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509412700": {
+    "gt": {
+     "total_quantity": 17.0,
+     "total_net_weight": 142.8,
+     "total_gross_weight": 151.3
+    },
+    "extracted": [
+     {
+      "qty": 17.0,
+      "nw": 142.8,
+      "gw": 151.3,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509412717": {
+    "gt": {
+     "total_quantity": 188.0,
+     "total_net_weight": 2143.2,
+     "total_gross_weight": 2256.0
+    },
+    "extracted": [
+     {
+      "qty": 188.0,
+      "nw": 2143.2,
+      "gw": 2256.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509412724": {
+    "gt": {
+     "total_quantity": 312.0,
+     "total_net_weight": 4555.200000000001,
+     "total_gross_weight": 4773.600000000001
+    },
+    "extracted": [
+     {
+      "qty": 312.0,
+      "nw": 4555.2,
+      "gw": 4773.6,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509412748": {
+    "gt": {
+     "total_quantity": 400.0,
+     "total_net_weight": 1320.0,
+     "total_gross_weight": 1520.0
+    },
+    "extracted": [
+     {
+      "qty": 400.0,
+      "nw": 1320.0,
+      "gw": 1520.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509588306": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 240.0,
+     "total_gross_weight": 256.0
+    },
+    "extracted": [
+     {
+      "qty": 40.0,
+      "nw": 240.0,
+      "gw": 256.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509588313": {
+    "gt": {
+     "total_quantity": 5.0,
+     "total_net_weight": 30.0,
+     "total_gross_weight": 32.0
+    },
+    "extracted": [
+     {
+      "qty": 5.0,
+      "nw": 30.0,
+      "gw": 32.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509656876": {
+    "gt": {
+     "total_quantity": 283.0,
+     "total_net_weight": 1528.2,
+     "total_gross_weight": 1799.88
+    },
+    "extracted": [
+     {
+      "qty": 283.0,
+      "nw": 1528.2,
+      "gw": 1799.88,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509659709": {
+    "gt": {
+     "total_quantity": 104.0,
+     "total_net_weight": 863.2,
+     "total_gross_weight": 946.3999999999999
+    },
+    "extracted": [
+     {
+      "qty": 104.0,
+      "nw": 863.2,
+      "gw": 946.4,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509761778": {
+    "gt": {
+     "total_quantity": 283.0,
+     "total_net_weight": 3254.5,
+     "total_gross_weight": 3537.5
+    },
+    "extracted": [
+     {
+      "qty": 283.0,
+      "nw": 3254.5,
+      "gw": 3537.5,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509849865": {
+    "gt": {
+     "total_quantity": 98.0,
+     "total_net_weight": 784.0,
+     "total_gross_weight": 833.0
+    },
+    "extracted": [
+     {
+      "qty": 98.0,
+      "nw": 784.0,
+      "gw": 833.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509849872": {
+    "gt": {
+     "total_quantity": 4.0,
+     "total_net_weight": 12.0,
+     "total_gross_weight": 13.4
+    },
+    "extracted": [
+     {
+      "qty": 4.0,
+      "nw": 12.0,
+      "gw": 13.4,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509849889": {
+    "gt": {
+     "total_quantity": 18.0,
+     "total_net_weight": 153.0,
+     "total_gross_weight": 163.79999999999998
+    },
+    "extracted": [
+     {
+      "qty": 18.0,
+      "nw": 153.0,
+      "gw": 163.8,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509849896": {
+    "gt": {
+     "total_quantity": 6.0,
+     "total_net_weight": 32.4,
+     "total_gross_weight": 34.92
+    },
+    "extracted": [
+     {
+      "qty": 6.0,
+      "nw": 32.4,
+      "gw": 34.92,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596018607": {
+    "gt": {
+     "total_quantity": 829.0,
+     "total_net_weight": 3398.9,
+     "total_gross_weight": 4393.7
+    },
+    "extracted": [
+     {
+      "qty": 829.0,
+      "nw": 3398.9,
+      "gw": 4393.7,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596018614": {
+    "gt": {
+     "total_quantity": 322.0,
+     "total_net_weight": 1738.8000000000002,
+     "total_gross_weight": 2318.3999999999996
+    },
+    "extracted": [
+     {
+      "qty": 322.0,
+      "nw": 1738.8,
+      "gw": 2318.4,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596018638": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 128.0,
+     "total_gross_weight": 156.0
+    },
+    "extracted": [
+     {
+      "qty": 40.0,
+      "nw": 128.0,
+      "gw": 156.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596018652": {
+    "gt": {
+     "total_quantity": 153.0,
+     "total_net_weight": 1086.3,
+     "total_gross_weight": 1361.7
+    },
+    "extracted": [
+     {
+      "qty": 153.0,
+      "nw": 1086.3,
+      "gw": 1361.7,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596018669": {
+    "gt": {
+     "total_quantity": 150.0,
+     "total_net_weight": 1335.0,
+     "total_gross_weight": 1680.0
+    },
+    "extracted": [
+     {
+      "qty": 150.0,
+      "nw": 1335.0,
+      "gw": 1680.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596092843": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 77.99999999999999,
+     "total_gross_weight": 86.0
+    },
+    "extracted": [
+     {
+      "qty": 10.0,
+      "nw": 78.0,
+      "gw": 86.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596112121": {
+    "gt": {
+     "total_quantity": 300.0,
+     "total_net_weight": 1680.0,
+     "total_gross_weight": 2100.0
+    },
+    "extracted": [
+     {
+      "qty": 300.0,
+      "nw": 1680.0,
+      "gw": 2100.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596112138": {
+    "gt": {
+     "total_quantity": 294.0,
+     "total_net_weight": 1352.4,
+     "total_gross_weight": 1705.2
+    },
+    "extracted": [
+     {
+      "qty": 294.0,
+      "nw": 1352.4,
+      "gw": 1705.2,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596139470": {
+    "gt": {
+     "total_quantity": 89.0,
+     "total_net_weight": 409.4,
+     "total_gross_weight": 480.6
+    },
+    "extracted": [
+     {
+      "qty": 89.0,
+      "nw": 409.4,
+      "gw": 480.6,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596139487": {
+    "gt": {
+     "total_quantity": 143.0,
+     "total_net_weight": 972.4000000000001,
+     "total_gross_weight": 1029.6
+    },
+    "extracted": [
+     {
+      "qty": 143.0,
+      "nw": 972.4,
+      "gw": 1029.6,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596139494": {
+    "gt": {
+     "total_quantity": 100.0,
+     "total_net_weight": 620.0,
+     "total_gross_weight": 720.0
+    },
+    "extracted": [
+     {
+      "qty": 100.0,
+      "nw": 620.0,
+      "gw": 720.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596139500": {
+    "gt": {
+     "total_quantity": 118.0,
+     "total_net_weight": 483.8,
+     "total_gross_weight": 566.4
+    },
+    "extracted": [
+     {
+      "qty": 118.0,
+      "nw": 483.8,
+      "gw": 566.4,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596145884": {
+    "gt": {
+     "total_quantity": 75.0,
+     "total_net_weight": 120.0,
+     "total_gross_weight": 157.5
+    },
+    "extracted": [
+     {
+      "qty": 75.0,
+      "nw": 120.0,
+      "gw": 157.5,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596145891": {
+    "gt": {
+     "total_quantity": 65.0,
+     "total_net_weight": 162.5,
+     "total_gross_weight": 191.75
+    },
+    "extracted": [
+     {
+      "qty": 65.0,
+      "nw": 162.5,
+      "gw": 191.75,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596145907": {
+    "gt": {
+     "total_quantity": 30.0,
+     "total_net_weight": 57.0,
+     "total_gross_weight": 73.5
+    },
+    "extracted": [
+     {
+      "qty": 30.0,
+      "nw": 57.0,
+      "gw": 73.5,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596164328": {
+    "gt": {
+     "total_quantity": 65.0,
+     "total_net_weight": 101.39999999999999,
+     "total_gross_weight": 116.34999999999998
+    },
+    "extracted": [
+     {
+      "qty": 65.0,
+      "nw": 101.4,
+      "gw": 116.35,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596164335": {
+    "gt": {
+     "total_quantity": 100.0,
+     "total_net_weight": 209.99999999999997,
+     "total_gross_weight": 230.00000000000003
+    },
+    "extracted": [
+     {
+      "qty": 100.0,
+      "nw": 210.0,
+      "gw": 230.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596164342": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 126.4,
+     "total_gross_weight": 145.59999999999997
+    },
+    "extracted": [
+     {
+      "qty": 40.0,
+      "nw": 126.4,
+      "gw": 145.6,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596184838": {
+    "gt": {
+     "total_quantity": 17.0,
+     "total_net_weight": 102.0,
+     "total_gross_weight": 110.5
+    },
+    "extracted": [
+     {
+      "qty": 17.0,
+      "nw": 102.0,
+      "gw": 110.5,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596202044": {
+    "gt": {
+     "total_quantity": 25.0,
+     "total_net_weight": 110.0,
+     "total_gross_weight": 120.0
+    },
+    "extracted": [
+     {
+      "qty": 25.0,
+      "nw": 110.0,
+      "gw": 120.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596227849": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 274.0,
+     "total_gross_weight": 305.0
+    },
+    "extracted": [
+     {
+      "qty": 50.0,
+      "nw": 274.0,
+      "gw": 305.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596227856": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 375.0,
+     "total_gross_weight": 425.0
+    },
+    "extracted": [
+     {
+      "qty": 50.0,
+      "nw": 375.0,
+      "gw": 425.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596227863": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 255.00000000000003,
+     "total_gross_weight": 305.0
+    },
+    "extracted": [
+     {
+      "qty": 50.0,
+      "nw": 255.0,
+      "gw": 305.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596227870": {
+    "gt": {
+     "total_quantity": 75.0,
+     "total_net_weight": 697.5,
+     "total_gross_weight": 780.0
+    },
+    "extracted": [
+     {
+      "qty": 75.0,
+      "nw": 697.5,
+      "gw": 780.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596227887": {
+    "gt": {
+     "total_quantity": 50.0,
+     "total_net_weight": 310.0,
+     "total_gross_weight": 365.0
+    },
+    "extracted": [
+     {
+      "qty": 50.0,
+      "nw": 310.0,
+      "gw": 365.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   }
+  }
+ },
+ {
+  "factory": "益尚",
+  "elapsed_sec": 22.4,
+  "sku_total": 10,
+  "sku_hit": 10,
+  "blocking": false,
+  "issues": [],
+  "targets": [
+   "/Users/nz/Downloads/yamato/96/工厂/益尚/清关资料MX2-265537-002.pdf",
+   "/Users/nz/Downloads/yamato/96/工厂/益尚/清关资料XD-269758-001.pdf"
+  ],
+  "stats": {
+   "files_total": 7,
+   "targets_used": 2,
+   "items_extracted": 10,
+   "json_attempts": 2,
+   "json_parse_failures": 0,
+   "token_usage": {
+    "calls": 2,
+    "failed_calls": 0,
+    "prompt_tokens": 4188,
+    "completion_tokens": 1181,
+    "total_tokens": 5369
+   }
+  },
+  "per_sku": {
+   "4549509379904": {
+    "gt": {
+     "total_quantity": 100.0,
+     "total_net_weight": 395.0,
+     "total_gross_weight": 476.99999999999994
+    },
+    "extracted": [
+     {
+      "qty": 100.0,
+      "nw": 395.0,
+      "gw": 477.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509379911": {
+    "gt": {
+     "total_quantity": 60.0,
+     "total_net_weight": 186.0,
+     "total_gross_weight": 210.6
+    },
+    "extracted": [
+     {
+      "qty": 60.0,
+      "nw": 186.0,
+      "gw": 210.6,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509379928": {
+    "gt": {
+     "total_quantity": 48.0,
+     "total_net_weight": 130.56,
+     "total_gross_weight": 156.48000000000002
+    },
+    "extracted": [
+     {
+      "qty": 48.0,
+      "nw": 130.56,
+      "gw": 156.48,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509379935": {
+    "gt": {
+     "total_quantity": 82.0,
+     "total_net_weight": 213.2,
+     "total_gross_weight": 228.78
+    },
+    "extracted": [
+     {
+      "qty": 82.0,
+      "nw": 213.2,
+      "gw": 228.78,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509379942": {
+    "gt": {
+     "total_quantity": 60.0,
+     "total_net_weight": 237.0,
+     "total_gross_weight": 286.2
+    },
+    "extracted": [
+     {
+      "qty": 60.0,
+      "nw": 237.0,
+      "gw": 286.2,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509379959": {
+    "gt": {
+     "total_quantity": 35.0,
+     "total_net_weight": 108.5,
+     "total_gross_weight": 122.85
+    },
+    "extracted": [
+     {
+      "qty": 35.0,
+      "nw": 108.5,
+      "gw": 122.85,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509379966": {
+    "gt": {
+     "total_quantity": 36.0,
+     "total_net_weight": 97.92,
+     "total_gross_weight": 117.35999999999999
+    },
+    "extracted": [
+     {
+      "qty": 36.0,
+      "nw": 97.92,
+      "gw": 117.36,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509379973": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 26.0,
+     "total_gross_weight": 27.9
+    },
+    "extracted": [
+     {
+      "qty": 10.0,
+      "nw": 26.0,
+      "gw": 27.9,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509900474": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 23.0,
+     "total_gross_weight": 28.0
+    },
+    "extracted": [
+     {
+      "qty": 10.0,
+      "nw": 23.0,
+      "gw": 28.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4550596183039": {
+    "gt": {
+     "total_quantity": 10.0,
+     "total_net_weight": 107.0,
+     "total_gross_weight": 125.99999999999999
+    },
+    "extracted": [
+     {
+      "qty": 10.0,
+      "nw": 107.0,
+      "gw": 126.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   }
+  }
+ },
+ {
+  "factory": "贝来",
+  "elapsed_sec": 22.2,
+  "sku_total": 10,
+  "sku_hit": 10,
+  "blocking": false,
+  "issues": [],
+  "targets": [
+   "/Users/nz/Downloads/yamato/96/工厂/贝来/MX2-265584-002 单据/MX2-265584-002 单据/清关单据 CCK2619002-4.xls",
+   "/Users/nz/Downloads/yamato/96/工厂/贝来/XD-269761-001 单据/XD-269761-001 单据/清关单据 CCK2619001-11.xls"
+  ],
+  "stats": {
+   "files_total": 10,
+   "targets_used": 2,
+   "items_extracted": 10,
+   "json_attempts": 2,
+   "json_parse_failures": 0,
+   "token_usage": {
+    "calls": 2,
+    "failed_calls": 0,
+    "prompt_tokens": 6239,
+    "completion_tokens": 1171,
+    "total_tokens": 7410
+   }
+  },
+  "per_sku": {
+   "4549509299950": {
+    "gt": {
+     "total_quantity": 35.0,
+     "total_net_weight": 224.00000000000003,
+     "total_gross_weight": 280.0
+    },
+    "extracted": [
+     {
+      "qty": 35.0,
+      "nw": 224.0,
+      "gw": 280.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509340188": {
+    "gt": {
+     "total_quantity": 3.0,
+     "total_net_weight": 9.600000000000001,
+     "total_gross_weight": 11.100000000000001
+    },
+    "extracted": [
+     {
+      "qty": 3.0,
+      "nw": 9.6,
+      "gw": 11.1,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509340195": {
+    "gt": {
+     "total_quantity": 7.0,
+     "total_net_weight": 30.8,
+     "total_gross_weight": 32.9
+    },
+    "extracted": [
+     {
+      "qty": 7.0,
+      "nw": 30.8,
+      "gw": 32.9,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509340201": {
+    "gt": {
+     "total_quantity": 21.0,
+     "total_net_weight": 134.4,
+     "total_gross_weight": 157.5
+    },
+    "extracted": [
+     {
+      "qty": 21.0,
+      "nw": 134.4,
+      "gw": 157.5,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509341550": {
+    "gt": {
+     "total_quantity": 20.0,
+     "total_net_weight": 60.0,
+     "total_gross_weight": 68.0
+    },
+    "extracted": [
+     {
+      "qty": 20.0,
+      "nw": 60.0,
+      "gw": 68.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509341567": {
+    "gt": {
+     "total_quantity": 38.0,
+     "total_net_weight": 205.20000000000002,
+     "total_gross_weight": 228.0
+    },
+    "extracted": [
+     {
+      "qty": 38.0,
+      "nw": 205.2,
+      "gw": 228.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509444770": {
+    "gt": {
+     "total_quantity": 25.0,
+     "total_net_weight": 236.0,
+     "total_gross_weight": 332.0
+    },
+    "extracted": [
+     {
+      "qty": 25.0,
+      "nw": 236.0,
+      "gw": 332.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509637264": {
+    "gt": {
+     "total_quantity": 20.0,
+     "total_net_weight": 160.0,
+     "total_gross_weight": 172.0
+    },
+    "extracted": [
+     {
+      "qty": 20.0,
+      "nw": 160.0,
+      "gw": 172.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509637288": {
+    "gt": {
+     "total_quantity": 40.0,
+     "total_net_weight": 624.0,
+     "total_gross_weight": 740.0
+    },
+    "extracted": [
+     {
+      "qty": 40.0,
+      "nw": 624.0,
+      "gw": 740.0,
+      "review": false
+     }
+    ],
+    "hit": true
+   },
+   "4549509845539": {
+    "gt": {
+     "total_quantity": 67.0,
+     "total_net_weight": 522.5999999999999,
+     "total_gross_weight": 576.2
+    },
+    "extracted": [
+     {
+      "qty": 67.0,
+      "nw": 522.6,
+      "gw": 576.2,
+      "review": false
+     }
+    ],
+    "hit": true
+   }
+  }
+ },
+ {
+  "factory": "达安",
+  "elapsed_sec": 4.3,
+  "sku_total": 1,
+  "sku_hit": 0,
+  "blocking": false,
+  "issues": [
+   {
+    "level": "info",
+    "type": "IMAGES_IGNORED",
+    "message": "1 个图片文件未作为提取目标（识别器无法扫描图片内容，如其中含箱单请人工指出）。",
+    "file": ""
+   }
+  ],
+  "targets": [
+   "/Users/nz/Downloads/yamato/96/工厂/达安/DA26461  箱单.xls"
+  ],
+  "stats": {
+   "files_total": 3,
+   "targets_used": 1,
+   "items_extracted": 1,
+   "json_attempts": 1,
+   "json_parse_failures": 0,
+   "token_usage": {
+    "calls": 1,
+    "failed_calls": 0,
+    "prompt_tokens": 4632,
+    "completion_tokens": 170,
+    "total_tokens": 4802
+   }
+  },
+  "per_sku": {
+   "4936695359672": {
+    "gt": {
+     "total_quantity": 75.0,
+     "total_net_weight": 738.0000000000001,
+     "total_gross_weight": 790.5
+    },
+    "extracted": [
+     {
+      "qty": 75.0,
+      "nw": 55350.0,
+      "gw": 59287.5,
+      "review": false
+     }
+    ],
+    "hit": false
+   }
+  }
+ }
+]

@@ -28,6 +28,7 @@ from .prompts import (
     parse_payload,
 )
 from .schemas import ExtractedItem, apply_weight_basis
+from .verify import verify_weight_basis
 
 # 单个文件转成 Markdown 后的长度上限（控制 token 成本；
 # 2026-07-27 由 24000 提高到 100000：正达 INV+PL 两 sheet 合计超限被截断，
@@ -81,6 +82,7 @@ class ChannelResult:
     json_attempts: int = 0  # LLM 调用次数（含解析失败重试）
     json_parse_failures: int = 0  # JSON 解析失败次数
     error: str = ""
+    notes: list[str] = field(default_factory=list)  # 确定性校验备注（verify.py）
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +272,9 @@ def extract_excel(file_path: str) -> ChannelResult:
             payload = parse_payload(raw)
             for item in payload.items:
                 item.source_file = file_path
-            result.items = apply_weight_basis(sort_by_source_order(payload.items, markdown_text))
+            verified, notes = verify_weight_basis(payload.items, markdown_text)
+            result.notes.extend(notes)
+            result.items = apply_weight_basis(sort_by_source_order(verified, markdown_text))
             return result
         except JsonParseError as e:
             result.json_parse_failures += 1

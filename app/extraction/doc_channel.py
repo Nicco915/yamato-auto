@@ -20,6 +20,7 @@ from pathlib import Path
 
 from . import llm_client
 from .schemas import apply_weight_basis
+from .verify import verify_weight_basis
 from .excel_channel import ChannelResult, UnsupportedFileError
 from .prompts import (
     SYSTEM_PROMPT,
@@ -38,10 +39,12 @@ def _find_textutil() -> str | None:
     return shutil.which("textutil")
 
 
-def doc_to_html(file_path: str) -> str:
+def doc_to_html(file_path: str, max_chars: int | None = MAX_DOC_HTML_CHARS) -> str:
     """用 textutil 把 doc/docx 转成精简 HTML（仅 body、去 class 属性）。
 
     失败（textutil 不存在、转换报错、输出为空）抛 UnsupportedFileError。
+    max_chars=None 时不截断（校验/扫描需要完整内容——Total 行在文档末尾，
+    截断会丢失合计证据，2026-07-27 亿钻教训）。
     """
     textutil = _find_textutil()
     if not textutil:
@@ -64,15 +67,17 @@ def doc_to_html(file_path: str) -> str:
     html = re.sub(r'\s+class="[^"]*"', "", html)
     if not html.strip():
         raise UnsupportedFileError(f"textutil 输出为空: {file_path}")
-    if len(html) > MAX_DOC_HTML_CHARS:
-        html = html[:MAX_DOC_HTML_CHARS] + "\n\n[... 内容过长已截断 ...]"
+    if max_chars is not None and len(html) > max_chars:
+        html = html[:max_chars] + "\n\n[... 内容过长已截断 ...]"
     return html
 
 
 def extract_doc(file_path: str) -> ChannelResult:
     """提取单个 doc/docx 文件（textutil → HTML → 文本大模型），JSON 解析失败最多重试 2 次。"""
     result = ChannelResult()
-    html = doc_to_html(file_path)  # 可能抛 UnsupportedFileError
+    html = doc_to_html(file_path)  # 可能抛 UnsupportedFileError；送 LLM 的版本可截断
+    # 校验用完整文本（Total 行在文档末尾，不能用截断版）
+    plain_full = re.sub(r"<[^>]+>", " ", doc_to_html(file_path, max_chars=None))
 
     source_name = Path(file_path).name
     messages: list[dict] = [
@@ -89,7 +94,9 @@ def extract_doc(file_path: str) -> ChannelResult:
             payload = parse_payload(raw)
             for item in payload.items:
                 item.source_file = file_path
-            result.items = apply_weight_basis(payload.items)
+            verified, notes = verify_weight_basis(payload.items, plain_full)
+            result.notes.extend(notes)
+            result.items = apply_weight_basis(verified)
             return result
         except JsonParseError as e:
             result.json_parse_failures += 1

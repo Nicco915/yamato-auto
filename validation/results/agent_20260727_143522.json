@@ -1,0 +1,52 @@
+[
+ {
+  "factory": "达安",
+  "elapsed_sec": 4.5,
+  "sku_total": 1,
+  "sku_hit": 1,
+  "blocking": false,
+  "issues": [
+   {
+    "level": "info",
+    "type": "IMAGES_IGNORED",
+    "message": "1 个图片文件未作为提取目标（识别器无法扫描图片内容，如其中含箱单请人工指出）。",
+    "file": ""
+   }
+  ],
+  "targets": [
+   "/Users/nz/Downloads/yamato/96/工厂/达安/DA26461  箱单.xls"
+  ],
+  "stats": {
+   "files_total": 3,
+   "targets_used": 1,
+   "items_extracted": 1,
+   "json_attempts": 1,
+   "json_parse_failures": 0,
+   "token_usage": {
+    "calls": 1,
+    "failed_calls": 0,
+    "prompt_tokens": 4679,
+    "completion_tokens": 168,
+    "total_tokens": 4847
+   }
+  },
+  "per_sku": {
+   "4936695359672": {
+    "gt": {
+     "total_quantity": 75.0,
+     "total_net_weight": 738.0000000000001,
+     "total_gross_weight": 790.5
+    },
+    "extracted": [
+     {
+      "qty": 75.0,
+      "nw": 738.0,
+      "gw": 790.4999999999999,
+      "review": false
+     }
+    ],
+    "hit": true
+   }
+  }
+ }
+]

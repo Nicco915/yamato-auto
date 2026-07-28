@@ -16,7 +16,7 @@ SYSTEM_PROMPT = """你是供应链单证数据提取员。任务：从工厂提�
 4. total_quantity 专指包装件数（箱数），常见列名：件数/箱数/PACKAGES/CTNS/CARTONS/外箱数。若单据只有内装个数（QUANTITY/数量/PCS/SETS）而没有箱数，total_quantity 填 null。
 5. total_net_weight / total_gross_weight 只提取该 SKU 行印出的"合计"净重/毛重（常见列名：NET WEIGHT/N.W./净重、GROSS WEIGHT/G.W./毛重）。若该行只有单件重量，填 null。
    特例一：若单据把毛重/净重印在同一格（如列名 "GROSS/NET WEIGHT"，单元格内容为 "106.00/90.00"），按单据标注的顺序原样拆分抄录：前一个数填 total_gross_weight，后一个数填 total_net_weight。这属于照抄，不算计算。若无法确定顺序，两个字段都填 null 并将 needs_human_review 置 true。
-   特例二（重量口径）：若该行印出的重量是"每箱/每件"口径而非合计（线索：列名含 /CTN、KGS/CTN、per carton 等；或底部 Total 行的合计远大于该行数值且该行数值×件数≈合计），数值仍照抄到 total_net_weight/total_gross_weight，但必须把 weight_basis 设为 "per_carton"（合计口径则填 "total"）。换算由下游程序完成，你禁止自行相乘。无法判断口径时填 "total" 并将 needs_human_review 置 true。
+   特例二（重量口径）：weight_basis 描述的是**你抄录的那个数本身**的口径，而不是整张表的口径。只有当该行**没有印出合计重**、你只能抄到每箱/每件重量时（线索：列名含 /CTN、KGS/CTN、per carton 等；或底部 Total 行的合计远大于该行数值），才把那个每箱重照抄到 total_net_weight/total_gross_weight 并标 "per_carton"，换算由下游程序完成，你禁止自行相乘。**若该行同时印有每箱重和合计重（例如既有 N.W./CTN 列又有合计净重列），必须取合计重并标 "total"**。无法判断口径时填 "total" 并将 needs_human_review 置 true。
 6. weight_unit 照抄单据上的重量单位（如 KG、LB、g）。未标明时填 null。
 7. sku_code：单据上的商品编码/JAN CODE/货号/品番（常为 13 位数字），有才照抄，没有填 null。
 8. needs_human_review：出现以下任一情况必须为 true —— 影像模糊或印章遮挡导致无法辨认；表格结构混乱导致行与列的对应关系无法确定；某 SKU 的件数和重量全部缺失；对某个数值没有把握。同时在 review_reason 中简述原因。

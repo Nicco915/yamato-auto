@@ -23,6 +23,7 @@ from .excel_channel import (
     sort_by_source_order,
 )
 from .schemas import apply_weight_basis
+from .verify import verify_weight_basis
 from .prompts import (
     SYSTEM_PROMPT,
     JsonParseError,
@@ -63,6 +64,7 @@ def extract_pdf_text(file_path: str) -> ChannelResult:
     text, has_text = pdf_to_text(file_path)
     if not has_text:
         raise UnsupportedFileError(f"PDF 无可用文本层（判定为扫描件）: {file_path}")
+    full_text = text  # 校验/排序用完整文本（Total 行在文档末尾，不能用截断版）
     if len(text) > MAX_PDF_TEXT_CHARS:
         text = text[:MAX_PDF_TEXT_CHARS] + "\n\n[... 内容过长已截断 ...]"
 
@@ -81,7 +83,9 @@ def extract_pdf_text(file_path: str) -> ChannelResult:
             payload = parse_payload(raw)
             for item in payload.items:
                 item.source_file = file_path
-            result.items = apply_weight_basis(sort_by_source_order(payload.items, text))
+            verified, notes = verify_weight_basis(payload.items, full_text)
+            result.notes.extend(notes)
+            result.items = apply_weight_basis(sort_by_source_order(verified, full_text))
             return result
         except JsonParseError as e:
             result.json_parse_failures += 1
