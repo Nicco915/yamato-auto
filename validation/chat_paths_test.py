@@ -135,6 +135,69 @@ def main() -> int:
     assert "异平台" in win_msg["message"], win_msg["message"]
     print(f"  ✓ LLM 正确提取 Windows 路径 {win_path!r}，进入待确认并带 warnings")
 
+    # ---- 6. L1 会话记忆：多轮合并（先给路径、后补类别）----
+    print("\n===== 6. L1 会话记忆：多轮合并 =====")
+    # 6a. 纯 Python 槽位合并（路线 B，不依赖 LLM）：
+    # category_hint + 唯一待归类路径 → set_paths，且路径移出待归类槽位
+    sess = agent_chat._get_session("UT-MERGE")
+    sess.unclassified.append(REAL_ROOT)
+    merged = agent_chat._merge_with_session(
+        {"action": "unknown", "paths": {}, "reply": "",
+         "category_hint": "upstream_root", "unclassified": []},
+        sess,
+    )
+    assert merged["action"] == "set_paths", merged
+    assert merged["paths"]["upstream_root"] == REAL_ROOT, merged
+    assert sess.unclassified == [], "已归类的路径应移出待归类槽位"
+    print(f"  ✓ 代码侧槽位合并（路线 B）: {merged['paths']}")
+
+    # 6b. 多条待归类路径时不猜，保持 unknown
+    sess2 = agent_chat._get_session("UT-MERGE-MULTI")
+    sess2.unclassified.extend(["/a", "/b"])
+    merged2 = agent_chat._merge_with_session(
+        {"action": "unknown", "paths": {}, "reply": "",
+         "category_hint": "gt_source", "unclassified": []},
+        sess2,
+    )
+    assert merged2["action"] == "unknown" and not merged2["paths"], merged2
+    print("  ✓ 多条待归类路径时保持 unknown，不瞎猜")
+
+    # 6c. 白名单防线：category_hint / unclassified 非法值被过滤
+    sess3 = agent_chat._get_session("UT-MERGE-EVIL")
+    sess3.unclassified.append("/x")
+    merged3 = agent_chat._merge_with_session(
+        {"action": "unknown", "paths": {}, "reply": "",
+         "category_hint": "api_key", "unclassified": ["相对路径", "/ok"]},
+        sess3,
+    )
+    assert merged3["action"] == "unknown" and not merged3["paths"], merged3
+    assert sess3.unclassified == ["/x", "/ok"], sess3.unclassified
+    print("  ✓ 非法 category_hint 不触发合并，非绝对路径不入槽（由 parse 层过滤同理）")
+
+    # 6d. LLM 端到端多轮：先给无类别线索的裸路径（临时目录，路径名不含
+    # 工厂/装箱等词），再补类别，应合并为 set_paths（路线 A 或 B 达成均可）
+    sid = "UT-SESSION-MEMORY"
+    r1 = agent_chat.handle_message(str(EMPTY_DIR), env_path=tmp_env, session_id=sid)
+    assert r1["status"] == "rejected", f"裸路径不应直接进预览: {r1}"
+    assert r1.get("session_id") == sid, r1
+    print(f"  ✓ 第 1 轮（裸路径）: {r1['message'][:60]}")
+
+    r2 = agent_chat.handle_message("刚才那个是工厂文件夹", env_path=tmp_env, session_id=sid)
+    assert r2["status"] == "pending_confirmation", f"第 2 轮应合并出 set_paths: {r2}"
+    assert r2["action"]["paths"].get("upstream_root") == str(EMPTY_DIR), r2["action"]["paths"]
+    print(f"  ✓ 第 2 轮（补类别）合并成功: {r2['action']['paths']}")
+
+    hist = agent_chat._get_session(sid).history
+    assert len(hist) >= 4, f"会话历史应含两轮对话: {len(hist)}"
+    print(f"  ✓ 会话历史已累积 {len(hist)} 条")
+
+    # 6e. 无 session_id 时行为与旧无状态版一致（临时会话不保留）
+    r3 = agent_chat.handle_message(str(EMPTY_DIR), env_path=tmp_env)
+    assert r3["status"] == "rejected" and "session_id" not in r3, r3
+    r4 = agent_chat.handle_message("刚才那个是工厂文件夹", env_path=tmp_env)
+    assert r4["status"] == "rejected", f"无 session 不应能合并: {r4}"
+    print("  ✓ 缺省 session_id 时保持无状态行为（向后兼容）")
+
     print("\n🎉 对话式路径配置端到端全部通过！")
     return 0
 

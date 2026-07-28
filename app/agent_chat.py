@@ -15,6 +15,15 @@
 - upstream_root        上游工厂文件夹根目录（目录）
 - downstream_file_path 下游装箱表 xlsx（文件）
 - gt_source            GT 基准文件（文件，validation 用）
+
+L1 会话记忆（2026-07-28）：操作员会分多轮补充信息（先给路径、后说明类别，
+或反过来），无状态单轮解析必然失败。两层设计：
+- 路线 A：session.history 随请求发给解析器，LLM 可跨轮合并上下文；
+- 路线 B：unclassified 槽位由代码持有（唯一事实来源），LLM 没合并时
+  代码用 category_hint + 待归类路径兜底。合并结果仍须过 validate_paths
+  + 人工确认——记忆只负责填充槽位，绝不绕过任何一道防线。
+存储为进程内 dict：重启即丢（可接受，确认前状态本就短命），需要跨重启
+持久时再迁 app/db。
 """
 from __future__ import annotations
 
@@ -22,6 +31,8 @@ import json
 import os
 import shutil
 import sys
+import threading
+import time
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -38,7 +49,9 @@ ALLOWED_PATHS: dict[str, tuple[str, str, str]] = {
 DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
 
 _PARSE_PROMPT = r"""你是路径配置指令解析器，服务于供应链单证提取 Agent。
-操作员会用自然语言要求修改路径配置。你只识别以下三类路径（其他一律不提取）：
+操作员会用自然语言要求修改路径配置。你会看到之前的对话历史（如有），
+操作员可能分多轮补充信息（先给路径、后说明类别，或反过来）。
+你只识别以下三类路径（其他一律不提取）：
 
 - upstream_root：上游工厂文件夹根目录。操作员可能说：工厂文件夹/工厂目录/上游目录/工厂文件在…
 - downstream_file_path：下游装箱表（xlsx 文件）。操作员可能说：下游表/装箱表/ContentsOfTheContainer/要填的表
@@ -54,35 +67,104 @@ _PARSE_PROMPT = r"""你是路径配置指令解析器，服务于供应链单证
 3. 与修改路径无关的内容（闲聊、提问、其他配置如 API key/模型/数据库）→ action=chat；
 4. 想改路径但没给出明确绝对路径 → action=unknown，reply 里说明缺什么；
 5. 提取到路径时，reply 里必须注明识别到的路径风格（Unix / Windows 盘符 / UNC），
-   方便操作员在确认预览时发现「本意 Unix 但手滑写成反斜杠」或「UNC 被误判成盘符」两类事故。
+   方便操作员在确认预览时发现「本意 Unix 但手滑写成反斜杠」或「UNC 被误判成盘符」两类事故；
+6. 多轮合并：历史中有未归类的绝对路径，本轮操作员说明了类别（如"这是下游装箱表"
+   或"刚才那个是工厂目录"），把历史中的路径原文填入 paths 对应 key，action=set_paths；
+   反向同理：历史已说明类别，本轮补了绝对路径，也合并填入；
+7. 只给出类别、本轮和历史都没有可用绝对路径时 → action=unknown，
+   category_hint 填对应 key，reply 说明缺绝对路径；
+8. 本轮提到的绝对路径若无法归类（规则 2/6 都不适用）→ 原文放入 unclassified
+   数组，action=unknown，reply 里询问它属于哪一类。
 
 只输出 JSON：
 {"action": "set_paths" | "unknown" | "chat",
  "paths": {"upstream_root": "...", "downstream_file_path": "...", "gt_source": "..."},
+ "category_hint": "upstream_root" | "downstream_file_path" | "gt_source",
+ "unclassified": ["..."],
  "reply": "一句话复述你的理解（中文）"}
-paths 里没有提取到的 key 不要出现。"""
+paths / category_hint / unclassified 没有内容时不要出现对应字段。"""
+
+
+# ---------------------------------------------------------------------------
+# L1 会话记忆：进程内会话存储
+# ---------------------------------------------------------------------------
+
+_SESSION_TTL_SEC = 2 * 3600   # 会话闲置 2 小时过期
+_SESSION_MAX = 500            # 会话总量上限（淘汰最旧）
+_HISTORY_MAX_TURNS = 10       # 发给 LLM 的最大历史轮数（一轮 = user + assistant）
+
+
+class _ChatSession:
+    """单会话状态：history 供路线 A（LLM 跨轮合并），unclassified 供路线 B（代码兜底）。"""
+
+    __slots__ = ("history", "unclassified", "updated_at")
+
+    def __init__(self) -> None:
+        self.history: list[dict] = []        # {"role": "user"/"assistant", "content": str}
+        self.unclassified: list[str] = []    # 操作员给过但尚未归类的绝对路径
+        self.updated_at: float = time.time()
+
+
+_SESSIONS: dict[str, _ChatSession] = {}
+_SESSIONS_LOCK = threading.Lock()
+
+
+def _get_session(session_id: str) -> _ChatSession:
+    """取会话（不存在则新建），惰性清理过期会话并控制总量。
+
+    锁只保护 dict 读写；返回的 session 在锁外被修改（含 LLM 调用期间），
+    最坏情况是并发同会话丢一条历史，不影响安全——校验与确认是无状态的。
+    """
+    with _SESSIONS_LOCK:
+        now = time.time()
+        expired = [k for k, s in _SESSIONS.items()
+                   if now - s.updated_at > _SESSION_TTL_SEC]
+        for k in expired:
+            del _SESSIONS[k]
+        if len(_SESSIONS) >= _SESSION_MAX and session_id not in _SESSIONS:
+            oldest = min(_SESSIONS, key=lambda k: _SESSIONS[k].updated_at)
+            del _SESSIONS[oldest]
+        sess = _SESSIONS.get(session_id)
+        if sess is None:
+            sess = _SESSIONS[session_id] = _ChatSession()
+        sess.updated_at = now
+        return sess
+
+
+def _record_turn(session: _ChatSession, user_msg: str, agent_msg: str) -> None:
+    """把一轮对话写入历史，超出上限裁掉最旧的。"""
+    session.history.append({"role": "user", "content": user_msg})
+    session.history.append({"role": "assistant", "content": agent_msg})
+    excess = len(session.history) - _HISTORY_MAX_TURNS * 2
+    if excess > 0:
+        del session.history[:excess]
 
 
 # ---------------------------------------------------------------------------
 # 第一步：LLM 解析（只解析，不做决策）
 # ---------------------------------------------------------------------------
 
-def parse_instruction(message: str) -> dict:
-    """LLM 解析自然语言指令 → {action, paths, reply}。输出受白名单强约束。"""
+def parse_instruction(message: str, history: list[dict] | None = None) -> dict:
+    """LLM 解析自然语言指令 → {action, paths, category_hint, unclassified, reply}。
+
+    输出受白名单强约束；history 为最近若干轮对话（路线 A），供 LLM 跨轮合并
+    「第 1 轮路径 + 第 2 轮类别」这类分轮补充的指令。
+    """
     from app.extraction import llm_client  # 延迟 import：无 API key 时其余功能仍可用
 
+    messages = [{"role": "system", "content": _PARSE_PROMPT}]
+    messages.extend((history or [])[-_HISTORY_MAX_TURNS * 2:])
+    messages.append({"role": "user", "content": message})
     raw = llm_client.chat_completion(
-        [
-            {"role": "system", "content": _PARSE_PROMPT},
-            {"role": "user", "content": message},
-        ],
+        messages,
         source_file="agent_chat",
         max_tokens=1024,
     )
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError:
-        return {"action": "unknown", "paths": {},
+        return {"action": "unknown", "paths": {}, "category_hint": None,
+                "unclassified": [],
                 "reply": f"解析器输出异常，未执行任何操作（原文：{raw[:100]}）"}
 
     action = parsed.get("action") if parsed.get("action") in ("set_paths", "unknown", "chat") else "unknown"
@@ -94,8 +176,47 @@ def parse_instruction(message: str) -> dict:
     }
     if action == "set_paths" and not paths:
         action = "unknown"
-    return {"action": action, "paths": paths,
+    hint = parsed.get("category_hint")
+    category_hint = hint if hint in ALLOWED_PATHS else None
+    # 待归类路径同样只收绝对路径（防线与 paths 一致）
+    unclassified = [
+        p for p in (str(v).strip() for v in (parsed.get("unclassified") or []))
+        if p and _is_absolute_path(p)
+    ]
+    return {"action": action, "paths": paths, "category_hint": category_hint,
+            "unclassified": unclassified,
             "reply": str(parsed.get("reply") or "")}
+
+
+def _merge_with_session(parsed: dict, session: _ChatSession) -> dict:
+    """路线 B：代码侧槽位合并（LLM 没按历史合并时的兜底）。
+
+    - category_hint + 唯一一条待归类路径 → 合并为 set_paths；
+    - 多条待归类路径时不猜，保持 unknown 让操作员指明；
+    - 本轮新提到的未归类路径入槽；已归类的路径移出槽位。
+    返回 {"action", "paths", "reply"}。
+    """
+    action = parsed["action"]
+    paths = dict(parsed["paths"])
+    reply = parsed["reply"]
+
+    hint = parsed.get("category_hint")
+    # 白名单防线（与 parse 层双重保险）：非授权 key 绝不触发合并
+    if hint in ALLOWED_PATHS and hint not in paths and len(session.unclassified) == 1:
+        paths[hint] = session.unclassified[0]
+        label = ALLOWED_PATHS[hint][2]
+        reply = f"已将上文路径 {paths[hint]} 归类为{label}。" + (reply or "")
+        if action == "unknown":
+            action = "set_paths"
+
+    for p in parsed.get("unclassified", []):
+        # 只收绝对路径（与 parse 层双重保险）
+        if p and _is_absolute_path(p) \
+                and p not in paths.values() and p not in session.unclassified:
+            session.unclassified.append(p)
+    session.unclassified = [p for p in session.unclassified
+                            if p not in paths.values()]
+    return {"action": action, "paths": paths, "reply": reply}
 
 
 # ---------------------------------------------------------------------------
@@ -277,35 +398,71 @@ def apply_paths(paths: dict, thread_id: str | None = None,
     return result
 
 
-def handle_message(message: str, env_path: Path | None = None) -> dict:
-    """对话主入口（确认前）：解析 → 校验 → 预览。"""
-    parsed = parse_instruction(message)
-    if parsed["action"] != "set_paths":
-        return {"status": "rejected", "action": parsed["action"],
-                "message": parsed["reply"] or "未识别为路径修改指令，未执行任何操作。"
-                "支持的指令：修改 工厂文件夹 / 下游表 / GT 文件 的路径（需绝对路径）。"}
+def handle_message(message: str, env_path: Path | None = None,
+                   session_id: str | None = None) -> dict:
+    """对话主入口（确认前）：解析（带历史）→ 槽位合并 → 校验 → 预览。
 
-    errors = validate_paths(parsed["paths"])
+    session_id 提供时启用 L1 会话记忆；缺省为临时会话（行为与旧无状态版一致）。
+    """
+    session = _get_session(session_id) if session_id else _ChatSession()
+    parsed = parse_instruction(message, history=session.history)
+    merged = _merge_with_session(parsed, session)
+    action, paths, reply = merged["action"], merged["paths"], merged["reply"]
+
+    if action != "set_paths":
+        text = reply or ("未识别为路径修改指令，未执行任何操作。"
+                         "支持的指令：修改 工厂文件夹 / 下游表 / GT 文件 的路径（需绝对路径）。")
+        # 有待归类路径时主动提醒，引导操作员一句话补类别
+        if session.unclassified:
+            text += (f"\n（我记得你给过路径：{'、'.join(session.unclassified)}"
+                     f"，告诉我它属于哪一类即可——工厂文件夹 / 下游装箱表 / GT 基准文件）")
+        _record_turn(session, message, text)
+        result = {"status": "rejected", "action": action, "message": text}
+        if session_id:
+            result["session_id"] = session_id
+        return result
+
+    errors = validate_paths(paths)
     if errors:
-        return {"status": "rejected", "action": "set_paths",
-                "message": "路径校验未通过，未执行任何操作", "errors": errors,
-                "parsed": parsed}
+        _record_turn(session, message, "路径校验未通过：" + "；".join(errors))
+        result = {"status": "rejected", "action": "set_paths",
+                  "message": "路径校验未通过，未执行任何操作", "errors": errors,
+                  "parsed": {"action": action, "paths": paths, "reply": reply}}
+        if session_id:
+            result["session_id"] = session_id
+        return result
 
-    warnings = cross_platform_warnings(parsed["paths"])
-    message = ("以上变更确认后，我将写入 .env 持久生效"
-               "（携带 thread_id 时当前批次立即用新路径重跑）。")
+    warnings = cross_platform_warnings(paths)
+    text = ("以上变更确认后，我将写入 .env 持久生效"
+            "（携带 thread_id 时当前批次立即用新路径重跑）。")
     if warnings:
-        message += "注意：存在异平台路径，本机无法验证其存在性，请核实目标机上路径有效后再确认。"
+        text += "注意：存在异平台路径，本机无法验证其存在性，请核实目标机上路径有效后再确认。"
+    _record_turn(session, message, reply or text)
     result = {
         "status": "pending_confirmation",
-        "action": parsed,
-        "preview": preview_changes(parsed["paths"], env_path),
-        "message": message,
+        "action": {"action": "set_paths", "paths": paths, "reply": reply},
+        "preview": preview_changes(paths, env_path),
+        "message": text,
     }
     if warnings:
         result["warnings"] = warnings
+    if session_id:
+        result["session_id"] = session_id
     return result
 
 
+def record_apply(session_id: str | None, paths: dict) -> None:
+    """confirm 执行后调用：确认结果记入历史，已应用的路径移出待归类槽位。"""
+    if not session_id:
+        return
+    session = _get_session(session_id)
+    applied = "、".join(f"{ALLOWED_PATHS[k][2]}={v}"
+                        for k, v in paths.items() if k in ALLOWED_PATHS)
+    _record_turn(session, "[确认执行]", f"已确认并应用：{applied}")
+    session.unclassified = [p for p in session.unclassified
+                            if p not in paths.values()]
+
+
 __all__ = ["parse_instruction", "validate_paths", "cross_platform_warnings",
-           "preview_changes", "apply_paths", "handle_message", "ALLOWED_PATHS"]
+           "preview_changes", "apply_paths", "handle_message", "record_apply",
+           "ALLOWED_PATHS"]

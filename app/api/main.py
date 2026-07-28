@@ -57,8 +57,10 @@ class AgentChatRequest(BaseModel):
 
     两段式：先发 message 拿解析预览（pending_confirmation）；
     确认后带 confirm=true + action（原样回传上一步的 action）执行。
+    session_id 启用 L1 会话记忆（多轮补充信息用），缺省为无状态单轮。
     """
     thread_id: Optional[str] = None             # 携带时当前批次用新路径重跑
+    session_id: Optional[str] = None            # L1 会话记忆标识（前端生成并持久）
     message: Optional[str] = None               # 自然语言指令（确认前）
     confirm: bool = False
     action: Optional[Dict[str, Any]] = None     # 确认执行时回传的解析结果
@@ -128,8 +130,12 @@ async def agent_chat(request: AgentChatRequest):
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        # 确认结果记入会话历史（L1），已应用路径移出待归类槽位
+        chat.record_apply(request.session_id, request.action["paths"])
         return {"status": "applied", **result}
 
     if not request.message:
         raise HTTPException(status_code=400, detail="message 不能为空")
-    return await asyncio.to_thread(chat.handle_message, request.message)
+    return await asyncio.to_thread(
+        chat.handle_message, request.message, None, request.session_id
+    )

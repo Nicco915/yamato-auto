@@ -109,7 +109,10 @@
       <textarea id="inp" rows="2" placeholder="例如：工厂文件都在 /data/factory 下面"></textarea>
       <button class="btn btn-primary" id="btn-send">发送</button>
     </div>
-    <div class="input-hint">Enter 发送，Shift+Enter 换行。对话历史仅保留在当前页面，刷新即清空。</div>
+    <div class="input-hint">
+      Enter 发送，Shift+Enter 换行。Agent 会记住本次会话上下文（可分多轮补充信息，刷新不丢）。
+      <a href="javascript:void 0" id="btn-new-session" style="color:var(--primary)">开始新会话</a>
+    </div>
   </div>
 </div>
 
@@ -122,8 +125,17 @@ if (typeof api !== "function") {
 }
 
 /* ================= 全局状态 ================= */
-const history = [];   // 对话历史（仅浏览器内存，刷新即丢，不持久化）
+const history = [];   // 对话历史（仅浏览器内存，用于渲染；会话上下文由服务器按 session_id 记忆）
 let sending = false;
+
+/* L1 会话记忆：session_id 存 localStorage，刷新后 Agent 仍记得本次会话上下文 */
+let sessionId = localStorage.getItem("yamato_chat_sid");
+if (!sessionId) {
+  sessionId = (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : "sid-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+  localStorage.setItem("yamato_chat_sid", sessionId);
+}
 
 /* ================= 气泡渲染 ================= */
 function scrollBottom() {
@@ -171,7 +183,7 @@ async function send() {
   try {
     const data = await api("/api/v1/agent/chat", {
       method: "POST",
-      body: { message: text },
+      body: { message: text, session_id: sessionId },
     });
     thinking.remove();
     handleResponse(data);
@@ -273,7 +285,7 @@ function renderConfirmation(data) {
 /* ================= 确认执行（写 .env + 可选重跑） ================= */
 async function confirmApply(action, srcBubble) {
   const tid = $("tid").value.trim();
-  const body = { confirm: true, action: action };
+  const body = { confirm: true, action: action, session_id: sessionId };
   if (tid) body.thread_id = tid;
 
   const thinking = addAgentText("正在写入配置…");
@@ -355,6 +367,18 @@ $("inp").addEventListener("keydown", (e) => {
     send();
   }
 });
+
+/* 新会话：换新 session_id（服务器侧旧会话随 TTL 过期），清空界面重来 */
+$("btn-new-session").onclick = () => {
+  sessionId = (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : "sid-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+  localStorage.setItem("yamato_chat_sid", sessionId);
+  history.length = 0;
+  $("msgs").innerHTML = "";
+  addAgentText("已开始新会话，之前的对话上下文不再带入。");
+  $("inp").focus();
+};
 
 /* ================= 初始化 ================= */
 renderTopbar("chat");

@@ -1,6 +1,6 @@
 # 供应链单证自动化 — 项目进度总览
 
-> 最后更新：2026-07-28（生产前端上线：工作台/批次详情/对话/审核加固 4 页 + 批次管理 API + 审核审计落库）
+> 最后更新：2026-07-28（对话 Agent L1 会话记忆：多轮补充信息可合并，A+B 双层实现）
 > 设计文档：`../agent设计/`（第一/二/三阶段、api接口以及异步机制、人工审核界面设计、提取agent背景prompt）
 
 ## 1. 项目目标
@@ -31,6 +31,7 @@
 | 审核界面：双屏 UI | ✅ 完成 | 已并入主服务，集成实测 8/8 通过（见第 6 节） |
 | Node3 真实联调 | ✅ 完成 | 去 mock 接真实 qwen3.7-plus，山東中地端到端 14/14 全绿（见第 6.1 节） |
 | 生产前端：工作台/详情/对话/审核加固 | ✅ 完成 | 4 页面 + 批次管理 API + review_audits 审计落库，全链路测试通过（见第 6.5 节） |
+| 对话 Agent：L1 会话记忆 | ✅ 完成 | 多轮补充信息（先路径后类别）可合并，A+B 双层实现，实测通过（见第 6.6 节） |
 
 ## 4. 提取引擎（app/extraction/）
 
@@ -297,6 +298,36 @@ usage scope）→ 审核 payload（weight_diff_warn_ratio=0.05）→ resume（�
 新 SKU 补录）→ 审计落库（扁平 changes old→new、edited_count、new_skus）→ usage →
 4 页面路由 200 + 特征字符串 → 详情 404。全绿。
 
+## 6.6 对话 Agent L1 会话记忆（2026-07-28 完成）
+
+**问题**：/api/v1/agent/chat 原为无状态单轮解析——操作员分轮补充信息必然失败
+（第 1 轮给绝对路径没说类别 → 问类别；第 2 轮只说"是下游装箱表"没给路径 → 问路径；
+服务器从未合并两轮信息）。
+
+**方案共识**（用户讨论拍板）：提取 LangGraph 工作流保持确定性状态机不动（要可复现
+可审计），agentic 只放对话/运维层；"总 agent"等对话通道长出多能力后再演进，现在不建。
+记忆分三级：L1 会话（本节实现）→ L2 批次（checkpointer 已有）→ L3 长期跨批次（未做）。
+
+**A+B 双层实现**（agent_chat.py）：
+- **路线 A**：`session_id` 标识的会话历史（最近 10 轮）随请求发给解析器，prompt 新增
+  多轮合并规则（历史中未归类路径 + 本轮类别 → 填入 paths；反向同理）；
+- **路线 B**：`category_hint` + `unclassified` 待归类槽位由**代码**持有（唯一事实来源），
+  LLM 没合并时 `_merge_with_session()` 兜底：hint + 唯一待归类路径 → 合并为 set_paths；
+  **多条待归类不猜**，保持 unknown 让操作员指明。白名单 + 绝对路径在 parse 层和
+  merge 层双重设防——记忆只填槽位，绝不绕过校验/人工确认。
+- **存储**：进程内 dict（TTL 2h、上限 500、threading.Lock）；重启即丢（可接受，
+  确认前状态本就短命），需跨重启持久时再迁 app/db。缺省 session_id 保持无状态
+  （向后兼容）。
+- **前端**（chat.html）：session_id 存 localStorage（刷新后 Agent 仍记得上下文），
+  chat/confirm 请求都携带；新增「开始新会话」链接。拒绝应答会主动提醒
+  「我记得你给过路径：…，告诉我它属于哪一类即可」。
+- confirm 后 `record_apply()` 把确认结果记入历史、已应用路径移出待归类槽位。
+
+**实测**（chat_paths_test.py 第 6 节）：纯 Python 合并/多路径不猜/白名单防线单测 +
+真实 LLM 两轮端到端（裸路径 → 拒绝但记住 → "刚才那个是工厂文件夹" → 合并出
+pending_confirmation）+ 缺省 session_id 无状态兼容，全绿；FastAPI TestClient
+冒烟（confirm/message 分支 session_id 透传）通过。
+
 ## 7. 关键设计决策记录
 
 0. **路径集中配置 + agent 对话可改**（2026-07-28 用户授权）：`app/.env`「业务路径」节
@@ -333,7 +364,8 @@ usage scope）→ 审核 payload（weight_diff_warn_ratio=0.05）→ resume（�
    前端 /review 尚未展示「暂无箱单/改单/冲突」等 Agent 反馈条
 4. `--consolidate` 更新 10 工厂汇总报告（用修复后的通道重跑或基于人工核对结论更新）
 5. 按需：Celery 迁移（Windows 部署注意：Redis 需 WSL2/Docker 或 Memurai 替代）、
-   UI Basic auth（内网认证，backlog）。
+   UI Basic auth（内网认证，backlog）、对话会话跨重启持久化（L1 现为进程内
+   dict，需要时迁 app/db）、L3 长期记忆（跨批次记工厂习惯，方向已讨论未定）。
    ~~LibreOffice 安装~~（2026-07-28 完成：清华镜像装 26.2.5，亿钻 doc 主路径实测通过；
    _find_soffice 三平台探测，textutil 降级纯兜底，commit c7583f8；
    sub-agent 复测：soffice→PDF 2.2s 带文本层，装箱单 doc GT 30/30、
