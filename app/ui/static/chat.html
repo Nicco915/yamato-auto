@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Agent 对话配置</title>
+<link rel="stylesheet" href="/ui/static/ui.css">
+<style>
+  /* ---------- 本页专用：聊天气泡 ---------- */
+  .chat-page { max-width: 860px; }
+  .info-bar {
+    background: #f3f4f6;
+    color: #4b5563;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+  .tid-row { display: flex; align-items: center; gap: 10px; }
+  .tid-row label { font-size: 13px; color: #4b5563; white-space: nowrap; }
+  .tid-row input { width: 320px; }
+  .tid-row .hint { font-size: 12px; color: var(--muted); }
+
+  #msgs {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 4px 2px;
+    margin-bottom: 12px;
+  }
+  .bubble {
+    max-width: 78%;
+    padding: 9px 13px;
+    border-radius: 10px;
+    font-size: 13px;
+    line-height: 1.7;
+    word-break: break-word;
+    white-space: pre-wrap;
+  }
+  .bubble.user {
+    align-self: flex-end;
+    background: #2563eb;
+    color: #fff;
+    border-bottom-right-radius: 3px;
+  }
+  .bubble.agent {
+    align-self: flex-start;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-bottom-left-radius: 3px;
+  }
+  .bubble .err-line { color: var(--err); }
+  .bubble .warn-line { color: var(--warn); }
+
+  .preview-card {
+    margin-top: 8px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 8px 10px;
+  }
+  .preview-line {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    color: #374151;
+    white-space: pre-wrap;
+    word-break: break-all;
+    padding: 3px 0;
+  }
+  .preview-actions { margin-top: 10px; display: flex; gap: 10px; }
+
+  .input-row { display: flex; gap: 10px; align-items: flex-end; }
+  #inp {
+    flex: 1;
+    resize: none;
+    padding: 8px 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: var(--font);
+    line-height: 1.6;
+  }
+  #inp:focus { outline: 2px solid #93c5fd; border-color: var(--primary); }
+  .input-hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+</style>
+</head>
+<body>
+
+<div class="page chat-page">
+  <!-- 说明条 -->
+  <div class="card info-bar">
+    与提取 Agent 对话修改路径配置。仅授权三项：上游工厂文件夹 / 下游装箱表 / GT 基准文件。修改会写入 .env 并立即生效；携带批次号时当前批次将重跑。
+  </div>
+
+  <!-- thread_id 输入行 -->
+  <div class="card">
+    <div class="tid-row">
+      <label for="tid">关联批次 thread_id</label>
+      <input type="text" id="tid" placeholder="例如 batch-20260728-001">
+      <span class="hint">留空 = 只对后续批次生效</span>
+    </div>
+  </div>
+
+  <!-- 消息流区 -->
+  <div id="msgs"></div>
+
+  <!-- 输入区 -->
+  <div class="card">
+    <div class="input-row">
+      <textarea id="inp" rows="2" placeholder="例如：工厂文件都在 /data/factory 下面"></textarea>
+      <button class="btn btn-primary" id="btn-send">发送</button>
+    </div>
+    <div class="input-hint">Enter 发送，Shift+Enter 换行。对话历史仅保留在当前页面，刷新即清空。</div>
+  </div>
+</div>
+
+<script src="/ui/static/ui.js"></script>
+<script>
+"use strict";
+if (typeof api !== "function") {
+  document.body.innerHTML = '<p style="padding:40px">共享资产 ui.js 未加载</p>';
+  throw new Error("ui.js missing");
+}
+
+/* ================= 全局状态 ================= */
+const history = [];   // 对话历史（仅浏览器内存，刷新即丢，不持久化）
+let sending = false;
+
+/* ================= 气泡渲染 ================= */
+function scrollBottom() {
+  const box = $("msgs");
+  box.scrollTop = box.scrollHeight;
+}
+
+function addBubble(role) {
+  const div = document.createElement("div");
+  div.className = "bubble " + role;
+  $("msgs").appendChild(div);
+  scrollBottom();
+  return div;
+}
+
+function addUserMsg(text) {
+  const b = addBubble("user");
+  b.textContent = text;
+  history.push({ role: "user", text });
+}
+
+function addAgentText(text, extraClass) {
+  const b = addBubble("agent");
+  if (extraClass) b.classList.add(extraClass);
+  b.textContent = text;
+  history.push({ role: "agent", text });
+  return b;
+}
+
+/* ================= 发送消息（第一段：解析+预览） ================= */
+async function send() {
+  if (sending) return;
+  const inp = $("inp");
+  const text = inp.value.trim();
+  if (!text) return;
+
+  sending = true;
+  inp.value = "";
+  inp.disabled = true;
+  $("btn-send").disabled = true;
+
+  addUserMsg(text);
+  const thinking = addAgentText("思考中…");
+
+  try {
+    const data = await api("/api/v1/agent/chat", {
+      method: "POST",
+      body: { message: text },
+    });
+    thinking.remove();
+    handleResponse(data);
+  } catch (e) {
+    thinking.textContent = "请求失败：" + e.message;
+    thinking.style.color = "#dc2626";
+  } finally {
+    sending = false;
+    inp.disabled = false;
+    $("btn-send").disabled = false;
+    inp.focus();
+    scrollBottom();
+  }
+}
+
+function handleResponse(data) {
+  const status = data && data.status;
+  if (status === "rejected") {
+    const b = addBubble("agent");
+    const msg = document.createElement("div");
+    msg.textContent = data.message || "指令被拒绝，未执行任何操作。";
+    b.appendChild(msg);
+    // errors 字段防御式：可能不存在
+    const errs = Array.isArray(data.errors) ? data.errors : [];
+    errs.forEach((err) => {
+      const line = document.createElement("div");
+      line.className = "err-line";
+      line.textContent = "· " + err;
+      b.appendChild(line);
+    });
+    history.push({ role: "agent", text: data.message || "" });
+    scrollBottom();
+  } else if (status === "pending_confirmation") {
+    renderConfirmation(data);
+  } else {
+    addAgentText((data && data.message) || "（无回复内容）");
+  }
+}
+
+/* ================= 预览卡 + 确认/取消（第二段） ================= */
+function renderConfirmation(data) {
+  const b = addBubble("agent");
+
+  const reply = document.createElement("div");
+  reply.textContent = (data.action && data.action.reply) || data.message || "请确认以下变更：";
+  b.appendChild(reply);
+
+  // 预览卡：preview 数组逐行，等宽字体，原样保留换行
+  const card = document.createElement("div");
+  card.className = "preview-card";
+  const lines = Array.isArray(data.preview) ? data.preview : [];
+  lines.forEach((line) => {
+    const div = document.createElement("div");
+    div.className = "preview-line";
+    div.textContent = line;
+    card.appendChild(div);
+  });
+  b.appendChild(card);
+
+  // 异平台警告（防御式：可能无 warnings 字段）
+  const warns = Array.isArray(data.warnings) ? data.warnings : [];
+  warns.forEach((w) => {
+    const line = document.createElement("div");
+    line.className = "warn-line";
+    line.textContent = "⚠ " + w;
+    b.appendChild(line);
+  });
+
+  if (data.message && data.action && data.action.reply) {
+    const note = document.createElement("div");
+    note.className = "muted";
+    note.style.fontSize = "12px";
+    note.style.marginTop = "6px";
+    note.textContent = data.message;
+    b.appendChild(note);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "preview-actions";
+  const btnOk = document.createElement("button");
+  btnOk.className = "btn btn-primary btn-sm";
+  btnOk.textContent = "确认执行";
+  const btnNo = document.createElement("button");
+  btnNo.className = "btn btn-ghost btn-sm";
+  btnNo.textContent = "取消";
+  actions.appendChild(btnOk);
+  actions.appendChild(btnNo);
+  b.appendChild(actions);
+
+  const lock = () => { btnOk.disabled = true; btnNo.disabled = true; };
+
+  btnOk.onclick = () => { lock(); confirmApply(data.action, b); };
+  btnNo.onclick = () => { lock(); addAgentText("已取消，未执行任何修改。"); };
+
+  history.push({ role: "agent", text: reply.textContent });
+  scrollBottom();
+}
+
+/* ================= 确认执行（写 .env + 可选重跑） ================= */
+async function confirmApply(action, srcBubble) {
+  const tid = $("tid").value.trim();
+  const body = { confirm: true, action: action };
+  if (tid) body.thread_id = tid;
+
+  const thinking = addAgentText("正在写入配置…");
+  try {
+    const data = await api("/api/v1/agent/chat", {
+      method: "POST",
+      body: body,
+    });
+    thinking.remove();
+    renderApplied(data, tid);
+  } catch (e) {
+    thinking.textContent = "执行失败：" + e.message;
+    thinking.style.color = "#dc2626";
+    scrollBottom();
+  }
+}
+
+function renderApplied(data, tid) {
+  const b = addBubble("agent");
+
+  const applied = data.applied && typeof data.applied === "object" ? data.applied : {};
+  const keys = Object.keys(applied);
+  const head = document.createElement("div");
+  head.textContent = keys.length ? "已生效：" : "已生效（无变更项返回）。";
+  b.appendChild(head);
+  keys.forEach((k) => {
+    const line = document.createElement("div");
+    line.className = "mono";
+    line.style.fontSize = "12px";
+    line.textContent = k + "=" + applied[k];
+    b.appendChild(line);
+  });
+
+  if (data.env_file) {
+    const envLine = document.createElement("div");
+    envLine.className = "muted";
+    envLine.style.fontSize = "12px";
+    envLine.style.marginTop = "4px";
+    envLine.textContent = "配置已写入 " + data.env_file;
+    b.appendChild(envLine);
+  }
+
+  const warns = Array.isArray(data.warnings) ? data.warnings : [];
+  warns.forEach((w) => {
+    const line = document.createElement("div");
+    line.className = "warn-line";
+    line.textContent = "⚠ " + w;
+    b.appendChild(line);
+  });
+
+  // 重跑结果（仅携带 thread_id 时存在）
+  if (data.rerun) {
+    const rr = document.createElement("div");
+    rr.style.marginTop = "8px";
+    if (data.rerun.status === "pending_human_review") {
+      rr.textContent = "批次已用新路径重跑，当前挂起待人工审核。";
+      b.appendChild(rr);
+      const link = document.createElement("a");
+      link.className = "btn btn-primary btn-sm";
+      link.style.marginTop = "6px";
+      link.href = "/review?thread_id=" + encodeURIComponent(tid);
+      link.textContent = "去审核";
+      b.appendChild(link);
+    } else {
+      rr.textContent = data.rerun.message || "批次已重跑。";
+      b.appendChild(rr);
+    }
+  }
+
+  history.push({ role: "agent", text: head.textContent });
+  scrollBottom();
+}
+
+/* ================= 输入事件 ================= */
+$("btn-send").onclick = send;
+$("inp").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    send();
+  }
+});
+
+/* ================= 初始化 ================= */
+renderTopbar("chat");
+const initTid = new URLSearchParams(location.search).get("thread_id") || "";
+$("tid").value = initTid;
+if (initTid) {
+  addAgentText("当前关联批次：" + initTid + "。改路径确认后该批次将自动重跑。");
+} else {
+  addAgentText("未关联批次，修改只对后续批次生效。如需关联批次，请在上方填入 thread_id，或通过 /chat?thread_id=批次号 打开本页。");
+}
+$("inp").focus();
+</script>
+</body>
+</html>
