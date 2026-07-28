@@ -234,7 +234,9 @@ Node3 真实分支改为以**增量会话 FactorySession** 驱动（与生产"�
 5. 按需：Celery 迁移（Windows 部署注意：Redis 需 WSL2/Docker 或 Memurai 替代）、
    /chat 对话界面（当前仅 API）。
    ~~LibreOffice 安装~~（2026-07-28 完成：清华镜像装 26.2.5，亿钻 doc 主路径实测通过；
-   _find_soffice 三平台探测，textutil 降级纯兜底，commit c7583f8）
+   _find_soffice 三平台探测，textutil 降级纯兜底，commit c7583f8；
+   sub-agent 复测：soffice→PDF 2.2s 带文本层，装箱单 doc GT 30/30、
+   工厂级 extract_factory 32/32 全中，2 次 LLM 调用零解析失败，无 WARNING）
 
 ## 9. 环境备忘
 
