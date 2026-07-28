@@ -39,6 +39,14 @@ IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 PDF_SUFFIXES = {".pdf"}
 EXCEL_SUFFIXES = {".xlsx", ".xlsm", ".xls", ".csv"}
 
+# 图片扩展名 -> MIME 硬编码映射：Windows 精简系统上 mimetypes 依赖注册表
+# 可能返回 None，常见图片类型优先查此表，mimetypes 仅作兜底
+_IMAGE_MIME_MAP = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+}
+
 # ---------------------------------------------------------------------------
 # 路径白名单
 # ---------------------------------------------------------------------------
@@ -211,7 +219,11 @@ async def get_document(
             )
 
         if suffix in IMAGE_SUFFIXES:
-            mime = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
+            # 优先硬编码映射（避免 Windows 精简系统注册表缺失导致 None），
+            # mimetypes 仅作兜底
+            mime = (_IMAGE_MIME_MAP.get(suffix)
+                    or mimetypes.guess_type(p.name)[0]
+                    or "application/octet-stream")
             return FileResponse(p, media_type=mime, headers={"X-Page-Count": "1"})
 
     except HTTPException:

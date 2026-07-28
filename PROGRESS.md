@@ -196,6 +196,41 @@ Node3 真实分支改为以**增量会话 FactorySession** 驱动（与生产"�
 - 实测 `validation/chat_paths_test.py`：错路径启动→占位挂起→自然语言对话→确认→
   .env 更新+当前批次重跑命中中地；负例（不存在路径/闲聊/相对路径/白名单外）全拒。
 
+## 6.4 Windows 平台兼容性改造（2026-07-28 完成，sub-agent 并行实施）
+
+对全项目（重点 agent 工具链）做 Windows 兼容性检测与修复，macOS 行为零回归
+（全模块 import + mock 冒烟全绿）：
+
+- **对话改路径 Agent 支持 Windows 路径**（agent_chat.py，原为阻塞 bug）：
+  prompt 从"只认 / 开头"改为认可三类绝对路径——Unix（/ 开头）、Windows 盘符
+  （`X:\`/`X:/`）、UNC（`\\server\share`）；新增 `_is_absolute_path()` 跨平台判定；
+  prompt 改 raw string 修复 `\f` 转义腐蚀；补 JSON 反斜杠转义规则。
+- **异平台路径处理策略**（用户拍板：拒绝但提示跨机确认）：macOS 网关为 Windows
+  生产机配 `D:\` 路径时，跳过本机存在性校验（不硬拒），由
+  `cross_platform_warnings()` 产出中文警告、走既有 pending_confirmation 人工确认
+  兜底；同平台不存在路径仍零容错硬拒。LLM reply 须注明识别到的路径风格
+  （Unix / Windows 盘符 / UNC），防手滑反斜杠与 UNC 误判。
+- **doc 通道 Windows 加固**（pipeline.py/doc_channel.py）：`SOFFICE_PATH` 环境变量
+  最高优先级覆盖；Windows 候选补 `soffice.com`（控制台附着变体）与 Scoop 路径；
+  subprocess 加 `-env:UserInstallation`（独立 profile，防与用户运行中的
+  LibreOffice 实例/残留锁冲突——Windows 常见静默失败原因）；失败分三类 print 日志
+  （soffice 不存在 / 调用失败含退出码 / 未产出 PDF），不再静默。textutil 兜底
+  报错文案给出 Windows 三种 LibreOffice 安装方式。macOS 真实转换冒烟通过。
+- **去硬编码 macOS 路径**：llm_client 的 .env 路径改 `Path(__file__).parents[2]`
+  推导（与 PROJECT_ROOT 一致）；ground_truth / integ_graph_real / demo_server /
+  chat_paths_test 的业务路径全部支持环境变量覆盖（默认值不变，macOS 现状不受影响）。
+- **杂项**：folder_router alias 精确匹配失败后追加大小写不敏感兜底（带日志，
+  Windows/macOS 大小写不敏感文件系统场景）；review 图片 MIME 用硬编码映射表优先
+  （不依赖 Windows 注册表）；export_node `datetime.utcnow()` →
+  `datetime.now(timezone.utc)`（输出格式逐字节一致，消除 3.12+ 弃用警告）；
+  demo_server os.path 统一为 pathlib。
+- **用户拍板暂不做**：python-docx 第三兜底（不支持老式 .doc——亿钻装箱单正是
+  .doc，仍需 LibreOffice；复杂表格降维质量不如 PDF 通道）。
+- **Windows 部署清单**：①.env 覆盖 UPSTREAM_ROOT / DOWNSTREAM_FILE_PATH
+  （验证脚本另需 GT_SOURCE/GT_FALLBACK）；②安装 LibreOffice 或设 SOFFICE_PATH。
+- 回归验证：compileall 全项目 + 关键模块 import + mock 冒烟（scripts/run_cli.py
+  --reset）全绿；chat_paths_test 第 5 节 Windows 正例用例已写好，待真实 LLM 实跑。
+
 ## 7. 关键设计决策记录
 
 0. **路径集中配置 + agent 对话可改**（2026-07-28 用户授权）：`app/.env`「业务路径」节

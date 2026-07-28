@@ -50,7 +50,14 @@ def doc_to_html(file_path: str, max_chars: int | None = MAX_DOC_HTML_CHARS) -> s
     if not textutil:
         raise UnsupportedFileError(
             f"textutil 不可用（仅 macOS 自带）: {file_path}。"
-            "Windows/Linux 平台请安装 LibreOffice（soffice），doc 将走 PDF 转换通道"
+            "Windows/Linux 平台请安装 LibreOffice（soffice），doc 将走 PDF 转换通道。"
+            "Windows 安装方式（任选其一）："
+            "1) 官网下载安装 https://www.libreoffice.org/download"
+            "（默认路径 C:\\Program Files\\LibreOffice\\program\\soffice.exe）；"
+            "2) winget install TheDocumentFoundation.LibreOffice；"
+            "3) choco install libreoffice 或 scoop install libreoffice。"
+            "自定义安装目录 / 未加入 PATH 时，可设置环境变量 SOFFICE_PATH "
+            "指向 soffice.exe 的完整路径"
         )
     try:
         proc = subprocess.run(

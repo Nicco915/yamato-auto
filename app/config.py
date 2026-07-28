@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     checkpoint_db_path: str = "app/data/checkpoints.db"
 
     # ----- 业务路径 -----
+    # 以下两项默认值是"当前生产数据所在位置"（macOS 开发现状），属业务数据位置，
+    # 不要随意改默认值；Windows 部署时必须在 .env 中用环境变量覆盖这两项
+    # （DOWNSTREAM_FILE_PATH / UPSTREAM_ROOT，写 Windows 绝对路径如 D:\data\...）。
     downstream_file_path: str = (
         "/Users/nz/Downloads/yamato/96/"
         "ContentsOfTheContainer_202624_青島XD_20260708.xlsx"

@@ -4,7 +4,9 @@
 路径配置。流程（LLM 只解析不做决策，决策永远属于人工）：
 
 1. parse_instruction：LLM 把自然语言解析成结构化路径参数（白名单 3 个 key）；
-2. validate_paths：纯 Python 校验——绝对路径 + 目录/文件必须存在，零容错；
+2. validate_paths：纯 Python 校验——绝对路径 + 同平台路径必须存在，零容错；
+   异平台路径（如 macOS 网关上配 Windows 生产机路径）本机无法验证存在性，
+   不硬拒，由 cross_platform_warnings 产出警告，靠人工确认环节兜底；
 3. preview_changes：生成「旧值 → 新值」预览，等人工确认；
 4. apply_paths（confirm 后）：写回 .env（持久，先备份 .env.bak）+ 刷新运行时
    配置 + 当前批次带新路径从 Node1 重跑（scope 见用户答复：持久+当前批次）。
@@ -19,6 +21,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 
 from dotenv import dotenv_values
@@ -34,7 +37,7 @@ ALLOWED_PATHS: dict[str, tuple[str, str, str]] = {
 
 DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
 
-_PARSE_PROMPT = """你是路径配置指令解析器，服务于供应链单证提取 Agent。
+_PARSE_PROMPT = r"""你是路径配置指令解析器，服务于供应链单证提取 Agent。
 操作员会用自然语言要求修改路径配置。你只识别以下三类路径（其他一律不提取）：
 
 - upstream_root：上游工厂文件夹根目录。操作员可能说：工厂文件夹/工厂目录/上游目录/工厂文件在…
@@ -42,10 +45,16 @@ _PARSE_PROMPT = """你是路径配置指令解析器，服务于供应链单证�
 - gt_source：GT 基准文件（ground truth 对照表）。操作员可能说：GT/gt文件/基准表/对照表
 
 铁律：
-1. 只提取操作员明确给出的绝对路径（以 / 开头的完整路径）；相对路径、猜的路径禁止输出；
+1. 只提取操作员明确给出的绝对路径，以下两种风格都算绝对路径：
+   - Unix 风格：以 / 开头（如 /Users/nas/工厂）；
+   - Windows 风格：盘符开头（如 D:\factory\工厂 或 D:/factory/工厂），或 UNC 路径（\\NAS\share\…）；
+   相对路径、猜的路径禁止输出；路径原文照抄不得改写，
+   Windows 反斜杠在 JSON 里必须按 JSON 规则转义（一个 \ 写成 \\）；
 2. 同一句话出现多个路径时，按语义各自归类，拿不准归类的一律不提取；
 3. 与修改路径无关的内容（闲聊、提问、其他配置如 API key/模型/数据库）→ action=chat；
-4. 想改路径但没给出明确绝对路径 → action=unknown，reply 里说明缺什么。
+4. 想改路径但没给出明确绝对路径 → action=unknown，reply 里说明缺什么；
+5. 提取到路径时，reply 里必须注明识别到的路径风格（Unix / Windows 盘符 / UNC），
+   方便操作员在确认预览时发现「本意 Unix 但手滑写成反斜杠」或「UNC 被误判成盘符」两类事故。
 
 只输出 JSON：
 {"action": "set_paths" | "unknown" | "chat",
@@ -93,8 +102,62 @@ def parse_instruction(message: str) -> dict:
 # 第二步：纯 Python 校验（零容错）
 # ---------------------------------------------------------------------------
 
+def _is_absolute_path(value: str) -> bool:
+    """跨平台绝对路径判定（与运行平台解耦）。
+
+    同时认可三类（macOS 上配置 Windows 生产机路径的场景必需）：
+    - Unix 风格：/ 开头（含 // 开头）；
+    - Windows 盘符：X:\\ 或 X:/（盘符大小写不限）；
+    - Windows UNC：\\\\server\\share 开头。
+    注意：本函数只判格式；存在性校验（is_dir/is_file）只能在本机执行，
+    异平台路径由 _is_cross_platform 识别后跳过存在性校验（见 validate_paths）。
+    """
+    if value.startswith("/"):
+        return True
+    if value.startswith("\\\\"):
+        return True
+    return (len(value) >= 3 and value[0].isalpha()
+            and value[1] == ":" and value[2] in "\\/")
+
+
+def _path_style(value: str) -> str:
+    """路径风格分类：windows_drive / unc / unix / relative。"""
+    if value.startswith("\\\\"):
+        return "unc"
+    if (len(value) >= 3 and value[0].isalpha()
+            and value[1] == ":" and value[2] in "\\/"):
+        return "windows_drive"
+    if value.startswith("/"):
+        return "unix"
+    return "relative"
+
+
+# 路径风格 → 中文名（用于 warnings 文案）
+_STYLE_LABELS = {"windows_drive": "Windows 盘符", "unc": "UNC", "unix": "Unix"}
+
+
+def _is_cross_platform(style: str) -> bool:
+    """路径风格与运行平台不一致时视为异平台（本机无法验证存在性）。
+
+    - Windows 盘符 / UNC 路径运行在非 Windows（macOS/Linux 网关）上；
+    - Unix 路径运行在 Windows 上。
+    """
+    if style in ("windows_drive", "unc"):
+        return sys.platform != "win32"
+    if style == "unix":
+        return sys.platform == "win32"
+    return False
+
+
 def validate_paths(paths: dict) -> list[str]:
-    """校验路径合法性，返回错误列表（空=通过）。"""
+    """校验路径合法性，返回硬错误列表（空=通过）。
+
+    错误语义分三类：
+    - 非绝对路径 → 硬错误「必须是绝对路径」；
+    - 同平台绝对路径但本机不存在 → 硬错误「目录/文件不存在」；
+    - 异平台绝对路径 → 本机无法验证存在性，跳过 is_dir/is_file，不算硬错误
+      （由 cross_platform_warnings 产出警告，靠 pending_confirmation 人工兜底）。
+    """
     errors: list[str] = []
     for key, value in paths.items():
         if key not in ALLOWED_PATHS:
@@ -102,13 +165,33 @@ def validate_paths(paths: dict) -> list[str]:
             continue
         _, kind, label = ALLOWED_PATHS[key]
         p = Path(value)
-        if not p.is_absolute():
+        if not _is_absolute_path(value):
             errors.append(f"{label}：必须是绝对路径，收到 {value!r}")
+        elif _is_cross_platform(_path_style(value)):
+            continue  # 异平台路径：本机无法验证存在性，不硬拒
         elif kind == "dir" and not p.is_dir():
             errors.append(f"{label}：目录不存在 {value}")
         elif kind == "file" and not p.is_file():
             errors.append(f"{label}：文件不存在 {value}")
     return errors
+
+
+def cross_platform_warnings(paths: dict) -> list[str]:
+    """对每个异平台路径产出中文警告（本机无法验证存在性，提示人工核实目标机）。"""
+    local = "Windows" if sys.platform == "win32" else "macOS/Linux"
+    warnings: list[str] = []
+    for key, value in paths.items():
+        if key not in ALLOWED_PATHS:
+            continue
+        style = _path_style(value)
+        if not _is_cross_platform(style):
+            continue
+        label = ALLOWED_PATHS[key][2]
+        warnings.append(
+            f"{label}为 {_STYLE_LABELS[style]}路径，本机（{local}）无法验证存在性，"
+            f"请确认该路径在目标机上存在后再确认：{value}"
+        )
+    return warnings
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +262,10 @@ def apply_paths(paths: dict, thread_id: str | None = None,
     get_settings.cache_clear()
 
     result: dict = {"applied": updates, "env_file": str(env_path)}
+    # 异平台路径天然通过校验，但须把警告带给操作员（提示核实目标机）
+    warnings = cross_platform_warnings(paths)
+    if warnings:
+        result["warnings"] = warnings
 
     if thread_id:
         from app.api import service  # 延迟 import 避免环
@@ -204,14 +291,21 @@ def handle_message(message: str, env_path: Path | None = None) -> dict:
                 "message": "路径校验未通过，未执行任何操作", "errors": errors,
                 "parsed": parsed}
 
-    return {
+    warnings = cross_platform_warnings(parsed["paths"])
+    message = ("以上变更确认后，我将写入 .env 持久生效"
+               "（携带 thread_id 时当前批次立即用新路径重跑）。")
+    if warnings:
+        message += "注意：存在异平台路径，本机无法验证其存在性，请核实目标机上路径有效后再确认。"
+    result = {
         "status": "pending_confirmation",
         "action": parsed,
         "preview": preview_changes(parsed["paths"], env_path),
-        "message": "以上变更确认后，我将写入 .env 持久生效"
-        "（携带 thread_id 时当前批次立即用新路径重跑）。",
+        "message": message,
     }
+    if warnings:
+        result["warnings"] = warnings
+    return result
 
 
-__all__ = ["parse_instruction", "validate_paths", "preview_changes",
-           "apply_paths", "handle_message", "ALLOWED_PATHS"]
+__all__ = ["parse_instruction", "validate_paths", "cross_platform_warnings",
+           "preview_changes", "apply_paths", "handle_message", "ALLOWED_PATHS"]

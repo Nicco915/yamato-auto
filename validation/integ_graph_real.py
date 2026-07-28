@@ -43,6 +43,9 @@ THREAD_ID = "INTEG-ZD3-REAL"
 TARGET_FACTORY_JP = "山東中地"   # 下游表 MAKER_MEI_KJ 原文
 TARGET_FACTORY_LOCAL = "中地"    # 本地文件夹名（alias_map 命中）
 # 生产下游表为_原文件（无三列的客户原始文件）；可用环境变量 INTEG_DOWNSTREAM_FILE 覆盖
+# 【Windows 用法】默认值为 macOS 开发机绝对路径，Windows 上运行前必须设置：
+#   set INTEG_DOWNSTREAM_FILE=D:\yamato\96\ContentsOfTheContainer_202624_青島XD_20260708_原文件.xlsx
+# （cmd）或在 app/.env / PowerShell 的 $env:INTEG_DOWNSTREAM_FILE 中配置
 DOWNSTREAM_FILE = os.environ.get(
     "INTEG_DOWNSTREAM_FILE",
     "/Users/nz/Downloads/yamato/96/"

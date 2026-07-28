@@ -19,10 +19,16 @@ import pandas as pd
 from dotenv import load_dotenv
 
 # 路径统一从 app/.env 读取（agent 已获用户授权对话修改该文件），缺省值为当前生产路径
+# 【Windows 部署】以下默认值为 macOS 开发机的绝对路径，Windows 上不存在，
+# 必须在 app/.env（或系统环境变量）中显式设置 GT_SOURCE / GT_FALLBACK /
+# UPSTREAM_ROOT 指向本机实际数据位置，例如：
+#   GT_SOURCE=D:/yamato/96/ContentsOfTheContainer_202624_青島XD_20260708.xlsx
+#   GT_FALLBACK=D:/yamato/96/报关匹配.xlsx
+#   UPSTREAM_ROOT=D:/yamato/96/工厂
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 GT_SOURCE = os.environ.get(
-    "GT_SOURCE",
+    "GT_SOURCE",  # Windows：必须设置此环境变量覆盖下面的 macOS 默认路径
     "/Users/nz/Downloads/yamato/96/ContentsOfTheContainer_202624_青島XD_20260708.xlsx",
 )
 GT_SHEET = "バンニングリスト"
@@ -31,7 +37,8 @@ GT_SHEET = "バンニングリスト"
 # 行序一致（同 index 同 SHOHIN_CD），用于填补这些空单元格（2026-07-27 agent 端到端
 # 测试发现 TOP GT 全零/残缺即此原因）。
 GT_FALLBACK = os.environ.get(
-    "GT_FALLBACK", "/Users/nz/Downloads/yamato/96/报关匹配.xlsx"
+    "GT_FALLBACK",  # Windows：同上，需设置此环境变量指向本机 报关匹配.xlsx
+    "/Users/nz/Downloads/yamato/96/报关匹配.xlsx"
 )
 CACHE_PATH = Path(__file__).parent / "results" / "ground_truth_cache.json"
 
@@ -50,6 +57,7 @@ FACTORY_MAKER_MAP: dict[str, list[str]] = {
 }
 
 # 与 settings.upstream_root 同一环境变量，保持单一事实源
+# Windows：必须设置 UPSTREAM_ROOT（app/.env 或系统环境变量），下面的默认值为 macOS 路径
 FACTORY_FOLDER = os.environ.get(
     "UPSTREAM_ROOT", "/Users/nz/Downloads/yamato/96/工厂"
 )

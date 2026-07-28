@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -61,7 +62,18 @@ class ExtractionReport(list):
 
 
 def _find_soffice() -> str | None:
-    """检测 LibreOffice 是否可用（macOS / Windows / Linux 三平台）。"""
+    """检测 LibreOffice 是否可用（macOS / Windows / Linux 三平台）。
+
+    优先级：SOFFICE_PATH 环境变量 > PATH 搜索 > 各平台默认安装路径兜底。
+    Windows 上 soffice.com 是 soffice.exe 的控制台附着变体，headless 调用
+    更稳定（stdout/stderr 可正常回传），故同一目录下优先匹配 soffice.com。
+    """
+    # 环境变量覆盖（最高优先级，用于自定义安装目录 / 便携版 / 包管理器安装）
+    env_path = os.environ.get("SOFFICE_PATH", "").strip()
+    if env_path:
+        if Path(env_path).exists():
+            return env_path
+        print(f"[doc通道] SOFFICE_PATH 指向的文件不存在：{env_path}，继续自动探测")
     for name in ("soffice", "libreoffice"):
         path = shutil.which(name)
         if path:
@@ -69,9 +81,16 @@ def _find_soffice() -> str | None:
     # 各平台默认安装路径兜底（未加 PATH 的场景）
     candidates = [
         "/Applications/LibreOffice.app/Contents/MacOS/soffice",  # macOS
+        # Windows 官方安装包 / Chocolatey（均装到 Program Files）
+        r"C:\Program Files\LibreOffice\program\soffice.com",
         r"C:\Program Files\LibreOffice\program\soffice.exe",     # Windows 64 位
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.com",
         r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",  # Windows 32 位
+        # Windows Scoop 安装（当前用户目录下）
+        str(Path.home() / "scoop" / "apps" / "libreoffice" / "current" / "program" / "soffice.com"),
+        str(Path.home() / "scoop" / "apps" / "libreoffice" / "current" / "program" / "soffice.exe"),
         "/usr/bin/soffice",                                      # Linux
+        "/usr/lib/libreoffice/program/soffice",                  # Linux 部分发行版
     ]
     for c in candidates:
         if Path(c).exists():
@@ -80,21 +99,50 @@ def _find_soffice() -> str | None:
 
 
 def _convert_doc_to_pdf(doc_path: str, out_dir: str) -> str | None:
-    """用 soffice 把 doc/docx 转成 PDF，失败返回 None。"""
+    """用 soffice 把 doc/docx 转成 PDF，失败返回 None（契约不变）。
+
+    - 通过 -env:UserInstallation 指向 out_dir 下的独立临时 profile，
+      避免与用户正在运行的 LibreOffice 实例 / profile 残留锁冲突
+      （Windows 上常见的转换静默失败原因；临时目录随 out_dir 一并清理）；
+    - 不读取/依赖 soffice 的 stdout 内容，只依赖 check=True 与输出文件
+      存在性，中文 Windows 控制台编码（GBK/cp936）不影响流程；
+    - 失败时 print 具体原因（soffice 不存在 / 调用了但失败 / 未产出 PDF），
+      便于区分排障；返回 None 后由上层回退其他通道。
+    """
     soffice = _find_soffice()
     if not soffice:
+        print(f"[doc通道] 未检测到 LibreOffice(soffice)，跳过 PDF 转换：{doc_path}")
         return None
+    # 独立 user profile（as_uri 生成 file:/// URL，Windows 下为正斜杠 file:///C:/...）
+    profile_dir = Path(out_dir) / "lo_user_profile"
+    profile_dir.mkdir(parents=True, exist_ok=True)
     try:
         subprocess.run(
-            [soffice, "--headless", "--convert-to", "pdf", "--outdir", out_dir, doc_path],
+            [
+                soffice,
+                f"-env:UserInstallation={profile_dir.resolve().as_uri()}",
+                "--headless",
+                "--convert-to", "pdf",
+                "--outdir", out_dir,
+                doc_path,
+            ],
             check=True,
             capture_output=True,
             timeout=180,
         )
-    except Exception:  # noqa: BLE001
+    except subprocess.CalledProcessError as e:
+        # stderr 仅用于排障，尽力解码（Windows 上可能是 GBK）
+        stderr = (e.stderr or b"").decode("utf-8", errors="replace").strip()
+        print(f"[doc通道] soffice 转换失败（退出码 {e.returncode}）{doc_path}：{stderr[:300]}")
+        return None
+    except Exception as e:  # noqa: BLE001 - 超时/权限等，记录原因后回退其他通道
+        print(f"[doc通道] soffice 调用异常 {doc_path}：{type(e).__name__}: {e}")
         return None
     pdf = Path(out_dir) / (Path(doc_path).stem + ".pdf")
-    return str(pdf) if pdf.exists() else None
+    if pdf.exists():
+        return str(pdf)
+    print(f"[doc通道] soffice 执行成功但未产出 PDF：{doc_path}")
+    return None
 
 
 def _iter_files(folder_path: str) -> list[Path]:

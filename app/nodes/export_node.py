@@ -6,7 +6,7 @@
   《第三阶段.md》改造点 D：届时直接从 DB 取中文品名/HS 编码生成合规单证）。
 """
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.config import get_settings
 from app.state import AgentState
@@ -17,7 +17,9 @@ def export_node(state: AgentState) -> dict:
     out_path = state.get("final_output_path")
 
     summary = {
-        "exported_at": datetime.utcnow().isoformat(),
+        # datetime.utcnow() 在 Python 3.12+ 已弃用；改用 now(timezone.utc)
+        # 后去掉 tzinfo，输出格式与原 utcnow().isoformat() 完全一致（保留微秒）
+        "exported_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         "downstream_file": state.get("downstream_file_path"),
         "final_output_path": out_path,
         "factories_processed": list((state.get("downstream_requirements") or {}).keys()),

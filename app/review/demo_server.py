@@ -5,11 +5,18 @@
   "审核 → 提交 → 下一工厂 → 完成" 的流转；
 - document 接口指向真实工厂文件夹文件（PDF/Excel/JPG 各一），用于验证渲染链路。
 
-运行：cd /Users/nz/Downloads/yamato/app && python -m app.review.demo_server
+运行（macOS，当前开发机）：cd /Users/nz/Downloads/yamato/app && python -m app.review.demo_server
 打开：http://127.0.0.1:8001/review?thread_id=demo
+
+【Windows 运行】本脚本启动时会扫描真实工厂文件夹（settings.upstream_root，
+默认值为 macOS 开发机路径），Windows 上必须先在 app/.env 中配置
+UPSTREAM_ROOT 指向本机工厂文件夹（例如 UPSTREAM_ROOT=D:/yamato/96/工厂），
+并确保其下存在 中地/ 达安/ 子目录及对应演示单据文件，然后：
+  cd <项目>\\app && python -m app.review.demo_server
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import uvicorn
@@ -28,12 +35,10 @@ def _real(folder: str, prefix: str, contains: str = "") -> str:
     真实单据文件名里常含不间断空格 U+00A0（如 'ZDA26-0882A 家盈知 ….pdf'），
     直接硬编码路径会 404，因此 demo 启动时从磁盘读取真实文件名。
     """
-    import os
-
-    d = os.path.join(UPSTREAM, folder)
-    for f in sorted(os.listdir(d)):
+    d = Path(UPSTREAM) / folder
+    for f in sorted(p.name for p in d.iterdir()):
         if f.startswith(prefix) and contains in f:
-            return os.path.join(d, f)
+            return str(d / f)
     raise FileNotFoundError(f"{d} 下找不到 {prefix}*{contains}*")
 
 

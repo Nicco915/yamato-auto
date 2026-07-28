@@ -57,7 +57,20 @@ def folder_router(state: AgentState) -> dict:
         if alias_hit and alias_hit in folders:
             folder_path = str(upstream_root / alias_hit)
             match_score = 100.0
-        elif folders:
+        elif alias_hit and folders:
+            # 精确匹配失败时追加一次大小写不敏感兜底：
+            # Windows/macOS 文件系统不区分大小写（"TOP" 与 "Top" 是同一文件夹），
+            # 但 Python 字符串比较区分大小写。Linux 文件系统大小写敏感，
+            # 不敏感匹配可能匹错目录，故仅在精确匹配失败时启用并打印日志提示。
+            ci_hit = next(
+                (f for f in folders if f.lower() == alias_hit.lower()), None
+            )
+            if ci_hit:
+                print(f"[Node2] 别名「{alias_hit}」精确匹配未命中，"
+                      f"大小写不敏感兜底命中文件夹「{ci_hit}」")
+                folder_path = str(upstream_root / ci_hit)
+                match_score = 100.0
+        if folder_path is None and folders:
             # 2) rapidfuzz 模糊匹配兜底（先精确比对规范化结果，再算相似分）
             norm_map = {_normalize(f): f for f in folders}
             if _normalize(factory) in norm_map:

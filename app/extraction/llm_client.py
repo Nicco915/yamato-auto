@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """OpenAI 兼容客户端（走硅基流动 SiliconFlow 中转）。
 
-配置读取顺序：/Users/nz/Downloads/yamato/app/.env 优先，其次环境变量。
+配置读取顺序：项目根目录 .env 优先（override=True），其次环境变量。
 - SILICONFLOW_API_KEY   缺失时给出清晰报错
 - SILICONFLOW_BASE_URL  默认 https://api.siliconflow.cn/v1
 - VISION_MODEL          默认 Qwen/Qwen2.5-VL-72B-Instruct
@@ -21,8 +21,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 from openai import APIError, APITimeoutError, OpenAI, RateLimitError
 
-# .env 优先于环境变量（override=True）
-_ENV_PATH = Path("/Users/nz/Downloads/yamato/app/.env")
+# 加载项目根目录的 .env；override=True 表示 .env 中的值会覆盖已存在的同名环境变量。
+# 本文件位于 <project>/app/app/extraction/llm_client.py，项目根 = parents[2]，
+# 用 Path(__file__) 推导（而非 import app.config），避免循环依赖。
+_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 load_dotenv(dotenv_path=_ENV_PATH, override=True)
 
 DEFAULT_BASE_URL = "https://api.siliconflow.cn/v1"
@@ -98,8 +100,8 @@ def get_settings() -> dict:
     key = os.environ.get("SILICONFLOW_API_KEY", "").strip()
     if not key:
         raise MissingAPIKeyError(
-            "未找到 SILICONFLOW_API_KEY。请在 /Users/nz/Downloads/yamato/app/.env "
-            "中写入 SILICONFLOW_API_KEY=sk-xxx（.env 优先），或设置同名环境变量后重试。"
+            f"未找到 SILICONFLOW_API_KEY。请在 {_ENV_PATH} "
+            "中写入 SILICONFLOW_API_KEY=sk-xxx，或设置同名环境变量后重试。"
         )
     return {
         "api_key": key,
