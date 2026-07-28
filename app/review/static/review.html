@@ -18,6 +18,12 @@
   #btn-submit { padding: 8px 22px; border: 0; border-radius: 6px; font-size: 14px;
                 font-weight: 600; color: #fff; background: #2563eb; cursor: pointer; }
   #btn-submit:disabled { background: #64748b; cursor: not-allowed; }
+  /* 顶栏搜索与键盘提示 */
+  #sku-search { padding: 5px 10px; border: 1px solid #4b5563; border-radius: 6px;
+                background: #374151; color: #fff; font-size: 13px; width: 170px; }
+  #sku-search::placeholder { color: #9ca3af; }
+  #sku-search:focus { outline: 2px solid #60a5fa; }
+  .kbd-hint { font-size: 11px; color: #94a3b8; white-space: nowrap; }
   /* ---------- 双屏 ---------- */
   #main { flex: 1; display: flex; min-height: 0; }
   #left { width: 48%; border-right: 1px solid #d1d5db; display: flex; flex-direction: column;
@@ -42,14 +48,17 @@
   .card.st-Error { border-left-color: #dc2626; }
   .card.st-Warning { border-left-color: #d97706; }
   .card.st-Normal { border-left-color: #16a34a; }
+  .card.st-Needs_Review { border-left-color: #f59e0b; }
   .card.new-sku { border-left-color: #ea580c; background: #fff7ed; }
   .card.edited { background: #eff6ff; }
+  .card.dim { opacity: .35; }
   .card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
   .sku { font-weight: 700; font-size: 14px; }
   .status { font-size: 12px; padding: 1px 8px; border-radius: 8px; background: #e5e7eb; }
   .status.st-Error { background: #fecaca; color: #991b1b; }
   .status.st-Warning { background: #fde68a; color: #92400e; }
   .status.st-Normal { background: #bbf7d0; color: #166534; }
+  .status.st-Needs_Review { background: #fef3c7; color: #b45309; }
   .tag { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: #ffedd5;
          color: #9a3412; }
   .tag.modified { background: #dbeafe; color: #1d4ed8; }
@@ -63,6 +72,30 @@
   .calc { margin-top: 6px; font-family: ui-monospace, Menlo, monospace; font-size: 12px;
           color: #374151; background: #f3f4f6; border-radius: 4px; padding: 4px 8px; }
   .calc .res { font-weight: 700; color: #111827; }
+  /* 单重对照行 */
+  .cmp { margin-top: 4px; font-size: 12px; color: #6b7280; }
+  .cmp-line { padding: 1px 6px; border-radius: 3px; }
+  .cmp-line.diff-warn { background: #fef3c7; border-left: 3px solid #d97706; color: #92400e; }
+  .cmp-flag { font-size: 11px; color: #b45309; }
+  /* 差异摘要弹窗 */
+  .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 100;
+                display: flex; align-items: center; justify-content: center; }
+  .modal-card { background: #fff; border-radius: 10px; padding: 18px 20px;
+                width: 660px; max-width: 92vw; max-height: 70vh;
+                display: flex; flex-direction: column; box-shadow: 0 8px 30px rgba(0,0,0,.25); }
+  .modal-card h3 { margin: 0 0 10px; font-size: 15px; color: #1f2937; }
+  .modal-card h4 { margin: 0 0 6px; font-size: 13px; color: #374151; }
+  #diff-body { overflow-y: auto; min-height: 0; }
+  .diff-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .diff-table th, .diff-table td { border: 1px solid #e5e7eb; padding: 4px 8px;
+                                   text-align: left; vertical-align: top; }
+  .diff-table th { background: #f3f4f6; color: #4b5563; }
+  .unseen-note { color: #d97706; font-size: 13px; margin: 10px 0 0; font-weight: 600; }
+  .modal-btns { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+  .modal-btns button { padding: 7px 18px; border: 0; border-radius: 6px; font-size: 13px;
+                       font-weight: 600; cursor: pointer; }
+  #btn-diff-ok { background: #2563eb; color: #fff; }
+  #btn-diff-cancel { background: #e5e7eb; color: #374151; }
   .dbinfo { margin-top: 4px; font-size: 11px; color: #6b7280; }
   .required-note { color: #dc2626; font-size: 11px; }
   #done-view { display: none; margin: 60px auto; text-align: center; }
@@ -78,7 +111,10 @@
   <span class="title">人工双屏审核</span>
   <span class="meta" id="tb-thread">thread: -</span>
   <span class="meta" id="tb-factory">工厂: -</span>
+  <input id="sku-search" placeholder="搜索 SKU…" autocomplete="off">
+  <span class="meta" id="search-count"></span>
   <span class="spacer"></span>
+  <span class="kbd-hint">↑↓ 切换 · Enter 下一条 · / 搜索</span>
   <span id="badge">挂起待审</span>
   <button id="btn-submit" onclick="submitReview()">提交并继续</button>
 </div>
@@ -112,12 +148,28 @@
 
 <div id="toast"></div>
 
+<!-- 提交前差异摘要弹窗 -->
+<div id="diff-modal" class="modal-mask" style="display:none"
+     onclick="if(event.target===this)closeDiffModal()">
+  <div class="modal-card">
+    <h3>提交前差异确认</h3>
+    <div id="diff-body"></div>
+    <div class="modal-btns">
+      <button id="btn-diff-cancel" onclick="closeDiffModal()">返回修改</button>
+      <button id="btn-diff-ok" onclick="confirmSubmit()">确认提交</button>
+    </div>
+  </div>
+</div>
+
 <script>
 "use strict";
 /* ================= 全局状态 ================= */
 const threadId = new URLSearchParams(location.search).get("thread_id") || "demo";
 let payload = null;        // 当前审核 payload
 let items = [];            // 可编辑的 items（与 payload.items 同构）
+let origItems = [];        // 加载时深拷贝留存的原始 items（提交前 diff 对照用）
+let seenIdx = new Set();   // selectCard 记录过的卡片下标（"逐条过目"统计）
+let searchMatches = [];    // 当前搜索命中的卡片下标
 let selectedIdx = 0;
 let curDoc = null;         // 当前左屏文件路径
 let curPage = 1, pageCount = 1;
@@ -136,8 +188,7 @@ async function loadPayload() {
   const r = await fetch(`/api/v1/review/${encodeURIComponent(threadId)}/payload`);
   if (!r.ok) { toast("获取审核数据失败：" + r.status); return; }
   payload = await r.json();
-  // 深拷贝 items 作为编辑副本
-  items = JSON.parse(JSON.stringify(payload.items || []));
+  initItems();
   $("tb-thread").textContent = "thread: " + threadId;
   $("tb-factory").textContent = "工厂: " + (payload.factory_name || "-");
   $("badge").textContent = "挂起待审"; $("badge").className = "";
@@ -148,6 +199,18 @@ async function loadPayload() {
   // 默认选中第一条需要人工关注的（Error/Warning/新SKU优先），否则第一条
   const pri = items.findIndex(i => i.status !== "Normal" || i.is_new_sku);
   selectCard(pri >= 0 ? pri : 0);
+}
+
+/* 每次载入新 payload（含提交后进入下一工厂）时重置编辑副本/原始快照/过目记录/搜索 */
+function initItems() {
+  items = JSON.parse(JSON.stringify(payload.items || []));
+  origItems = JSON.parse(JSON.stringify(payload.items || []));
+  seenIdx = new Set();
+  searchMatches = [];
+  const s = $("sku-search");
+  if (s) { s.value = ""; }
+  const sc = $("search-count");
+  if (sc) sc.textContent = "";
 }
 
 function renderMissingBar() {
@@ -205,6 +268,7 @@ function renderCards() {
           <input type="number" step="any" data-idx="${idx}" data-field="total_gross_weight" value="${ed.total_gross_weight ?? ""}" oninput="onNumEdit(this)"></label>
       </div>
       <div class="calc" id="calc-${idx}"></div>
+      <div class="cmp" id="cmp-${idx}"></div>
       ${(item.db_record && item.db_record.unit_net_weight != null) ?
         `<div class="dbinfo">历史库单件净重: ${esc(item.db_record.unit_net_weight)} ${item.db_record.name_cn ? "｜" + esc(item.db_record.name_cn) : ""}</div>` : ""}
       ${newSkuFields}`;
@@ -225,6 +289,45 @@ function renderCalc(idx) {
   if (!isNaN(net) && !isNaN(q) && q > 0) netLine = `净: ${net} / ${q} = <span class="res">${fmt(net / q)}</span>`;
   if (!isNaN(gross) && !isNaN(q) && q > 0) grossLine = `毛: ${gross} / ${q} = <span class="res">${fmt(gross / q)}</span>`;
   el.innerHTML = netLine + "　　" + grossLine;
+  renderCompare(idx);
+}
+
+/* 差异告警阈值：后端 payload.weight_diff_warn_ratio 优先，旧 payload/mock 无此字段时 fallback 0.05 */
+function warnRatio() {
+  const r = payload && payload.weight_diff_warn_ratio;
+  return (typeof r === "number" && r > 0) ? r : 0.05;
+}
+
+/* 单重对照行：历史单件净重/毛重 vs 当前编辑值实时单重，超阈值高亮 */
+function renderCompare(idx) {
+  const el = $("cmp-" + idx);
+  if (!el) return;
+  const it = items[idx];
+  const db = it.db_record || {};
+  const ed = it.extracted_data || {};
+  const q = parseFloat(ed.total_quantity);
+  const fmt = (v) => (v == null || isNaN(v)) ? "—" : (Math.round(v * 10000) / 10000);
+  const ratio = warnRatio();
+  const lines = [];
+  [["unit_net_weight", "total_net_weight", "净重"],
+   ["unit_gross_weight", "total_gross_weight", "毛重"]].forEach(([dbf, edf, label]) => {
+    const hist = parseFloat(db[dbf]);
+    if (isNaN(hist) || !(hist > 0)) return;   // 新 SKU / 无历史单重 → 不显示
+    const tot = parseFloat(ed[edf]);
+    if (isNaN(tot) || isNaN(q) || !(q > 0)) return;
+    const cur = tot / q;
+    const diff = Math.abs(cur - hist) / hist;
+    const pct = (diff * 100).toFixed(1);
+    const warn = diff > ratio;
+    // Node4 静态判定仅针对净重差异打 Warning，提示小字只挂净重行
+    const flagged = (dbf === "unit_net_weight" && db.weight_diff_ratio != null)
+      ? '<span class="cmp-flag">（提交前已标记 Warning）</span>' : "";
+    lines.push(`<div class="cmp-line${warn ? " diff-warn" : ""}"` +
+      `${warn ? ' title="与历史单重差异超阈值"' : ""}>` +
+      `历史单件${label} ${fmt(hist)} → 本次 ${fmt(cur)}（diff ${pct}%）${flagged}</div>`);
+  });
+  el.innerHTML = lines.join("");
+  el.style.display = lines.length ? "" : "none";   // 无对照行时不留空白间距
 }
 
 function onNumEdit(input) {
@@ -338,13 +441,84 @@ function gotoPage(p) {
 /* 点击卡片：左屏跳到该 SKU 的 source_file */
 function selectCard(idx) {
   selectedIdx = idx;
+  seenIdx.add(idx);
   document.querySelectorAll(".card").forEach((c, i) => c.classList.toggle("selected", i === idx));
   const src = sourceFileOf(items[idx]);
   if (src && src !== curDoc) loadDocument(src, 1);
 }
 
 /* ================= 提交与流转 ================= */
-async function submitReview() {
+/* 提交前差异摘要：对照 origItems（加载时深拷贝）收集改动 + 新 SKU 补录 + 过目统计 */
+function buildDiffSummary() {
+  const numFields = [["total_quantity", "总件数"], ["total_net_weight", "总净重"], ["total_gross_weight", "总毛重"]];
+  const metaFields = [["name_cn", "中文品名"], ["hs_code", "HS 编码"], ["inspection_required", "商检状态"]];
+  const changes = [];
+  const newSkus = [];
+  items.forEach((it, idx) => {
+    const origEd = (origItems[idx] && origItems[idx].extracted_data) || {};
+    const ed = it.extracted_data || {};
+    if (it._modified) {
+      numFields.forEach(([f, label]) => {
+        const ov = origEd[f] ?? null, nv = ed[f] ?? null;
+        if (String(ov ?? "") !== String(nv ?? "")) {
+          changes.push({ sku: it.sku, field: label, oldV: ov, newV: nv });
+        }
+      });
+    }
+    if (it.is_new_sku) {
+      const filled = metaFields.filter(([f]) =>
+        it[f] !== undefined && it[f] !== null && String(it[f]).trim() !== "");
+      if (filled.length) {
+        newSkus.push({ sku: it.sku, fields: filled.map(([f, label]) => ({ label, v: it[f] })) });
+      }
+    }
+  });
+  const unseen = Math.max(0, items.length - seenIdx.size);
+  return { changes, newSkus, unseen, total: items.length };
+}
+
+function renderDiffModal(s) {
+  let html = "";
+  if (s.changes.length) {
+    html += `<h4>数值改动（${s.changes.length} 处）</h4>` +
+      `<table class="diff-table"><tr><th>SKU</th><th>字段</th><th>旧值</th><th>新值</th></tr>`;
+    s.changes.forEach((c) => {
+      html += `<tr><td>${esc(c.sku)}</td><td>${esc(c.field)}</td>` +
+        `<td>${esc(c.oldV ?? "—")}</td><td><b>${esc(c.newV ?? "—")}</b></td></tr>`;
+    });
+    html += "</table>";
+  }
+  if (s.newSkus.length) {
+    html += `<h4 style="margin-top:12px">新 SKU 补录（${s.newSkus.length} 项）</h4>` +
+      `<table class="diff-table"><tr><th>SKU</th><th>字段</th><th>补录值</th></tr>`;
+    s.newSkus.forEach((n) => {
+      n.fields.forEach((f, i) => {
+        html += `<tr>${i === 0 ? `<td rowspan="${n.fields.length}">${esc(n.sku)}</td>` : ""}` +
+          `<td>${esc(f.label)}</td><td><b>${esc(f.v)}</b></td></tr>`;
+      });
+    });
+    html += "</table>";
+  }
+  if (s.unseen > 0) {
+    html += `<p class="unseen-note">⚠ 尚有 ${s.unseen} / ${s.total} 项未逐条过目，请确认是否仍要提交。</p>`;
+  } else {
+    html += `<p style="color:#15803d;font-size:12px;margin:10px 0 0">已逐条过目全部 ${s.total} 项。</p>`;
+  }
+  $("diff-body").innerHTML = html;
+}
+
+function closeDiffModal() { $("diff-modal").style.display = "none"; }
+function confirmSubmit() { closeDiffModal(); doSubmit(); }
+
+/* 提交入口：有改动才弹摘要弹窗，无改动直接提交（减少日常点击） */
+function submitReview() {
+  const s = buildDiffSummary();
+  if (!s.changes.length && !s.newSkus.length) { doSubmit(); return; }
+  renderDiffModal(s);
+  $("diff-modal").style.display = "flex";
+}
+
+async function doSubmit() {
   const btn = $("btn-submit");
   btn.disabled = true; btn.textContent = "提交中…";
   // 清理前端临时标记
@@ -366,7 +540,7 @@ async function submitReview() {
       // 多工厂循环：图在下一个工厂的 Node5 再次挂起
       toast("已写入，进入下一工厂审核");
       payload = data.review_data;
-      items = JSON.parse(JSON.stringify(payload.items || []));
+      initItems();
       $("tb-factory").textContent = "工厂: " + (payload.factory_name || "-");
       renderMissingBar(); renderCards(); renderDocSelect();
       selectCard(0);
@@ -403,6 +577,81 @@ async function pollState() {
     }
   } catch (e) { /* demo 环境无 state 接口时静默 */ }
 }
+
+/* ================= SKU 搜索 ================= */
+function onSearchInput() {
+  const q = $("sku-search").value.trim().toLowerCase();
+  searchMatches = [];
+  items.forEach((it, idx) => {
+    const hit = !q || String(it.sku || "").toLowerCase().includes(q);
+    const c = $("card-" + idx);
+    if (c) c.classList.toggle("dim", !hit);
+    if (hit && q) searchMatches.push(idx);
+  });
+  $("search-count").textContent = q ? `${searchMatches.length}/${items.length}` : "";
+}
+
+$("sku-search").addEventListener("input", onSearchInput);
+$("sku-search").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    if (!searchMatches.length) return;
+    // 跳到下一个命中卡片（循环）
+    const pos = searchMatches.indexOf(selectedIdx);
+    const next = searchMatches[(pos + 1) % searchMatches.length];
+    selectCard(next);
+    const c = $("card-" + next);
+    if (c) c.scrollIntoView({ block: "nearest" });
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    $("sku-search").value = "";
+    onSearchInput();
+    $("sku-search").blur();
+  }
+});
+
+/* ================= 键盘流 ================= */
+document.addEventListener("keydown", (e) => {
+  // 弹窗打开时只响应 Esc 关闭，其余键不穿透到卡片
+  if ($("diff-modal").style.display === "flex") {
+    if (e.key === "Escape") closeDiffModal();
+    return;
+  }
+  const ae = document.activeElement;
+  const inText = ae && (ae.tagName === "INPUT" || ae.tagName === "TEXTAREA" || ae.tagName === "SELECT");
+
+  if (e.key === "/" && !inText) {
+    e.preventDefault();
+    $("sku-search").focus();
+    return;
+  }
+
+  if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    if (!items.length) return;
+    e.preventDefault();   // input 聚焦时也生效，且阻止数值微调/光标移动
+    const next = e.key === "ArrowUp" ? selectedIdx - 1 : selectedIdx + 1;
+    if (next < 0 || next >= items.length) return;
+    selectCard(next);
+    const c = $("card-" + next);
+    if (c) c.scrollIntoView({ block: "nearest" });
+    return;
+  }
+
+  // Enter：仅在数值 input 内触发"下一条"（只跳条，不引入已确认状态）
+  if (e.key === "Enter" && ae && ae.tagName === "INPUT" && ae.type === "number") {
+    e.preventDefault();
+    const idx = +ae.dataset.idx;
+    ae.blur();
+    if (isNaN(idx) || idx + 1 >= items.length) return;  // 最后一张卡不动
+    selectCard(idx + 1);
+    const c = $("card-" + (idx + 1));
+    if (c) {
+      c.scrollIntoView({ block: "nearest" });
+      const inp = c.querySelector('input[type="number"]');
+      if (inp) inp.focus();
+    }
+  }
+});
 
 loadPayload();
 setInterval(pollState, 10000);
