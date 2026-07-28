@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>批次详情</title>
+<link rel="stylesheet" href="/ui/static/ui.css">
+<style>
+  /* ---- 页面局部样式（ui.css 缺失时也能可读；加载后不冲突） ---- */
+  .wrap { max-width: 1080px; margin: 18px auto; padding: 0 16px 40px; }
+  .bd { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 12px;
+        background: #e5e7eb; color: #374151; vertical-align: middle; }
+  .b-red    { background: #fecaca; color: #991b1b; }
+  .b-orange { background: #fde68a; color: #92400e; }
+  .b-green  { background: #bbf7d0; color: #166534; }
+  .b-blue   { background: #dbeafe; color: #1d4ed8; }
+  .b-gray   { background: #e5e7eb; color: #4b5563; }
+  .c-red    { color: #dc2626; }
+  .c-orange { color: #d97706; }
+  .c-green  { color: #15803d; }
+  .c-gray   { color: #6b7280; }
+  .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+          word-break: break-all; }
+  .lcard { background: #fff; border: 1px solid #d1d5db; border-radius: 8px;
+           padding: 14px 16px; margin-bottom: 14px; }
+  .lcard h3 { margin: 0 0 10px; font-size: 14px; color: #374151; }
+  .head-title { font-size: 18px; font-weight: 700; word-break: break-all; margin: 0 0 8px; }
+  .kv { display: grid; grid-template-columns: 90px 1fr; gap: 4px 10px; font-size: 13px;
+        margin-top: 8px; }
+  .kv .k { color: #6b7280; }
+  .head-actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .lbtn { display: inline-block; padding: 6px 14px; border: 1px solid #cbd5e1; border-radius: 6px;
+          font-size: 13px; color: #1f2937; background: #fff; text-decoration: none; cursor: pointer; }
+  .lbtn.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+  .usage-row { display: flex; gap: 40px; flex-wrap: wrap; }
+  .usage-num { font-size: 26px; font-weight: 700; color: #111827; }
+  .usage-num.bad { color: #dc2626; }
+  .usage-lbl { font-size: 12px; color: #6b7280; }
+  .note { font-size: 12px; color: #9ca3af; margin-top: 8px; }
+  /* 工厂卡 */
+  details.fcard { background: #fff; border: 1px solid #d1d5db; border-radius: 8px;
+                  margin-bottom: 10px; }
+  details.fcard > summary { cursor: pointer; padding: 10px 14px; list-style: none;
+                            display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  details.fcard > summary::-webkit-details-marker { display: none; }
+  details.fcard > summary::before { content: "▸"; color: #9ca3af; }
+  details.fcard[open] > summary::before { content: "▾"; }
+  details.fcard > summary .fname { font-weight: 700; font-size: 14px; }
+  details.fcard.cur { border-left: 4px solid #2563eb; }
+  .fbody { padding: 4px 14px 14px; border-top: 1px solid #f0f1f3; }
+  .fsec { margin-top: 10px; font-size: 13px; }
+  .fsec .sec-t { font-weight: 600; color: #374151; margin-bottom: 4px; }
+  .fbody ul { margin: 4px 0; padding-left: 20px; }
+  .fbody li { margin: 2px 0; }
+  .ltbl { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 4px; }
+  .ltbl th, .ltbl td { border: 1px solid #e5e7eb; padding: 4px 8px; text-align: left; }
+  .ltbl th { background: #f3f4f6; color: #4b5563; font-weight: 600; }
+  .audit-detail td { background: #f9fafb; }
+  .ad-sec { font-weight: 600; color: #374151; margin: 6px 0 2px; font-size: 12px; }
+  .ad-list { margin: 2px 0; padding-left: 18px; font-size: 12px; }
+  .topbar-fallback { display: flex; align-items: center; gap: 16px; padding: 10px 16px;
+                     background: #1f2937; color: #fff; }
+  .topbar-fallback .title { font-weight: 700; font-size: 15px; }
+  .topbar-fallback a { color: #cbd5e1; font-size: 13px; text-decoration: none; }
+  .topbar-fallback a:hover { color: #fff; }
+</style>
+</head>
+<body>
+
+<div class="wrap" id="app">
+  <p style="color:#9ca3af;padding:30px 0">加载中…</p>
+</div>
+
+<script src="/ui/static/ui.js"></script>
+<script>
+"use strict";
+if(typeof api!=='function'){document.body.innerHTML='<p style="padding:40px">共享资产 ui.js 未加载</p>';throw new Error('ui.js missing')}
+
+/* ================= 基础工具（全部防御式，兼容 ui.js 命名差异） ================= */
+var $id = (typeof $ === "function") ? $ : function (id) { return document.getElementById(id); };
+var _esc = (typeof esc === "function") ? esc : function (s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g,
+    function (c) { return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; });
+};
+function showToast(msg) { try { if (typeof toast === "function") toast(msg); } catch (e) {} }
+
+function fmtT(v) {
+  if (v == null || v === "") return "-";
+  try {
+    if (typeof fmtTime === "function") { var s = fmtTime(v); if (s) return s; }
+  } catch (e) {}
+  try {
+    var d = (typeof v === "number") ? new Date(v * 1000) : new Date(v);
+    if (!isNaN(d.getTime())) return d.toLocaleString("zh-CN", { hour12: false });
+  } catch (e) {}
+  return String(v);
+}
+function baseName(p) {
+  if (!p) return "";
+  return String(p).split(/[\\/]/).pop() || String(p);
+}
+function jshort(v) {
+  if (v == null) return "—";
+  if (typeof v === "object") {
+    try { var s = JSON.stringify(v); return s.length > 60 ? s.slice(0, 60) + "…" : s; }
+    catch (e) { return String(v); }
+  }
+  return String(v);
+}
+
+var STATUS_MAP = {
+  pending_review: ["待审核", "b-red"],
+  running:        ["进行中", "b-orange"],
+  completed:      ["已完成", "b-green"],
+  unknown:        ["未知", "b-gray"],
+  error:          ["异常", "b-gray"]
+};
+var ROLE_MAP = {
+  current: ["当前", "b-blue"],
+  pending: ["待处理", "b-gray"],
+  done:    ["已完成", "b-green"]
+};
+var SESS_STATUS_MAP = {
+  waiting_pl: "等待箱单",
+  collecting: "收集中",
+  complete_auto: "自动完整",
+  complete_manual: "人工完成"
+};
+
+/* thread_id：取 /batch/ 之后部分 */
+var threadId = "";
+try {
+  var m = location.pathname.match(/\/batch\/(.+)$/);
+  threadId = m ? decodeURIComponent(m[1].replace(/\/+$/, "")) : "";
+} catch (e) { threadId = ""; }
+
+function mountTopbar() {
+  try {
+    if (typeof renderTopbar === "function") { renderTopbar("批次详情"); return; }
+  } catch (e) { /* 签名不符则走手工兜底 */ }
+  if (document.querySelector(".topbar, .topbar-fallback")) return;
+  var tb = document.createElement("div");
+  tb.className = "topbar topbar-fallback";
+  tb.innerHTML = '<span class="title">批次详情</span><a href="/">← 返回工作台</a>';
+  document.body.prepend(tb);
+}
+
+/* ================= 区块渲染 ================= */
+function badge(txt, cls) { return '<span class="badge bd ' + cls + '">' + _esc(txt) + "</span>"; }
+
+function renderHead(d) {
+  var st = STATUS_MAP[d.status] || [d.status || "未知", "b-gray"];
+  var prog = d.progress || {};
+  var done = (prog.done != null) ? prog.done : "-";
+  var total = (prog.total != null) ? prog.total : "-";
+  var curFactory = prog.current_factory || "-";
+  var rows = "";
+  rows += kvRow("进度", _esc(done) + " / " + _esc(total));
+  rows += kvRow("当前工厂", _esc(curFactory));
+  rows += kvRow("创建时间", _esc(fmtT(d.created_at)));
+  rows += kvRow("更新时间", _esc(fmtT(d.updated_at)));
+  if (d.downstream_file_path) rows += kvRow("下游文件", '<span class="mono">' + _esc(d.downstream_file_path) + "</span>", true);
+  if (d.upstream_root) rows += kvRow("上游目录", '<span class="mono">' + _esc(d.upstream_root) + "</span>", true);
+  if (d.validation_status) rows += kvRow("校验状态", _esc(d.validation_status));
+  if (d.final_output_path) rows += kvRow("最终输出", '<span class="mono c-green">' + _esc(d.final_output_path) + "</span>", true);
+
+  var btns = '<a class="btn lbtn" href="/">← 返回工作台</a>';
+  if (d.status === "pending_review") {
+    btns += '<a class="btn lbtn primary" href="/review?thread_id=' + encodeURIComponent(threadId) + '">去审核</a>';
+  }
+  btns += '<a class="btn lbtn" href="/chat?thread_id=' + encodeURIComponent(threadId) + '">Agent 对话</a>';
+
+  return '<div class="card lcard">' +
+    '<div class="head-title">' + _esc(threadId) + " " + badge(st[0], st[1]) + "</div>" +
+    '<div class="kv">' + rows + "</div>" +
+    '<div class="head-actions">' + btns + "</div>" +
+    "</div>";
+}
+function kvRow(k, vHtml, raw) {
+  return '<span class="k">' + _esc(k) + "</span><span>" + (raw ? vHtml : vHtml) + "</span>";
+}
+
+function renderUsage(d) {
+  var u = d.usage || {};
+  var calls = (u.calls != null) ? u.calls : 0;
+  var failed = (u.failed_calls != null) ? u.failed_calls : 0;
+  var tokens = (u.total_tokens != null) ? u.total_tokens : 0;
+  var note = u.note || "进程内累计，重启清零";
+  return '<div class="card lcard"><h3>LLM 用量</h3>' +
+    '<div class="usage-row">' +
+    '<div><div class="usage-num">' + _esc(calls) + '</div><div class="usage-lbl">调用次数</div></div>' +
+    '<div><div class="usage-num' + (failed > 0 ? " bad" : "") + '">' + _esc(failed) + '</div><div class="usage-lbl">失败次数</div></div>' +
+    '<div><div class="usage-num">' + _esc(tokens) + '</div><div class="usage-lbl">累计 Tokens</div></div>' +
+    "</div>" +
+    '<div class="note">' + _esc(note) + "</div></div>";
+}
+
+/* ---- 工厂卡片 ---- */
+function issueText(it) {
+  if (it == null) return "";
+  if (typeof it === "string") return it;
+  return it.msg || it.message || jshort(it);
+}
+function issueCls(it) {
+  var l = (it && typeof it === "object") ? String(it.level || "").toLowerCase() : "";
+  if (l === "error") return "c-red";
+  if (l === "warning" || l === "warn") return "c-orange";
+  return "c-gray";
+}
+
+function renderSession(sess) {
+  if (!sess) return '<div class="fsec c-gray">无会话记录</div>';
+  var h = "";
+  var ss = String(sess.status || "");
+  var ssText = SESS_STATUS_MAP[ss] || ss || "-";
+  h += '<div class="fsec">会话状态：' + badge(ssText, ss === "complete_auto" ? "b-green" : "b-gray") +
+    ' <span class="c-gray">更新于 ' + _esc(fmtT(sess.updated_at)) + "</span></div>";
+
+  var cov = sess.coverage || null;
+  if (cov) {
+    var ex = (cov.extracted != null) ? cov.extracted : "-";
+    var ep = (cov.expected != null) ? cov.expected : "-";
+    h += '<div class="fsec"><span class="sec-t">覆盖度</span>：' + _esc(ex) + " / " + _esc(ep);
+    var missing = cov.missing || [], extra = cov.extra || [];
+    if (missing.length) h += '<div class="c-red">缺失 SKU：' + _esc(missing.join("、")) + "</div>";
+    if (extra.length) h += '<div class="c-orange">多出 SKU：' + _esc(extra.join("、")) + "</div>";
+    h += "</div>";
+  }
+
+  var issues = sess.issues || [];
+  if (issues.length) {
+    h += '<div class="fsec"><span class="sec-t">问题（' + issues.length + "）</span><ul>" +
+      issues.map(function (it) {
+        return '<li class="' + issueCls(it) + '">' + _esc(issueText(it)) + "</li>";
+      }).join("") + "</ul></div>";
+  }
+
+  var hist = sess.history || [];
+  if (hist.length) {
+    h += '<div class="fsec"><span class="sec-t">改单记录（' + hist.length + "）</span><ul>" +
+      hist.map(function (r) {
+        r = r || {};
+        return "<li><b>" + _esc(r.sku || "?") + "</b>：" + _esc(jshort(r.old)) +
+          " → " + _esc(jshort(r.new)) +
+          ' <span class="c-gray">' + _esc(fmtT(r.ts)) + "</span></li>";
+      }).join("") + "</ul></div>";
+  }
+
+  var fr = sess.file_records || {};
+  var frKeys = Object.keys(fr);
+  if (frKeys.length) {
+    h += '<div class="fsec"><span class="sec-t">文件记录（' + frKeys.length + "）</span>" +
+      '<table class="table ltbl"><tr><th>文件</th><th>角色</th><th>备注</th></tr>' +
+      frKeys.map(function (p) {
+        var rec = fr[p] || {};
+        var role = rec.role === "target" ? "目标" : (rec.role === "non_target" ? "非目标" : (rec.role || "-"));
+        return "<tr><td class=\"mono\" title=\"" + _esc(p) + '">' + _esc(baseName(p)) + "</td>" +
+          "<td>" + _esc(role) + "</td><td>" + _esc(rec.note || "") + "</td></tr>";
+      }).join("") + "</table></div>";
+  }
+
+  var deferred = sess.deferred || [];
+  if (deferred.length) {
+    h += '<div class="fsec"><span class="sec-t">暂缓清单（' + deferred.length + "）</span><ul>" +
+      deferred.map(function (x) {
+        x = x || {};
+        return '<li><span class="mono" title="' + _esc(x.path || "") + '">' + _esc(baseName(x.path)) +
+          '</span> <span class="c-gray">' + _esc(x.reason || "") + "</span></li>";
+      }).join("") + "</ul></div>";
+  }
+  return h;
+}
+
+function renderFactories(d) {
+  var list = d.factories || [];
+  if (!list.length) return '<div class="card lcard"><h3>工厂</h3><span class="c-gray">无工厂信息</span></div>';
+  var cards = list.map(function (f) {
+    f = f || {};
+    var role = ROLE_MAP[f.role] || [f.role || "-", "b-gray"];
+    var open = f.role === "current" ? " open" : "";
+    var sess = f.session || null;
+    var sessBadge = "";
+    if (sess && sess.status) {
+      var ss = String(sess.status);
+      sessBadge = badge(SESS_STATUS_MAP[ss] || ss, "b-gray");
+    }
+    return '<details class="card fcard' + (f.role === "current" ? " cur" : "") + '"' + open + ">" +
+      "<summary><span class=\"fname\">" + _esc(f.factory || "(未命名工厂)") + "</span>" +
+      badge(role[0], role[1]) + sessBadge + "</summary>" +
+      '<div class="fbody">' +
+      '<div class="note" style="margin-top:8px">会话为该工厂最近一次提取记录，不专属本批次</div>' +
+      renderSession(sess) +
+      "</div></details>";
+  }).join("");
+  return '<div class="lcard" style="background:transparent;border:0;padding:0"><h3 style="margin:0 0 8px">工厂（' + list.length + "）</h3>" + cards + "</div>";
+}
+
+/* ---- 审核审计 ---- */
+function auditDetailHtml(a) {
+  var h = "";
+  var changes = a.changes || [];
+  var nskus = a.new_skus || [];
+  if (changes.length) {
+    h += '<div class="ad-sec">数值修改（' + changes.length + "）</div><ul class=\"ad-list\">" +
+      changes.map(function (c) {
+        c = c || {};
+        return "<li>" + _esc(c.sku || "?") + " · " + _esc(c.field || "?") + "：" +
+          _esc(jshort(c.old)) + " → <b>" + _esc(jshort(c.new)) + "</b></li>";
+      }).join("") + "</ul>";
+  }
+  if (nskus.length) {
+    h += '<div class="ad-sec">新 SKU 补录（' + nskus.length + "）</div><ul class=\"ad-list\">" +
+      nskus.map(function (s) {
+        s = s || {};
+        return "<li>" + _esc(s.sku || "?") + " · " + _esc(s.name_cn || "-") +
+          " / HS " + _esc(s.hs_code || "-") + " / 商检：" +
+          (s.inspection_required ? '<span class="c-orange">需要</span>' : "无需") + "</li>";
+      }).join("") + "</ul>";
+  }
+  return h || '<span class="c-gray">无明细</span>';
+}
+
+function renderAudit(d) {
+  var list = d.audit || [];
+  var body;
+  if (!list.length) {
+    body = '<span class="c-gray">暂无审核记录</span>';
+  } else {
+    body = '<table class="table ltbl" id="audit-table">' +
+      "<tr><th>时间</th><th>工厂</th><th>结果</th><th>修改数</th><th>详情</th></tr>" +
+      list.map(function (a, i) {
+        a = a || {};
+        var edited = (a.edited_count != null) ? a.edited_count : ((a.changes || []).length);
+        var hasDetail = ((a.changes || []).length + (a.new_skus || []).length) > 0;
+        var res = a.approved ? '<span class="c-green">通过</span>' : '<span class="c-red">未通过</span>';
+        var row = "<tr><td>" + _esc(fmtT(a.ts)) + "</td><td>" + _esc(a.factory_name || "-") +
+          "</td><td>" + res + "</td><td>" + _esc(edited) + "</td><td>" +
+          (hasDetail ? '<button class="btn lbtn audit-toggle" data-idx="' + i + '" style="padding:2px 10px;font-size:12px">展开</button>'
+                     : '<span class="c-gray">-</span>') +
+          "</td></tr>";
+        if (hasDetail) {
+          row += '<tr class="audit-detail" id="audit-detail-' + i + '" style="display:none">' +
+            '<td colspan="5">' + auditDetailHtml(a) + "</td></tr>";
+        }
+        return row;
+      }).join("") + "</table>";
+  }
+  return '<div class="card lcard"><h3>审核审计</h3>' + body + "</div>";
+}
+
+/* ================= 加载 ================= */
+function renderAll(d) {
+  d = d || {};
+  try {
+    $id("app").innerHTML =
+      renderHead(d) + renderUsage(d) + renderFactories(d) + renderAudit(d);
+  } catch (e) {
+    $id("app").innerHTML = '<div class="card lcard c-red">渲染失败：' + _esc(e && e.message) + "</div>";
+  }
+}
+
+async function load() {
+  mountTopbar();
+  if (!threadId) {
+    $id("app").innerHTML = '<div class="card lcard c-red">URL 中未包含 thread_id（应为 /batch/{thread_id}）</div>';
+    return;
+  }
+  try {
+    var d = await api("/api/v1/batches/" + encodeURIComponent(threadId));
+    if (d && typeof d === "string") { try { d = JSON.parse(d); } catch (e) {} }
+    renderAll(d || {});
+  } catch (e) {
+    $id("app").innerHTML = '<div class="card lcard"><span class="c-red">加载失败：' +
+      _esc(e && e.message ? e.message : e) + '</span> <a class="btn lbtn" href="/">← 返回工作台</a></div>';
+    showToast("批次详情加载失败");
+  }
+}
+
+/* 审计详情展开/收起（事件委托） */
+document.addEventListener("click", function (ev) {
+  var t = ev.target;
+  if (t && t.classList && t.classList.contains("audit-toggle")) {
+    var row = document.getElementById("audit-detail-" + t.dataset.idx);
+    if (row) {
+      var show = row.style.display === "none";
+      row.style.display = show ? "" : "none";
+      t.textContent = show ? "收起" : "展开";
+    }
+  }
+});
+
+load();
+</script>
+</body>
+</html>
