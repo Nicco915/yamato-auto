@@ -48,7 +48,10 @@ def doc_to_html(file_path: str, max_chars: int | None = MAX_DOC_HTML_CHARS) -> s
     """
     textutil = _find_textutil()
     if not textutil:
-        raise UnsupportedFileError(f"textutil 不可用（非 macOS？）: {file_path}")
+        raise UnsupportedFileError(
+            f"textutil 不可用（仅 macOS 自带）: {file_path}。"
+            "Windows/Linux 平台请安装 LibreOffice（soffice），doc 将走 PDF 转换通道"
+        )
     try:
         proc = subprocess.run(
             [textutil, "-convert", "html", "-stdout", file_path],

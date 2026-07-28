@@ -61,14 +61,22 @@ class ExtractionReport(list):
 
 
 def _find_soffice() -> str | None:
-    """检测 LibreOffice 是否可用。"""
+    """检测 LibreOffice 是否可用（macOS / Windows / Linux 三平台）。"""
     for name in ("soffice", "libreoffice"):
         path = shutil.which(name)
         if path:
             return path
-    # macOS 默认安装路径
-    mac_path = "/Applications/LibreOffice.app/Contents/MacOS/soffice"
-    return mac_path if Path(mac_path).exists() else None
+    # 各平台默认安装路径兜底（未加 PATH 的场景）
+    candidates = [
+        "/Applications/LibreOffice.app/Contents/MacOS/soffice",  # macOS
+        r"C:\Program Files\LibreOffice\program\soffice.exe",     # Windows 64 位
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",  # Windows 32 位
+        "/usr/bin/soffice",                                      # Linux
+    ]
+    for c in candidates:
+        if Path(c).exists():
+            return c
+    return None
 
 
 def _convert_doc_to_pdf(doc_path: str, out_dir: str) -> str | None:
