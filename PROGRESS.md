@@ -1,6 +1,6 @@
 # 供应链单证自动化 — 项目进度总览
 
-> 最后更新：2026-07-28（提取 Agent 对话式路径配置上线：LLM 解析+人工确认+持久/当前批次双生效）
+> 最后更新：2026-07-28（生产前端上线：工作台/批次详情/对话/审核加固 4 页 + 批次管理 API + 审核审计落库）
 > 设计文档：`../agent设计/`（第一/二/三阶段、api接口以及异步机制、人工审核界面设计、提取agent背景prompt）
 
 ## 1. 项目目标
@@ -16,7 +16,7 @@
 - **LLM**：阿里云百炼 qwen3.7-plus（多模态，文本/视觉统一），OpenAI 兼容端点，key 在 `.env`（不入库）
 - **服务**：FastAPI 同步接口（Celery+Redis 接缝已预留，暂未启用）
 - **数据库**：SQLite（`app/data/master.db`，factories + factory_skus 两表）
-- **前端**：原生 HTML/JS 单页（无构建链），`/review` 双屏审核界面
+- **前端**：原生 HTML/JS（无构建链），工作台 `/` + 批次详情 `/batch/{id}` + 对话 `/chat` + `/review` 双屏审核界面（见第 6.5 节）
 
 ## 3. 完成状态总表
 
@@ -30,6 +30,7 @@
 | 提取 Agent：三层结构 | ✅ 完成 | 目标识别器 10/10；批处理 extract_factory 145/146；增量 FactorySession 重放 9/10 全绿（见第 5.1 节） |
 | 审核界面：双屏 UI | ✅ 完成 | 已并入主服务，集成实测 8/8 通过（见第 6 节） |
 | Node3 真实联调 | ✅ 完成 | 去 mock 接真实 qwen3.7-plus，山東中地端到端 14/14 全绿（见第 6.1 节） |
+| 生产前端：工作台/详情/对话/审核加固 | ✅ 完成 | 4 页面 + 批次管理 API + review_audits 审计落库，全链路测试通过（见第 6.5 节） |
 
 ## 4. 提取引擎（app/extraction/）
 
@@ -231,6 +232,71 @@ Node3 真实分支改为以**增量会话 FactorySession** 驱动（与生产"�
 - 回归验证：compileall 全项目 + 关键模块 import + mock 冒烟（scripts/run_cli.py
   --reset）全绿；chat_paths_test 第 5 节 Windows 正例用例已写好，待真实 LLM 实跑。
 
+## 6.5 生产前端（2026-07-28 完成，T1-T5 sub-agent 并行实施 + T6 全链路测试）
+
+内网 1-2 操作员、无登录，延续原生 HTML/JS 零构建链。新包 `app/ui/`（页面路由极薄，
+逻辑全在 service.py），共享资产 `ui.css`（设计令牌）/`ui.js`（api 封装/toast/topbar）。
+
+**4 个页面**：
+- `/`（/dashboard 别名）：工作台——发起批次卡（路径预填 defaults）+ 批次列表
+  （状态 badge/当前工厂/进度/创建时间，10s 静默刷新），发起成功直接跳审核页
+- `/batch/{thread_id}`：批次详情——批次头 + LLM 用量卡 + 工厂会话折叠卡
+  （coverage/issues 按 level 着色/改单 history/file_records/deferred）+ 审核审计表
+- `/chat`：Agent 对话配置页——包装 /api/v1/agent/chat 两段式
+  （预览卡旧值→新值 + 确认执行/取消 + 重跑后去审核链接），Enter 发送
+- `/review`：审核页生产加固（在原有文件上改，自包含不引 ui 资产，
+  demo_server 不挂 /ui/static 仍可用）
+
+**5 个新 API**（ui/router.py → service.py）：
+- `GET /api/v1/batches`：checkpoint 只读连接（URI mode=ro）枚举 thread →
+  逐个 get_state 推导三态 status（pending_review/running/completed）+ 进度 +
+  创建时间（checkpoint blob msgpack ts 解出）；单线程异常降级 status="error" 不拖垮整表
+- `POST /api/v1/batches`：thread_id 查重 409 → 路径存在性校验 422（指明哪个路径）
+  → 复用 run_until_interrupt；请求体仅 thread_id/downstream_file_path/upstream_root
+- `GET /api/v1/batches/{thread_id}`：state 摘要 + factories[]（factory/role:
+  current·pending·done + session 摘要）+ audit[] + usage；不存在 404
+- `GET /api/v1/usage`：usage_tracker.summary() + scope=process_lifetime 标注
+- `GET /api/v1/config/defaults`：upstream_root/downstream_file_path/weight_diff_warn_ratio
+
+**审核审计落库**：`review_audits` 表进 master.db（create_all 零迁移）。写入点在
+`service.resume_order`——stream 前 `_prepare_audit`（get_review_payload 取原始
+payload diff 出数值改动与新 SKU 补录），返回前 `_write_audit`；try/except 包死，
+审计失败只警告绝不阻塞已成功的 resume。
+
+**review.html 4 项加固**：①单重对照列（历史单件净重/毛重 → 本次值，diff 超
+payload.weight_diff_warn_ratio（fallback 0.05）高亮，编辑实时重算）；
+②键盘流（↑/↓ 切卡片、Enter blur+跳下一条、`/` 聚焦搜索）；
+③SKU 搜索框（includes 过滤 + 计数 + Enter 跳下一命中）；
+④提交前差异摘要弹窗（改动项 diff + 新 SKU 补录 + 未逐条过目 X/Y，有改动才弹）。
+另兼容第四种状态 Needs_Review 的样式。
+
+**契约要点**（前后端冻结）：
+- 批次列表信封 `{"batches": [...]}`；详情工厂列表 `factories[].factory` +
+  `progress.current_factory`；
+- 审计 changes 为扁平结构 `[{"sku","field","old","new"}]`（None 与数值严格区分，
+  提交 None 视为未改动）；
+- Node5 payload 新增 `weight_diff_warn_ratio`（get_settings()，默认 0.05）。
+
+**已知边界**：
+- usage 为进程内累计、重启清零、无 thread 标签（全局用量，UI 已标注）；
+- factories[].session 语义是"该工厂最近一次提取会话"，不专属本批次（UI 固定文案标注）；
+- 无认证（内网 1-2 人，真正防线是 Node5 人工审核；Basic auth middleware 留 backlog）；
+- 全新部署 checkpoints.db 不存在（或文件在但无表）时，`_open_checkpoint_ro` 自动
+  `SqliteSaver.setup()` 建库建表后重开只读连接（2026-07-28 主 agent 审核 T6 时修复，
+  两种场景实测）；
+- `app.extraction.llm_client` import 时 `load_dotenv(override=True)` 会盖回
+  os.environ 中 .env 已有的同名变量——测试脚本用 env 隔离 db 时必须在 import app
+  之后重设 env + `get_settings.cache_clear()`（图/引擎为惰性单例，首个请求才创建）。
+
+**全链路测试** `validation/ui_api_test.py`（`python3 validation/ui_api_test.py`，
+mock 提取不调 LLM，秒级）：checkpoint/master db + output 目录全部隔离到临时目录
+（绝不碰 app/data/ 生产 db，脚本开头有隔离断言兜底），下游装箱单复制到临时目录后
+按批次传入。TestClient 断言流：defaults → 发起批次（首工厂挂起）→ 重名 409 →
+坏路径 422 → 批次列表（信封/状态/进度/created_at）→ 详情（factories 角色/audit 空/
+usage scope）→ 审核 payload（weight_diff_warn_ratio=0.05）→ resume（改总净重 +50 +
+新 SKU 补录）→ 审计落库（扁平 changes old→new、edited_count、new_skus）→ usage →
+4 页面路由 200 + 特征字符串 → 详情 404。全绿。
+
 ## 7. 关键设计决策记录
 
 0. **路径集中配置 + agent 对话可改**（2026-07-28 用户授权）：`app/.env`「业务路径」节
@@ -267,7 +333,7 @@ Node3 真实分支改为以**增量会话 FactorySession** 驱动（与生产"�
    前端 /review 尚未展示「暂无箱单/改单/冲突」等 Agent 反馈条
 4. `--consolidate` 更新 10 工厂汇总报告（用修复后的通道重跑或基于人工核对结论更新）
 5. 按需：Celery 迁移（Windows 部署注意：Redis 需 WSL2/Docker 或 Memurai 替代）、
-   /chat 对话界面（当前仅 API）。
+   UI Basic auth（内网认证，backlog）。
    ~~LibreOffice 安装~~（2026-07-28 完成：清华镜像装 26.2.5，亿钻 doc 主路径实测通过；
    _find_soffice 三平台探测，textutil 降级纯兜底，commit c7583f8；
    sub-agent 复测：soffice→PDF 2.2s 带文本层，装箱单 doc GT 30/30、

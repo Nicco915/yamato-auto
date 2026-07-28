@@ -194,9 +194,30 @@ def _open_checkpoint_ro() -> sqlite3.Connection:
 
     绝不复用 graph 单例内部的 saver 连接（graph.py 的连接无锁，
     跨线程并发读写会互相干扰）；这里每次新建独立只读连接。
+    全新部署 db 文件不存在（或文件在但表未建）时先用 SqliteSaver.setup()
+    建库建表——mode=ro 打不开不存在的文件、SELECT 打不了无表的库
+    （首发批次 500 的坑）。
     """
-    path = get_settings().checkpoint_db_abs.resolve().as_posix()
-    return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    path = Path(get_settings().checkpoint_db_abs).resolve()
+    conn = None
+    if path.exists():
+        conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+        has_table = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='checkpoints'"
+        ).fetchone()
+        if has_table:
+            return conn
+        conn.close()
+    # 文件不存在或无表：初始化 schema 后重开只读连接
+    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rw = sqlite3.connect(str(path))
+    try:
+        SqliteSaver(rw).setup()
+    finally:
+        rw.close()
+    return sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
 
 
 def _list_thread_ids(conn: sqlite3.Connection) -> list[str]:
