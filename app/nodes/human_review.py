@@ -13,6 +13,7 @@ resume 数据约定：
 """
 from langgraph.types import interrupt
 
+from app.nodes.compute_align import _safe_div
 from app.state import AgentState
 
 # 新 SKU 需人工补录的合规字段清单（《第三阶段.md》改造点 B）
@@ -80,13 +81,31 @@ def human_review(state: AgentState) -> dict:
             for k in ("total_quantity", "total_net_weight", "total_gross_weight")
         )
 
-        # 覆写提取数据与计算结果（人类修改总量时应同时给出重算后的单重）
+        # 覆写提取数据（人工只改原始数值，不需要也不应该自己算单重）
         orig_extracted.update({k: v for k, v in new_extracted.items() if v is not None})
         base["extracted_data"] = orig_extracted
-        if h_item.get("calculation"):
-            base["calculation"] = h_item["calculation"]
         base["is_human_edited"] = edited or bool(h_item.get("is_human_edited"))
         base["status"] = h_item.get("status") or ("Normal" if approved else base.get("status"))
+
+        # ---- 计算隔离：单重一律由本节点纯 Python 重算 ----
+        # 不论人工/前端是否提交了 calculation，都以最终提取数值为准重算，
+        # 杜绝"改了总量、单重还是旧值"的静默不一致（零容错）。
+        qty = orig_extracted.get("total_quantity")
+        unit_net, net_formula, net_err = _safe_div(orig_extracted.get("total_net_weight"), qty)
+        unit_gross, gross_formula, gross_err = _safe_div(orig_extracted.get("total_gross_weight"), qty)
+        base["calculation"] = {
+            "net_formula": net_formula,
+            "gross_formula": gross_formula,
+            "calculated_unit_net": unit_net,
+            "calculated_unit_gross": unit_gross,
+        }
+        err = net_err or gross_err
+        if err:
+            base["error_msg"] = err
+            if edited and base.get("status") == "Normal":
+                base["status"] = "Error"
+        elif edited:
+            base["error_msg"] = None
 
         # 新 SKU 的人工补录合规字段，直接挂到 item 上供 Node6 落库
         for f in NEW_SKU_REQUIRED_FIELDS + ["name_en", "name_jp"]:
