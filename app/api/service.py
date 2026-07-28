@@ -8,10 +8,21 @@
 2. 路由改为 task.delay(...) 返回 task_id，再加一个轮询接口查 AsyncResult；
 3. resume_order() 因只做写 Excel+落库，耗时短，可保持同步接口不变。
 """
+import contextlib
+import json
+import sqlite3
+from pathlib import Path
 from typing import Any
 
+import ormsgpack
 from langgraph.types import Command
+from sqlalchemy import select
 
+from app.config import get_settings
+from app.db.models import ReviewAudit
+from app.db.session import get_session
+from app.extraction.llm_client import usage_tracker
+from app.extraction.session import SESSIONS_DIR
 from app.graph import get_graph
 
 
@@ -61,11 +72,16 @@ def resume_order(thread_id: str, resume_data: dict) -> dict[str, Any]:
     """用人工反馈数据唤醒挂起的图，继续执行 Node6/7（写 Excel + 落库）。
 
     resume_data 结构见 nodes/human_review.py 的 docstring。
+
+    审计：stream 前 _prepare_audit 抓取原始 payload 做 diff 快照，
+    返回前 _write_audit 落 review_audits（失败只警告，绝不阻塞 resume）。
     """
     graph = get_graph()
     state = graph.get_state(_config(thread_id))
     if not state.next:
         raise ValueError("该任务没有处于等待审核状态，或已完成。")
+
+    prepared = _prepare_audit(thread_id, resume_data)
 
     # 恢复执行，直到下一个 interrupt（多工厂循环时）或 END
     for event in graph.stream(
@@ -73,19 +89,23 @@ def resume_order(thread_id: str, resume_data: dict) -> dict[str, Any]:
     ):
         if "__interrupt__" in event:
             payload = event["__interrupt__"][0].value
-            return {
+            result = {
                 "status": "pending_human_review",
                 "thread_id": thread_id,
                 "review_data": payload,
             }
+            _write_audit(prepared, result.get("status"))
+            return result
 
     final = graph.get_state(_config(thread_id))
-    return {
+    result = {
         "status": "success",
         "message": "数据已成功落库并写入下游表格",
         "final_validation_status": final.values.get("validation_status"),
         "final_output_path": final.values.get("final_output_path"),
     }
+    _write_audit(prepared, result.get("status"))
+    return result
 
 
 def rerun_with_paths(
@@ -162,3 +182,352 @@ def get_review_payload(thread_id: str) -> dict[str, Any] | None:
         if task.interrupts:
             return task.interrupts[0].value
     return None
+
+
+# ---------------------------------------------------------------------------
+# 批次管理 API（工作台/批次详情页）：checkpoint 只读枚举 + 状态推导
+# ---------------------------------------------------------------------------
+
+
+def _open_checkpoint_ro() -> sqlite3.Connection:
+    """打开 checkpoints.db 的只读连接（URI mode=ro，Windows 兼容）。
+
+    绝不复用 graph 单例内部的 saver 连接（graph.py 的连接无锁，
+    跨线程并发读写会互相干扰）；这里每次新建独立只读连接。
+    """
+    path = get_settings().checkpoint_db_abs.resolve().as_posix()
+    return sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+
+
+def _list_thread_ids(conn: sqlite3.Connection) -> list[str]:
+    """枚举全部批次 thread_id，按最早 checkpoint 倒序（最新批次在前）。"""
+    rows = conn.execute(
+        "SELECT thread_id FROM checkpoints "
+        "GROUP BY thread_id ORDER BY MIN(checkpoint_id) DESC"
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
+def _thread_created_ts(conn: sqlite3.Connection, thread_id: str) -> str | None:
+    """取该 thread 最早 checkpoint 的创建时间（blob 内 msgpack 的 ts 字段）。
+
+    checkpoint 表的 metadata 列没有时间戳，创建时间只能从
+    checkpoint blob（ormsgpack 序列化）的 "ts" 键解出；解包失败返回 None。
+    """
+    row = conn.execute(
+        "SELECT checkpoint FROM checkpoints "
+        "WHERE thread_id = ? ORDER BY checkpoint_id ASC LIMIT 1",
+        (thread_id,),
+    ).fetchone()
+    if not row:
+        return None
+    try:
+        return ormsgpack.unpackb(row[0])["ts"]
+    except Exception:  # noqa: BLE001 序列化格式漂移不应拖垮列表
+        return None
+
+
+def _summarize_snapshot(thread_id: str, snap, created_ts: str | None) -> dict[str, Any]:
+    """从 StateSnapshot 推导批次摘要：三态 status + 进度 + 当前工厂。"""
+    values = snap.values or {}
+
+    # ---- 状态三态 ----
+    if not values:
+        status = "unknown"
+    elif any(t.interrupts for t in snap.tasks):
+        status = "pending_review"   # 有待审核 interrupt
+    elif snap.next:
+        status = "running"          # 无 interrupt 但 next 非空（LLM 提取中）
+    else:
+        status = "completed"
+
+    # ---- 进度：分母 = downstream_requirements 键集（有 filter 时取交集）----
+    total_set = set((values.get("downstream_requirements") or {}).keys())
+    factory_filter = values.get("factory_filter")
+    if factory_filter:
+        total_set &= set(factory_filter)
+    pending = set(values.get("pending_factories") or [])
+    current = (values.get("current_factory_data") or {}).get("factory_name")
+    # 当前工厂已被 pop 出 pending；图还在跑（next 非空）时不算完成
+    done = len(total_set - pending) - (1 if current and snap.next else 0)
+    done = max(done, 0)
+
+    return {
+        "thread_id": thread_id,
+        "status": status,
+        "progress": {"done": done, "total": len(total_set), "current_factory": current},
+        "current_factory": current,
+        "created_at": created_ts,
+        "updated_at": snap.created_at,
+    }
+
+
+def list_batches() -> dict[str, Any]:
+    """批次列表：只读连接枚举 thread，逐个 get_state 推导状态。
+
+    单线程推导异常时降级为 status="error"（其余字段 None），不拖垮整表。
+    """
+    graph = get_graph()
+    with contextlib.closing(_open_checkpoint_ro()) as conn:
+        thread_ids = _list_thread_ids(conn)
+        created_map = {tid: _thread_created_ts(conn, tid) for tid in thread_ids}
+
+    batches: list[dict[str, Any]] = []
+    for tid in thread_ids:
+        try:
+            snap = graph.get_state(_config(tid))
+            batches.append(_summarize_snapshot(tid, snap, created_map[tid]))
+        except Exception as e:  # noqa: BLE001 单个坏 thread 不影响整表
+            batches.append({
+                "thread_id": tid,
+                "status": "error",
+                "error": f"{type(e).__name__}: {e}",
+                "progress": None,
+                "current_factory": None,
+                "created_at": created_map[tid],
+                "updated_at": None,
+            })
+    return {"batches": batches}
+
+
+def _load_factory_session(factory: str) -> dict[str, Any] | None:
+    """加载工厂提取会话摘要（data/sessions/{工厂名}.json 同名匹配）。
+
+    会话语义是"该工厂最近一次提取记录"，不专属任何批次。
+    文件不存在或损坏时返回 None。coverage 由 items 键集 vs expected_skus
+    重算（与 extraction/session.py 的 coverage() 口径一致）。
+    """
+    path = SESSIONS_DIR / f"{factory}.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 损坏的会话文件不阻塞批次详情
+        return None
+
+    items = data.get("items") or {}
+    expected = set(data.get("expected_skus") or [])
+    have = set(items.keys())
+    if expected:
+        coverage = {
+            "extracted": len(have & expected),
+            "expected": len(expected),
+            "missing": sorted(expected - have),
+            "extra": sorted(have - expected),
+        }
+    else:
+        coverage = {"extracted": len(have), "expected": None, "missing": [], "extra": []}
+
+    return {
+        "factory": factory,
+        "status": data.get("status"),
+        "updated_at": data.get("updated_at"),
+        "issues": data.get("issues") or [],
+        "history": data.get("history") or [],
+        "file_records": data.get("file_records") or {},
+        "targets": data.get("targets") or [],
+        "deferred": data.get("deferred") or [],
+        "expected_skus": sorted(expected),
+        "items": items,
+        "coverage": coverage,
+    }
+
+
+def _usage_with_scope() -> dict[str, Any]:
+    """全局 LLM 用量摘要 + scope 标注（进程内累计，无 thread 标签）。"""
+    summary = usage_tracker.summary()
+    summary["scope"] = "process_lifetime"
+    summary["note"] = "进程内累计，重启清零；无 thread 标签，为全局用量"
+    return summary
+
+
+def get_batch_detail(thread_id: str) -> dict[str, Any]:
+    """批次详情：state 摘要 + factories[]（角色+会话摘要）+ audit[] + usage。
+
+    thread 不存在时抛 ValueError（路由层转 404）。
+    """
+    graph = get_graph()
+    snap = graph.get_state(_config(thread_id))
+    if not snap.values:
+        raise ValueError(f"thread {thread_id} 不存在")
+
+    with contextlib.closing(_open_checkpoint_ro()) as conn:
+        created_ts = _thread_created_ts(conn, thread_id)
+
+    detail = _summarize_snapshot(thread_id, snap, created_ts)
+    values = snap.values
+
+    total_set = set((values.get("downstream_requirements") or {}).keys())
+    factory_filter = values.get("factory_filter")
+    if factory_filter:
+        total_set &= set(factory_filter)
+    pending = set(values.get("pending_factories") or [])
+    current = (values.get("current_factory_data") or {}).get("factory_name")
+
+    factories = []
+    for name in sorted(total_set):
+        if name == current and snap.next:
+            role = "current"
+        elif name in pending:
+            role = "pending"
+        else:
+            role = "done"
+        factories.append({
+            "factory": name,
+            "role": role,
+            "session": _load_factory_session(name),
+        })
+
+    with get_session() as session:
+        audit_rows = session.scalars(
+            select(ReviewAudit)
+            .where(ReviewAudit.thread_id == thread_id)
+            .order_by(ReviewAudit.audit_id)
+        ).all()
+        audit = [{
+            "ts": r.ts.isoformat() if r.ts else None,
+            "factory_name": r.factory_name,
+            "approved": r.approved,
+            "edited_count": r.edited_count,
+            "changes": json.loads(r.changes_json or "[]"),
+            "new_skus": json.loads(r.new_skus_json or "[]"),
+            "result_status": r.result_status,
+        } for r in audit_rows]
+
+    detail.update({
+        "downstream_file_path": values.get("downstream_file_path"),
+        "upstream_root": values.get("upstream_root"),
+        "final_output_path": values.get("final_output_path"),
+        "validation_status": values.get("validation_status"),
+        "factories": factories,
+        "audit": audit,
+        "usage": _usage_with_scope(),
+    })
+    return detail
+
+
+def create_batch(
+    thread_id: str,
+    downstream_file_path: str | None = None,
+    upstream_root: str | None = None,
+) -> dict[str, Any]:
+    """发起新批次：thread_id 查重 + 路径存在性校验后复用 run_until_interrupt。
+
+    - thread_id 空白 → ValueError；
+    - checkpoints 已有同名 thread → FileExistsError（路由层转 409）；
+    - 路径缺省取 settings；downstream 必须是文件、upstream 必须是目录
+      （Path(p).expanduser() 兼容 Windows 盘符路径），否则 ValueError
+      且消息指明哪个路径不存在（路由层转 422）。
+    """
+    thread_id = (thread_id or "").strip()
+    if not thread_id:
+        raise ValueError("thread_id 不能为空")
+
+    with contextlib.closing(_open_checkpoint_ro()) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM checkpoints WHERE thread_id = ? LIMIT 1",
+            (thread_id,),
+        ).fetchone()
+    if row:
+        raise FileExistsError(f"批次已存在，请换一个 thread_id: {thread_id}")
+
+    settings = get_settings()
+    downstream = downstream_file_path or settings.downstream_file_path
+    upstream = upstream_root or settings.upstream_root
+
+    d_path = Path(downstream).expanduser()
+    if not d_path.is_file():
+        raise ValueError(f"下游装箱单路径不存在或不是文件: {downstream}")
+    u_path = Path(upstream).expanduser()
+    if not u_path.is_dir():
+        raise ValueError(f"上游工厂文件夹路径不存在或不是目录: {upstream}")
+
+    return run_until_interrupt(thread_id, str(d_path), str(u_path))
+
+
+# ---------------------------------------------------------------------------
+# 审核审计：resume 前抓取原始 payload 做 diff 快照，成功后落 review_audits
+# ---------------------------------------------------------------------------
+
+# 人工可修改的底层数值字段（None 与数值严格区分：None 表示未提交/未改动）
+_AUDIT_NUMERIC_FIELDS = ("total_quantity", "total_net_weight", "total_gross_weight")
+
+
+def _prepare_audit(thread_id: str, resume_data: dict) -> dict[str, Any] | None:
+    """resume 前准备审计快照：diff 提交 items vs 原始 payload items。
+
+    - changes：数值字段（_AUDIT_NUMERIC_FIELDS）old→new 对照，
+      None 与数值严格区分（提交值 None 视为未改动，不计 diff）；
+    - new_skus：原始 payload 中 is_new_sku 项的人工补录字段
+      （name_cn/hs_code/inspection_required/name_en/name_jp）；
+    - 原始 payload 拿不到（未挂起等）返回 None。
+    """
+    payload = get_review_payload(thread_id)
+    if payload is None:
+        return None
+
+    orig_items = {i.get("sku"): i for i in payload.get("items") or []}
+    changes: list[dict[str, Any]] = []
+    new_skus: list[dict[str, Any]] = []
+    edited_count = 0
+
+    for item in (resume_data or {}).get("items") or []:
+        sku = item.get("sku")
+        orig = orig_items.get(sku) or {}
+        orig_ext = orig.get("extracted_data") or {}
+        new_ext = item.get("extracted_data") or {}
+
+        sku_changed = False
+        for f in _AUDIT_NUMERIC_FIELDS:
+            new_v = new_ext.get(f)
+            if new_v is not None and new_v != orig_ext.get(f):
+                sku_changed = True
+                # 扁平结构（冻结契约）：batch.html 审计区按 c.field/c.old/c.new 渲染
+                changes.append({"sku": sku, "field": f, "old": orig_ext.get(f), "new": new_v})
+        if sku_changed:
+            edited_count += 1
+
+        if orig.get("is_new_sku"):
+            new_skus.append({
+                "sku": sku,
+                "name_cn": item.get("name_cn"),
+                "hs_code": item.get("hs_code"),
+                "inspection_required": item.get("inspection_required"),
+                "name_en": item.get("name_en"),
+                "name_jp": item.get("name_jp"),
+            })
+
+    return {
+        "thread_id": thread_id,
+        "factory_name": payload.get("factory_name"),
+        "approved": bool((resume_data or {}).get("approved", False)),
+        "edited_count": edited_count,
+        "changes": changes,
+        "new_skus": new_skus,
+    }
+
+
+def _write_audit(prepared: dict[str, Any] | None, result_status: str | None) -> None:
+    """把审计快照写入 review_audits。
+
+    审计是辅助设施，不能反过来搞挂已成功的 resume：本函数 try/except
+    包死，任何失败只打印大声警告，绝不向外抛出。
+    """
+    if not prepared:
+        return
+    try:
+        with get_session() as session:
+            session.add(ReviewAudit(
+                thread_id=prepared["thread_id"],
+                factory_name=prepared.get("factory_name"),
+                approved=prepared.get("approved", False),
+                edited_count=prepared.get("edited_count", 0),
+                changes_json=json.dumps(prepared.get("changes") or [], ensure_ascii=False),
+                new_skus_json=json.dumps(prepared.get("new_skus") or [], ensure_ascii=False),
+                result_status=result_status,
+            ))
+            session.commit()
+    except Exception as e:  # noqa: BLE001 故意包死，见 docstring
+        print(f"⚠️⚠️ [审计落库失败] thread={prepared.get('thread_id')} "
+              f"resume 已成功，但 review_audits 写入失败："
+              f"{type(e).__name__}: {e}")

@@ -13,6 +13,7 @@ resume 数据约定：
 """
 from langgraph.types import interrupt
 
+from app.config import get_settings
 from app.nodes.compute_align import _safe_div
 from app.state import AgentState
 
@@ -52,6 +53,8 @@ def human_review(state: AgentState) -> dict:
         # Node3 提取 Agent 的结构化反馈与覆盖率（暂无箱单/目标为空/改单等）
         "extraction_issues": cur.get("extraction_issues") or [],
         "extraction_coverage": cur.get("extraction_coverage") or {},
+        # 单重差异预警阈值，供审核页对照列实时高亮（Node4 判 Warning 同口径）
+        "weight_diff_warn_ratio": get_settings().weight_diff_warn_ratio,
     }
 
     print(f"[Node5] 🔴 挂起等待人工审核：工厂「{cur.get('factory_name')}」，"

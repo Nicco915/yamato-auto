@@ -141,15 +141,12 @@ class ReviewBackend(Protocol):
 
 
 class RealBackend:
-    """生产后端：从 LangGraph checkpoint 读取 interrupt payload。
-
-    需要 service.py 提供 get_review_payload(thread_id)（见设计文档 6.2 节）。
-    """
+    """生产后端：从 LangGraph checkpoint 读取 interrupt payload。"""
 
     def get_payload(self, thread_id: str) -> dict[str, Any] | None:
         from app.api import service  # 延迟导入，避免 demo 依赖 LangGraph
 
-        return service.get_review_payload(thread_id)  # type: ignore[attr-defined]
+        return service.get_review_payload(thread_id)
 
 
 _backend: ReviewBackend | None = None

@@ -12,6 +12,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -67,3 +68,24 @@ class FactorySKU(Base):
     )
 
     factory: Mapped[Factory] = relationship(back_populates="skus")
+
+
+class ReviewAudit(Base):
+    """人工审核审计表：每次 resume 提交的人工改动与新 SKU 补录留痕。
+
+    进 master.db（靠 get_engine() 的 create_all 自动建表，零迁移）。
+    changes_json / new_skus_json 为 JSON 序列化文本（ensure_ascii=False）。
+    审计是辅助设施：写入失败绝不阻塞已成功的 resume（见 service._write_audit）。
+    """
+
+    __tablename__ = "review_audits"
+
+    audit_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    thread_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    factory_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    edited_count: Mapped[int] = mapped_column(Integer, default=0)
+    changes_json: Mapped[str] = mapped_column(Text, default="[]")
+    new_skus_json: Mapped[str] = mapped_column(Text, default="[]")
+    result_status: Mapped[str | None] = mapped_column(String(20), nullable=True)

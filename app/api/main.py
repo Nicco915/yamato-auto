@@ -9,14 +9,17 @@
 避免阻塞事件循环。Celery 迁移点见 service.py 顶部注释。
 """
 import asyncio
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.api import service
 from app.review.router import configure_review
 from app.review.router import router as review_router
+from app.ui.router import router as ui_router
 
 app = FastAPI(title="供应链单证自动化 API", version="0.1.0")
 
@@ -24,6 +27,15 @@ app = FastAPI(title="供应链单证自动化 API", version="0.1.0")
 app.include_router(review_router)
 # 单据文件访问白名单：默认限制在 settings.upstream_root（工厂文件夹）内
 configure_review()
+
+# UI 包：工作台/批次详情/对话页 + UI 专用 API（/api/v1/batches 等）
+app.include_router(ui_router)
+# UI 共享静态资产（ui.css / ui.js）
+app.mount(
+    "/ui/static",
+    StaticFiles(directory=Path(__file__).resolve().parents[1] / "ui" / "static"),
+    name="ui-static",
+)
 
 
 # ---------- Pydantic 请求模型 ----------
