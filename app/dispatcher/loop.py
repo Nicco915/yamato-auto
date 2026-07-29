@@ -191,7 +191,8 @@ def _tool_message(call: dict, content: str) -> dict:
     return {"role": "tool", "tool_call_id": call["id"], "content": content}
 
 
-def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2) -> dict:
+def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
+                 session_id: str | None = None) -> dict:
     """调度主循环：LLM 步进 → 工具执行/拦截 → 回喂，直到最终回复或确认门。
 
     返回三种形态之一：
@@ -199,8 +200,22 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2) ->
     - {"status": "pending_confirmation", "action": 信封, "preview": [...],
        "message": 摘要+确认提示, "warnings": [...]}（写工具被拦截，等人工确认）
     - 超 MAX_ROUNDS 的兜底 {"status": "ok", "message": 拆分提示}
+
+    session_id 提供时，加载 L2 操作记忆（跨会话持久化）并注入 system prompt。
     """
-    messages = ([{"role": "system", "content": prompts.system_prompt(phase)}]
+    # 构建 system prompt（基础 + L2 记忆上下文）
+    sys_prompt = prompts.system_prompt(phase)
+    if session_id:
+        from app.dispatcher.memory import OperationMemory
+        try:
+            mem = OperationMemory(session_id)
+            l2_context = mem.get_context_for_prompt()
+            if l2_context:
+                sys_prompt += f"\n\n【最近操作上下文】\n{l2_context}"
+        except Exception:  # noqa: BLE001 L2 记忆加载失败不阻塞主流程
+            pass
+
+    messages = ([{"role": "system", "content": sys_prompt}]
                 + list(session.history)
                 + [{"role": "user", "content": message}])
 

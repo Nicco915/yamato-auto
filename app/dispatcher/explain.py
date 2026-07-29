@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""调度 Agent 错误解释工具：把批次提取错误翻译成人话给操作员。
+"""批次错误翻译工具（规则表 + LLM 翻译）。
+
+知识库检索接口 _search_issue_kb 预留 RAG 替换能力：
+- V1（当前）：硬编码 ISSUE_KB 映射表
+- V2（未来）：替换为向量库 API（当错误案例 > 100 条时）
+替换时只需改 _search_issue_kb 内部实现，外部调用不变。
 
 铁律落点：**建议动作只来自代码规则表 ISSUE_KB，LLM 禁止发明动作**。
 实现机制上把这条铁律做成了结构性约束——LLM 的输出契约只有
@@ -322,12 +327,35 @@ def _merge_error_item(material: dict, entry: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# 第二部分：规则表组装（causes / suggestions 的唯一来源）
+# 第二部分：知识库检索接口（V1 硬编码映射，V2 替换为 RAG）
+# ---------------------------------------------------------------------------
+
+def _search_issue_kb(issue_types: list[str]) -> dict[str, dict]:
+    """检索错误案例知识库（V1 用硬编码映射，V2 替换为 RAG）。
+
+    根据问题类型列表检索匹配的知识库条目。返回按 type 索引的字典，
+    每个条目包含 {title, explain, severity, suggest}。
+
+    V1 实现：硬编码 ISSUE_KB 映射表，按 type 直接查表。
+    V2 演进：替换为向量库 API（当错误案例 > 100 条时），
+    替换时只需改函数内部实现，外部调用不变。
+
+    未收录 type 走通用模板 _GENERIC_KB（severity=mid，建议=人工核查）。
+    返回 dict[type, entry] 供 _build_causes / _build_suggestions / _llm_payload 使用。
+    """
+    kb_map: dict[str, dict[str, Any]] = {}
+    for type_ in issue_types:
+        kb_map[type_] = ISSUE_KB.get(type_, _GENERIC_KB)
+    return kb_map
+
+
+# ---------------------------------------------------------------------------
+# 第三部分：规则表组装（causes / suggestions 的唯一来源）
 # ---------------------------------------------------------------------------
 
 def _build_causes(material: dict, cause_notes: dict[str, str],
                   degraded: bool) -> list[dict]:
-    """按 issue type 分组，用 ISSUE_KB 组装 causes；LLM 补充说明只作措辞附加。
+    """按 issue type 分组，用 _search_issue_kb 检索的条目组装 causes。
 
     MISSING_SKUS / CALC_ERROR 由 state 数据合成；未收录 type 走通用模板。
     返回按 severity 排序（high → mid → low）的列表。
@@ -336,9 +364,17 @@ def _build_causes(material: dict, cause_notes: dict[str, str],
     for issue in material["issues"]:
         groups.setdefault(issue["type"], []).append(issue)
 
+    # 收集所有 issue type（含合成类型），一次性检索知识库
+    all_types = list(groups.keys())
+    if material["missing_skus"]:
+        all_types.append("MISSING_SKUS")
+    if material["error_items"]:
+        all_types.append("CALC_ERROR")
+    kb_map = _search_issue_kb(all_types)
+
     causes: list[dict] = []
     for type_, issues in groups.items():
-        kb = ISSUE_KB.get(type_, _GENERIC_KB)
+        kb = kb_map[type_]
         explanation = kb["explain"]
         note = cause_notes.get(type_)
         if note:
@@ -358,7 +394,7 @@ def _build_causes(material: dict, cause_notes: dict[str, str],
 
     # ---- 合成类型：MISSING_SKUS ----
     if material["missing_skus"]:
-        kb = ISSUE_KB["MISSING_SKUS"]
+        kb = kb_map["MISSING_SKUS"]
         explanation = kb["explain"]
         note = cause_notes.get("MISSING_SKUS")
         explanation = f"{explanation} {note}" if note else explanation
@@ -373,7 +409,7 @@ def _build_causes(material: dict, cause_notes: dict[str, str],
 
     # ---- 合成类型：CALC_ERROR ----
     if material["error_items"]:
-        kb = ISSUE_KB["CALC_ERROR"]
+        kb = kb_map["CALC_ERROR"]
         explanation = kb["explain"]
         note = cause_notes.get("CALC_ERROR")
         explanation = f"{explanation} {note}" if note else explanation
@@ -391,15 +427,18 @@ def _build_causes(material: dict, cause_notes: dict[str, str],
 
 
 def _build_suggestions(causes: list[dict], thread_id: str) -> list[dict]:
-    """从 causes 命中的规则表条目汇总建议动作，按 action 去重。
+    """从 _search_issue_kb 匹配的条目汇总建议动作，按 action 去重。
 
     运行时填充：tool="rerun" 的建议补上 thread_id。
     顺序跟随 causes（高严重度类型的建议在前）。
     """
+    # 一次性检索知识库（与 _build_causes 同一接口）
+    kb_map = _search_issue_kb([c["type"] for c in causes])
+
     suggestions: list[dict] = []
     seen: set[str] = set()
     for cause in causes:
-        kb = ISSUE_KB.get(cause["type"], _GENERIC_KB)
+        kb = kb_map.get(cause["type"], _GENERIC_KB)
         for sug in kb["suggest"]:
             if sug["action"] in seen:
                 continue
@@ -447,10 +486,10 @@ def _llm_payload(material: dict, factory: str | None) -> dict:
         "deferred": material["deferred"],
         "file_records": dict(list(material["file_records"].items())[:_FILE_RECORDS_MAX]),
         # 类型词典：让 LLM 知道每类含义，但不包含 suggest（动作不进 LLM 视野）
+        # 通过 _search_issue_kb 接口检索（V1 硬编码，V2 向量库）
         "type_dict": {
-            t: {"title": ISSUE_KB.get(t, _GENERIC_KB)["title"],
-                "explain": ISSUE_KB.get(t, _GENERIC_KB)["explain"]}
-            for t in present_types
+            t: {"title": kb["title"], "explain": kb["explain"]}
+            for t, kb in _search_issue_kb(present_types).items()
         },
     }
 
@@ -517,6 +556,7 @@ def explain_errors(thread_id: str, factory: str | None = None) -> dict:
 
     - thread 不存在 → {"error": f"批次不存在: {thread_id}"}（dict，不抛异常）；
     - 建议动作只来自 ISSUE_KB 规则表，LLM 从机制上无法发明动作；
+    - 知识库检索通过 _search_issue_kb 接口（V1 硬编码映射，V2 可替换为 RAG）；
     - LLM 故障 / JSON 解析失败 / EXPLAIN_MOCK=1 → 模板降级（degraded=True），
       工具永不失败。
     """

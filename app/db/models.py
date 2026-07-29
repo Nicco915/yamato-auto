@@ -89,3 +89,21 @@ class ReviewAudit(Base):
     changes_json: Mapped[str] = mapped_column(Text, default="[]")
     new_skus_json: Mapped[str] = mapped_column(Text, default="[]")
     result_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+
+class DispatcherMemory(Base):
+    """调度 Agent L2 操作记忆表：按 session_id 分区，跨重启持久化。
+
+    进 master.db（靠 get_engine() 的 create_all 自动建表，零迁移）。
+    recent_paths_json / operation_summary_json 为 JSON 序列化文本。
+    记忆是辅助设施：写入失败绝不阻塞主流程（见 dispatcher.memory）。
+    """
+
+    __tablename__ = "dispatcher_memory"
+
+    session_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    last_thread_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_factory: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    recent_paths_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    operation_summary_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

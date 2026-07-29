@@ -33,6 +33,7 @@
 | 生产前端：工作台/详情/对话/审核加固 | ✅ 完成 | 4 页面 + 批次管理 API + review_audits 审计落库，全链路测试通过（见第 6.5 节） |
 | 对话 Agent：L1 会话记忆 | ✅ 完成 | 多轮补充信息（先路径后类别）可合并，A+B 双层实现，实测通过（见第 6.6 节） |
 | 调度 Agent：智能体系统前台 | ✅ 完成 | 11 工具注册表 + 双适配器循环 + 确认门 + 操作指导，测试 21/21（见第 6.7 节） |
+| 调度 Agent L2 操作记忆 + RAG 接口 | ✅ 完成 | SQLite 持久化（按 session_id 分区）+ 自动更新 + 知识库检索接口预留 RAG，测试 27/27（见第 6.8 节） |
 
 ## 4. 提取引擎（app/extraction/）
 
@@ -401,6 +402,76 @@ Agent（6.3 节）的 `set_paths` 作为调度 Agent 的一个工具整合进来
     工具返回 → 继续推理生成人话回复（含表格）
   - 操作指导：操作员问"怎么发起新批次？" → agent 调 ask_guide → 返回知识库匹配 +
     LLM 润色后的操作指引
+
+## 6.8 调度 Agent L2 操作记忆 + RAG 接口预留（2026-07-29 完成）
+
+**问题**：L1 会话记忆（6.6 节）是进程内 dict，TTL 2h，重启即丢。操作员说"重跑**刚才那个**批次"时，agent 不知道"刚才"是哪个批次。需要跨会话、跨重启的操作记忆。
+
+**方案**（用户讨论拍板）：两级记忆架构（V1 SQL，V2 预留 RAG）
+- **L1 会话内短期记忆**（已实现）：进程内 dict，history + pending_action + tool_history，TTL 2h
+- **L2 会话间操作记忆**（本节实现）：SQLite `master.db` 持久化，按 `session_id` 分区（一个浏览器终端一份记忆）
+- **知识库检索接口**（本节预留）：`guide.py::_search_kb` 和 `explain.py::_search_issue_kb`，V1 用硬编码规则表，V2 替换为向量库 API（当知识量 > 100 条时）
+
+**L2 操作记忆实现**（`app/app/dispatcher/memory.py`）：
+- `OperationMemory` 类，接口：`load()` / `update(**kwargs)` / `record_operation(tool, args_summary, result_summary)` / `auto_update_after_write(tool, args, result)` / `get_context_for_prompt()`
+- SQLite 表 `dispatcher_memory`（`app/data/master.db`）：
+  ```sql
+  CREATE TABLE dispatcher_memory (
+      session_id VARCHAR(255) PRIMARY KEY,  -- 浏览器终端分区键
+      last_thread_id VARCHAR(255),           -- 最近批次
+      last_factory VARCHAR(255),             -- 最近工厂
+      recent_paths_json TEXT,                -- JSON: [{path, category, updated_at}] 最近 3 条
+      operation_summary_json TEXT,           -- JSON: [{tool, args_summary, result_summary, ts}] 最近 10 次
+      updated_at DATETIME
+  );
+  ```
+- **自动更新路由**：
+  - `create_batch` / `rerun` / `submit_review` → 更新 `last_thread_id`（从 args 或 result 提取）
+  - `set_paths` → 更新 `recent_paths`（头部追加 + 去重 + 截 3 条）
+  - 通用：有 `factory` / `factory_name` 参数 → 更新 `last_factory`
+  - 所有写操作 → `record_operation`（追加到 `operation_summary`，保留最近 10 次）
+- **触发时机**（用户定）：
+  - 写操作成功后自动更新（`confirm` 返回 `status=="applied"` 时）
+  - 每次对话结束自动摘要（暂未实现，预留接口 `record_operation`）
+- **容错**：全部方法 `try/except` 包死，失败 `logger.warning` 不抛异常（记忆是辅助设施，不能搞挂主流程）
+
+**集成到调度循环**：
+- `loop.py::run_dispatch` 新增可选参数 `session_id: str | None = None`
+  - 对话开始时，如果有 `session_id`，加载 L2 记忆并注入 system prompt：
+    ```python
+    sys_prompt = prompts.system_prompt(phase)
+    if session_id:
+        mem = OperationMemory(session_id)
+        l2_context = mem.get_context_for_prompt()
+        if l2_context:
+            sys_prompt += f"\n\n【最近操作上下文】\n{l2_context}"
+    ```
+  - 例："最近操作：3分钟前create_batch（thread_id=ETD0725）。上次线程 ID：ETD0725。"
+- `__init__.py::handle_message` 把 `session_id` 传给 `run_dispatch`
+- `__init__.py::confirm` 写操作成功后调 `OperationMemory.auto_update_after_write`
+
+**RAG 接口预留**：
+- `guide.py::_search_kb(question, top_k=3) -> list[tuple[str, dict]]`
+  - V1 实现：硬编码 `GUIDE_KB` + 关键词匹配
+  - V2 演进：替换为向量库 API（Chroma/Milvus/pgvector），当知识量 > 100 条时
+  - 替换时只改函数内部实现，外部调用（`ask_guide`）不变
+- `explain.py::_search_issue_kb(issue_types) -> dict[str, dict]`
+  - V1 实现：硬编码 `ISSUE_KB` 映射表
+  - V2 演进：同上
+  - 返回 `dict[type, entry]`（O(1) 查找），三个消费方（`_build_causes` / `_build_suggestions` / `_llm_payload`）零改动
+
+**测试**（`validation/dispatcher_memory_test.py`，6/6）：
+1. 基本读写：`load` / `update` 正确
+2. 自动更新路由：`auto_update_after_write` 按 tool 路由（`create_batch→last_thread_id`, `set_paths→recent_paths`）
+3. 操作摘要：`record_operation` 追加最近 10 次操作（最新在最后一个位置）
+4. 上下文注入：`get_context_for_prompt` 生成人话上下文（"最近操作：3分钟前create_batch..."）
+5. 持久化验证：重启后（新实例）数据仍在（SQLite 持久化）
+6. 集成测试：`handle_message` + `confirm` 端到端，L2 记忆自动更新（写操作确认后 `last_thread_id` 自动更新，下一轮对话可以引用"刚才"的批次）
+
+**全量回归**（27/27）：
+- `dispatcher_read_test.py`（8/8）+ `dispatcher_write_test.py`（8/8）+ `dispatcher_guide_test.py`（5/5）+ `dispatcher_memory_test.py`（6/6）
+- `chat_paths_test.py` 全绿（零回归）
+- `ui_api_test.py` 全绿（零回归）
 
 ## 7. 关键设计决策记录
 

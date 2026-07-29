@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""调度 Agent 操作指导工具：回答操作员"怎么用""为什么""最佳实践"类问题。
+"""操作指导问答工具（知识库 + LLM 问答）。
+
+知识库检索接口 _search_kb 预留 RAG 替换能力：
+- V1（当前）：硬编码 GUIDE_KB + 关键词匹配
+- V2（未来）：替换为向量库 API（当知识量 > 100 条时）
+替换时只需改 _search_kb 内部实现，外部调用不变。
 
 铁律落点：**回答内容只来自知识库 GUIDE_KB，LLM 只负责措辞润色**。
 实现机制上把这条铁律做成了结构性约束——LLM 的输出契约只有
@@ -114,7 +119,14 @@ _GUIDE_PROMPT = r"""你是操作指导助手，服务于供应链单证提取流
 # ---------------------------------------------------------------------------
 
 def _search_kb(question: str, top_k: int = 3) -> list[tuple[str, dict]]:
-    """按关键词匹配检索知识库，返回命中的 (key, entry) 列表，按 priority 排序取前 top_k。
+    """检索知识库条目（V1 用关键词匹配，V2 替换为 RAG）。
+
+    返回匹配的条目列表（按 priority 排序，取前 top_k 条）。
+    每个条目为 (key, entry) 元组，entry 包含 {keywords, title, content, priority}。
+
+    V1 实现：硬编码 GUIDE_KB + 关键词匹配。
+    V2 演进：替换为向量库 API 调用（Chroma/Milvus/pgvector），
+    当知识量 > 100 条时切换。替换时只需改函数内部实现，外部调用不变。
 
     匹配规则：question 包含 entry.keywords 中任一 keyword 即命中（大小写不敏感）。
     未命中任何条目时返回包含通用模板的列表（保证永远有内容可回答）。
