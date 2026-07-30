@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from typing import Callable
 
 from app.dispatcher import prompts, sessions
 from app.dispatcher.sessions import DispatcherSession
@@ -192,7 +193,8 @@ def _tool_message(call: dict, content: str) -> dict:
 
 
 def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
-                 session_id: str | None = None) -> dict:
+                 session_id: str | None = None,
+                 on_progress: Callable[[dict], None] | None = None) -> dict:
     """调度主循环：LLM 步进 → 工具执行/拦截 → 回喂，直到最终回复或确认门。
 
     返回三种形态之一：
@@ -220,12 +222,16 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
                 + [{"role": "user", "content": message}])
 
     for _round in range(MAX_ROUNDS):
+        if on_progress:
+            on_progress({"type": "llm_thinking", "round": _round + 1})
         step = llm_step(messages, phase=phase)
 
         # 无工具调用：最终回复，记一轮对话后返回
         if not step["tool_calls"]:
             final_text = step["final_text"] or "（无回复内容）"
             sessions.record_turn(session, message, final_text)
+            if on_progress:
+                on_progress({"type": "final", "message": final_text})
             return {"status": "ok", "message": final_text}
 
         # 有工具调用：先把 assistant 消息回写进上下文，再逐个处理
@@ -237,6 +243,9 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
 
             # 哨兵：native 模式参数 JSON 解析失败，回喂让模型重新调用
             if name == "__parse_error__":
+                if on_progress:
+                    on_progress({"type": "tool_error", "tool": name,
+                                 "error": "工具参数 JSON 解析失败"})
                 messages.append(_tool_message(
                     call, "工具参数 JSON 解析失败，请重新调用。"
                           f"原始输出：{str(call['args'].get('raw', ''))[:500]}"))
@@ -245,18 +254,27 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
             # 未知工具 / 当前 phase 不可见：回喂错误，绝不执行
             tool = TOOLS.get(name)
             if tool is None or name not in visible:
+                if on_progress:
+                    on_progress({"type": "tool_error", "tool": name,
+                                 "error": f"未知工具：{name}"})
                 messages.append(_tool_message(
                     call, f"未知工具：{name}。请从可用工具清单中选择。"))
                 continue
 
             args, arg_error = validate_args(call["args"], tool.parameters)
             if arg_error:
+                if on_progress:
+                    on_progress({"type": "tool_error", "tool": name,
+                                 "error": arg_error})
                 messages.append(_tool_message(
                     call, f"工具 {name} 参数错误：{arg_error}。请修正后重新调用。"))
                 continue
 
             if tool.risk == "write":
                 # 确认门：写工具绝不在这里执行——预览 + 存 pending + 循环立即终止
+                if on_progress:
+                    on_progress({"type": "tool_call", "tool": name,
+                                 "args_summary": _args_summary(args)})
                 try:
                     preview = tool.preview(args)
                 except Exception as exc:  # preview 契约未保证不抛，兜底回喂
@@ -283,6 +301,11 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
                 if ignored:
                     text += f"\n（本轮其余 {ignored} 个工具调用已忽略，确认后请重新发起。）"
                 sessions.record_turn(session, message, text)
+                if on_progress:
+                    on_progress({"type": "pending_confirmation",
+                                 "tool": name, "preview": action["preview_lines"],
+                                 "message": text, "action": action,
+                                 "warnings": action["warnings"]})
                 return {"status": "pending_confirmation",
                         "action": action,
                         "preview": action["preview_lines"],
@@ -290,14 +313,22 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
                         "warnings": action["warnings"]}
 
             # 只读工具：直接执行（func 契约内部不抛异常，错误走 {"error": ...}）
+            if on_progress:
+                on_progress({"type": "tool_call", "tool": name,
+                             "args_summary": _args_summary(args)})
             result = tool.func(args)
             sessions.record_tool(session, tool=name,
                                  args_summary=_args_summary(args),
                                  result_summary=_result_summary(result))
+            if on_progress:
+                on_progress({"type": "tool_result", "tool": name,
+                             "result_summary": _result_summary(result)})
             messages.append(_tool_message(
                 call, json.dumps(result, ensure_ascii=False, default=str)[:TOOL_RESULT_CAP]))
 
     # 超轮兜底：多半是模型反复调工具不收敛，引导操作员拆小问题
+    if on_progress:
+        on_progress({"type": "final", "message": "处理步骤过多，请把问题拆小一点再问。"})
     return {"status": "ok", "message": "处理步骤过多，请把问题拆小一点再问。"}
 
 
