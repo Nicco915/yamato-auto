@@ -15,19 +15,24 @@ from app.dispatcher import sessions as _sessions
 from app.dispatcher.loop import execute_confirmed, run_dispatch
 
 
-def handle_message(message: str, session_id: str | None = None, *, phase: int = 2) -> dict:
+def handle_message(message: str, session_id: str | None = None, *, phase: int = 2,
+                   on_progress=None) -> dict:
     """对话主入口（确认前）。session_id 缺省为临时会话（不落进程内会话表）。
 
     session_id 提供时：
     - L1 会话记忆（进程内 dict）：多轮对话 history
     - L2 操作记忆（SQLite 持久化）：last_thread_id / recent_paths / 操作摘要
       注入 system prompt，让 agent 知道"刚才"在做什么
+
+    on_progress 可选回调：fn({"type": "llm_thinking"|"tool_call"|"tool_result"|
+    "tool_error"|"pending_confirmation"|"final", ...})，用于 SSE 流式推送。
     """
     if not message or not message.strip():
         return {"status": "error", "message": "message 不能为空"}
     session = (_sessions.get_session(session_id) if session_id
                else _sessions.DispatcherSession())
-    result = run_dispatch(message, session, phase=phase, session_id=session_id)
+    result = run_dispatch(message, session, phase=phase, session_id=session_id,
+                          on_progress=on_progress)
     if session_id:
         result["session_id"] = session_id
     return result
