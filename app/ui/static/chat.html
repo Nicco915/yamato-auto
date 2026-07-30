@@ -2,7 +2,7 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<title>Agent 对话配置</title>
+<title>调度 Agent 对话</title>
 <link rel="stylesheet" href="/ui/static/ui.css">
 <style>
   /* ---------- 本页专用：聊天气泡 ---------- */
@@ -13,11 +13,6 @@
     font-size: 13px;
     line-height: 1.7;
   }
-  .tid-row { display: flex; align-items: center; gap: 10px; }
-  .tid-row label { font-size: 13px; color: #4b5563; white-space: nowrap; }
-  .tid-row input { width: 320px; }
-  .tid-row .hint { font-size: 12px; color: var(--muted); }
-
   #msgs {
     display: flex;
     flex-direction: column;
@@ -68,6 +63,21 @@
   }
   .preview-actions { margin-top: 10px; display: flex; gap: 10px; }
 
+  /* ---------- 进度气泡 ---------- */
+  .progress-bubble {
+    animation: pulse-border 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse-border {
+    0%, 100% { border-color: #93c5fd; }
+    50% { border-color: #2563eb; }
+  }
+  .progress-think { color: #6b7280; font-style: italic; }
+  .progress-tool { color: #2563eb; font-weight: 500; }
+  .progress-tool::before { content: "🔧 "; }
+  .progress-result { color: #059669; font-size: 12px; padding-left: 8px; }
+  .progress-result::before { content: "  "; }
+  .progress-error { color: #dc2626; font-size: 12px; padding-left: 8px; }
+
   .input-row { display: flex; gap: 10px; align-items: flex-end; }
   #inp {
     flex: 1;
@@ -88,16 +98,7 @@
 <div class="page chat-page">
   <!-- 说明条 -->
   <div class="card info-bar">
-    与提取 Agent 对话修改路径配置。仅授权三项：上游工厂文件夹 / 下游装箱表 / GT 基准文件。修改会写入 .env 并立即生效；携带批次号时当前批次将重跑。
-  </div>
-
-  <!-- thread_id 输入行 -->
-  <div class="card">
-    <div class="tid-row">
-      <label for="tid">关联批次 thread_id</label>
-      <input type="text" id="tid" placeholder="例如 batch-20260728-001">
-      <span class="hint">留空 = 只对后续批次生效</span>
-    </div>
+    与调度 Agent 对话，管理批次全流程：查批次、解释错误、发起/重跑/审核。只读操作即时响应，写操作需确认后执行。
   </div>
 
   <!-- 消息流区 -->
@@ -165,7 +166,47 @@ function addAgentText(text, extraClass) {
   return b;
 }
 
-/* ================= 发送消息（第一段：解析+预览） ================= */
+/* ================= 进度气泡（动态更新） ================= */
+let progressBubble = null;       // 当前进行中的气泡 DOM
+let progressLines = [];          // 已显示的状态行（text + class）
+
+function ensureProgressBubble() {
+  if (progressBubble) return progressBubble;
+  progressBubble = addBubble("agent");
+  progressBubble.classList.add("progress-bubble");
+  progressLines = [];
+  return progressBubble;
+}
+
+function updateProgress(text, cssClass) {
+  const b = ensureProgressBubble();
+  progressLines.push({ text, cls: cssClass || "" });
+  b.innerHTML = progressLines.map(l =>
+    `<div class="${l.cls}">${escHtml(l.text)}</div>`
+  ).join("");
+  scrollBottom();
+}
+
+function finishProgress(finalText) {
+  if (progressBubble) {
+    progressBubble.classList.remove("progress-bubble");
+    progressBubble.innerHTML = escHtml(finalText);
+    history.push({ role: "agent", text: finalText });
+    const b = progressBubble;
+    progressBubble = null;
+    progressLines = [];
+    return b;
+  }
+  return addAgentText(finalText || "（无回复内容）");
+}
+
+function escHtml(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+/* ================= 发送消息（SSE 流式） ================= */
 async function send() {
   if (sending) return;
   const inp = $("inp");
@@ -178,18 +219,49 @@ async function send() {
   $("btn-send").disabled = true;
 
   addUserMsg(text);
-  const thinking = addAgentText("思考中…");
 
   try {
-    const data = await api("/api/v1/agent/chat", {
+    const resp = await fetch("/api/v1/dispatcher/chat/stream", {
       method: "POST",
-      body: { message: text, session_id: sessionId },
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text, session_id: sessionId }),
     });
-    thinking.remove();
-    handleResponse(data);
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "未知错误");
+      throw new Error(resp.status + " " + errText);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      // 按 \n\n 分割 SSE 事件
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop();  // 最后一个可能不完整，留到下次
+
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line || !line.startsWith("data: ")) continue;
+        const jsonStr = line.slice(6);  // 去掉 "data: "
+        let event;
+        try { event = JSON.parse(jsonStr); } catch (e) { continue; }
+        handleSSEEvent(event);
+      }
+    }
   } catch (e) {
-    thinking.textContent = "请求失败：" + e.message;
-    thinking.style.color = "#dc2626";
+    if (progressBubble) {
+      progressBubble.innerHTML = '<span style="color:#dc2626">请求失败：' + escHtml(e.message) + '</span>';
+      progressBubble.classList.remove("progress-bubble");
+      progressBubble = null;
+    } else {
+      addAgentText("请求失败：" + e.message);
+    }
   } finally {
     sending = false;
     inp.disabled = false;
@@ -199,37 +271,70 @@ async function send() {
   }
 }
 
-function handleResponse(data) {
-  const status = data && data.status;
-  if (status === "rejected") {
-    const b = addBubble("agent");
-    const msg = document.createElement("div");
-    msg.textContent = data.message || "指令被拒绝，未执行任何操作。";
-    b.appendChild(msg);
-    // errors 字段防御式：可能不存在
-    const errs = Array.isArray(data.errors) ? data.errors : [];
-    errs.forEach((err) => {
-      const line = document.createElement("div");
-      line.className = "err-line";
-      line.textContent = "· " + err;
-      b.appendChild(line);
-    });
-    history.push({ role: "agent", text: data.message || "" });
-    scrollBottom();
-  } else if (status === "pending_confirmation") {
-    renderConfirmation(data);
-  } else {
-    addAgentText((data && data.message) || "（无回复内容）");
+function handleSSEEvent(event) {
+  const type = event.type;
+  switch (type) {
+    case "llm_thinking":
+      updateProgress("正在思考…（第 " + event.round + " 轮）", "progress-think");
+      break;
+
+    case "tool_call":
+      updateProgress("正在调用 " + event.tool + "…", "progress-tool");
+      break;
+
+    case "tool_result":
+      updateProgress("✓ " + event.tool + " 完成", "progress-result");
+      break;
+
+    case "tool_error":
+      updateProgress("✗ " + event.tool + "：" + (event.error || "未知错误"), "progress-error");
+      break;
+
+    case "pending_confirmation": {
+      // 进度气泡固化为最终回复
+      const b = finishProgress(event.message || "");
+      // 渲染确认卡
+      renderConfirmation(event, b);
+      break;
+    }
+
+    case "final":
+      finishProgress(event.message || "（无回复内容）");
+      break;
+
+    case "done":
+      // 如果还没 final（兜底），用 done 的 message
+      if (progressBubble) {
+        finishProgress(event.message || "（无回复内容）");
+      }
+      // 保存 session_id
+      if (event.session_id) {
+        sessionId = event.session_id;
+      }
+      break;
+
+    case "applied":
+      // confirm 执行结果
+      finishProgress(event.message || event.result?.message || "已执行");
+      break;
+
+    case "error":
+      finishProgress("错误：" + (event.message || "未知错误"));
+      break;
+
+    default:
+      // 未知事件类型，忽略
+      break;
   }
 }
 
 /* ================= 预览卡 + 确认/取消（第二段） ================= */
-function renderConfirmation(data) {
-  const b = addBubble("agent");
+function renderConfirmation(data, srcBubble) {
+  const b = srcBubble || addBubble("agent");
 
   const reply = document.createElement("div");
   reply.textContent = (data.action && data.action.reply) || data.message || "请确认以下变更：";
-  b.appendChild(reply);
+  if (!srcBubble) b.appendChild(reply);
 
   // 预览卡：preview 数组逐行，等宽字体，原样保留换行
   const card = document.createElement("div");
@@ -243,7 +348,7 @@ function renderConfirmation(data) {
   });
   b.appendChild(card);
 
-  // 异平台警告（防御式：可能无 warnings 字段）
+  // 警告（防御式：可能无 warnings 字段）
   const warns = Array.isArray(data.warnings) ? data.warnings : [];
   warns.forEach((w) => {
     const line = document.createElement("div");
@@ -251,15 +356,6 @@ function renderConfirmation(data) {
     line.textContent = "⚠ " + w;
     b.appendChild(line);
   });
-
-  if (data.message && data.action && data.action.reply) {
-    const note = document.createElement("div");
-    note.className = "muted";
-    note.style.fontSize = "12px";
-    note.style.marginTop = "6px";
-    note.textContent = data.message;
-    b.appendChild(note);
-  }
 
   const actions = document.createElement("div");
   actions.className = "preview-actions";
@@ -275,27 +371,56 @@ function renderConfirmation(data) {
 
   const lock = () => { btnOk.disabled = true; btnNo.disabled = true; };
 
-  btnOk.onclick = () => { lock(); confirmApply(data.action, b); };
-  btnNo.onclick = () => { lock(); addAgentText("已取消，未执行任何修改。"); };
+  btnOk.onclick = () => { lock(); confirmApply(data.action || data, b); };
+  btnNo.onclick = () => { lock(); addAgentText("已取消，未执行任何操作。"); };
 
   history.push({ role: "agent", text: reply.textContent });
   scrollBottom();
 }
 
-/* ================= 确认执行（写 .env + 可选重跑） ================= */
+/* ================= 确认执行（调度 Agent 确认门） ================= */
 async function confirmApply(action, srcBubble) {
-  const tid = $("tid").value.trim();
   const body = { confirm: true, action: action, session_id: sessionId };
-  if (tid) body.thread_id = tid;
 
-  const thinking = addAgentText("正在写入配置…");
+  const thinking = addAgentText("正在执行…");
   try {
-    const data = await api("/api/v1/agent/chat", {
+    const resp = await fetch("/api/v1/dispatcher/chat/stream", {
       method: "POST",
-      body: body,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
     });
-    thinking.remove();
-    renderApplied(data, tid);
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "未知错误");
+      throw new Error(resp.status + " " + errText);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop();
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line || !line.startsWith("data: ")) continue;
+        const jsonStr = line.slice(6);
+        let event;
+        try { event = JSON.parse(jsonStr); } catch (e) { continue; }
+
+        if (event.type === "applied") {
+          thinking.remove();
+          renderApplied(event, null);
+        } else if (event.type === "error") {
+          thinking.remove();
+          addAgentText("执行失败：" + (event.message || "未知错误"));
+        }
+      }
+    }
   } catch (e) {
     thinking.textContent = "执行失败：" + e.message;
     thinking.style.color = "#dc2626";
@@ -306,52 +431,22 @@ async function confirmApply(action, srcBubble) {
 function renderApplied(data, tid) {
   const b = addBubble("agent");
 
-  const applied = data.applied && typeof data.applied === "object" ? data.applied : {};
-  const keys = Object.keys(applied);
   const head = document.createElement("div");
-  head.textContent = keys.length ? "已生效：" : "已生效（无变更项返回）。";
+  head.textContent = "已执行：" + (data.tool || "操作") + " 完成";
   b.appendChild(head);
-  keys.forEach((k) => {
-    const line = document.createElement("div");
-    line.className = "mono";
-    line.style.fontSize = "12px";
-    line.textContent = k + "=" + applied[k];
-    b.appendChild(line);
-  });
 
-  if (data.env_file) {
-    const envLine = document.createElement("div");
-    envLine.className = "muted";
-    envLine.style.fontSize = "12px";
-    envLine.style.marginTop = "4px";
-    envLine.textContent = "配置已写入 " + data.env_file;
-    b.appendChild(envLine);
-  }
-
-  const warns = Array.isArray(data.warnings) ? data.warnings : [];
-  warns.forEach((w) => {
-    const line = document.createElement("div");
-    line.className = "warn-line";
-    line.textContent = "⚠ " + w;
-    b.appendChild(line);
-  });
-
-  // 重跑结果（仅携带 thread_id 时存在）
-  if (data.rerun) {
-    const rr = document.createElement("div");
-    rr.style.marginTop = "8px";
-    if (data.rerun.status === "pending_human_review") {
-      rr.textContent = "批次已用新路径重跑，当前挂起待人工审核。";
-      b.appendChild(rr);
-      const link = document.createElement("a");
-      link.className = "btn btn-primary btn-sm";
-      link.style.marginTop = "6px";
-      link.href = "/review?thread_id=" + encodeURIComponent(tid);
-      link.textContent = "去审核";
-      b.appendChild(link);
-    } else {
-      rr.textContent = data.rerun.message || "批次已重跑。";
-      b.appendChild(rr);
+  // 显示结果摘要
+  if (data.result && typeof data.result === "object") {
+    const keys = Object.keys(data.result);
+    if (keys.length) {
+      keys.forEach((k) => {
+        const line = document.createElement("div");
+        line.className = "mono";
+        line.style.fontSize = "12px";
+        const v = data.result[k];
+        line.textContent = k + "=" + (typeof v === "object" ? JSON.stringify(v) : v);
+        b.appendChild(line);
+      });
     }
   }
 
@@ -382,13 +477,7 @@ $("btn-new-session").onclick = () => {
 
 /* ================= 初始化 ================= */
 renderTopbar("chat");
-const initTid = new URLSearchParams(location.search).get("thread_id") || "";
-$("tid").value = initTid;
-if (initTid) {
-  addAgentText("当前关联批次：" + initTid + "。改路径确认后该批次将自动重跑。");
-} else {
-  addAgentText("未关联批次，修改只对后续批次生效。如需关联批次，请在上方填入 thread_id，或通过 /chat?thread_id=批次号 打开本页。");
-}
+addAgentText("你好！我是调度助手，可以帮你查批次、解释错误、发起/重跑/审核批次。直接告诉我你想做什么。");
 $("inp").focus();
 </script>
 </body>
