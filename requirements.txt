@@ -23,7 +23,9 @@ python-dotenv>=1.0
 rapidfuzz>=3.9
 openpyxl>=3.1
 openai>=1.30           # SiliconFlow 兼容 OpenAI SDK
+pinecone>=6.0          # 调度 Agent RAG 向量库（KB_BACKEND=pinecone 时需要）
 
 # 数据处理（系统已装，此处仅声明）
 pandas>=2.0
 pymupdf>=1.24
+xlrd>=2.0            # 旧版 .xls 读取（pandas engine，见 extraction/excel_channel.py）

@@ -43,6 +43,22 @@ class Settings(BaseSettings):
     # ----- 提取引擎开关：1 = 强制 mock（冒烟测试用，不依赖真实 LLM）-----
     extraction_mock: bool = False
 
+    # ----- RAG 知识库（调度 Agent V2 检索，见 agent设计/rag设计.md）-----
+    # keyword = 硬编码 KB + 关键词匹配（V1，默认，无需任何 key）；
+    # pinecone = 向量检索，失败自动回落 keyword
+    kb_backend: str = "keyword"
+    pinecone_api_key: str = ""
+    pinecone_index: str = "yamato-dispatcher"
+    pinecone_cloud: str = "aws"        # serverless 规格，建索引时用
+    pinecone_region: str = "us-east-1"  # 免费档区域
+    # Embedding 独立密钥：聊天模型走阿里云百炼 token-plan 代理（不支持 embeddings），
+    # 向量计算走硅基流动 Qwen3-Embedding，与 SILICONFLOW_API_KEY 不共用
+    embedding_api_key: str = ""
+    embedding_base_url: str = "https://api.siliconflow.cn/v1"
+    embedding_model: str = "Qwen/Qwen3-Embedding-0.6B"
+    embedding_dimensions: int = 1024   # 必须与 Pinecone 索引维度一致
+    rag_min_score: float = 0.5         # cosine 相似度阈值，低于视为未命中
+
     # ----- 业务阈值 -----
     weight_diff_warn_ratio: float = 0.05  # 与历史单重差异超过 5% 标记 Warning
     fuzzy_match_score_cutoff: float = 40.0  # rapidfuzz 匹配最低分

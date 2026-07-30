@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 """批次错误翻译工具（规则表 + LLM 翻译）。
 
-知识库检索接口 _search_issue_kb 预留 RAG 替换能力：
-- V1（当前）：硬编码 ISSUE_KB 映射表
-- V2（未来）：替换为向量库 API（当错误案例 > 100 条时）
-替换时只需改 _search_issue_kb 内部实现，外部调用不变。
+知识库检索接口 _search_issue_kb 双后端（V1/V2 共存，对外签名不变）：
+- V1（默认）：硬编码 ISSUE_KB 映射表，按 type 精确查表
+- V2：已知 type 仍走精确查表（确定性场景不需要向量）；**未知 type**
+  用向量检索 issue namespace 找最近邻条目（KB_BACKEND=pinecone，
+  见 agent设计/rag设计.md），未命中或任何失败回落通用模板
+替换/升级只需改 _search_issue_kb 内部实现，外部调用不变。
 
 铁律落点：**建议动作只来自代码规则表 ISSUE_KB，LLM 禁止发明动作**。
 实现机制上把这条铁律做成了结构性约束——LLM 的输出契约只有
@@ -330,22 +332,49 @@ def _merge_error_item(material: dict, entry: dict) -> None:
 # 第二部分：知识库检索接口（V1 硬编码映射，V2 替换为 RAG）
 # ---------------------------------------------------------------------------
 
+def _issue_entry_from_metadata(md: dict) -> dict:
+    """把 Pinecone metadata 还原为 ISSUE_KB 条目结构（RAG 命中未知 type 时用）。"""
+    try:
+        suggest = json.loads(md.get("suggest_json") or "[]")
+    except (TypeError, ValueError):
+        suggest = []
+    return {
+        "title": md.get("title", ""),
+        "explain": md.get("explain", ""),
+        "severity": md.get("severity", "mid"),
+        "suggest": suggest,
+    }
+
+
 def _search_issue_kb(issue_types: list[str]) -> dict[str, dict]:
-    """检索错误案例知识库（V1 用硬编码映射，V2 替换为 RAG）。
+    """检索错误案例知识库（V1 精确查表 / V2 未知 type 向量检索）。
 
     根据问题类型列表检索匹配的知识库条目。返回按 type 索引的字典，
     每个条目包含 {title, explain, severity, suggest}。
 
-    V1 实现：硬编码 ISSUE_KB 映射表，按 type 直接查表。
-    V2 演进：替换为向量库 API（当错误案例 > 100 条时），
-    替换时只需改函数内部实现，外部调用不变。
+    已知 type：走硬编码 ISSUE_KB 精确映射（确定性场景不需要向量）。
+    未知 type：KB_BACKEND=pinecone 时用 type 文本查 issue namespace，
+    命中（score ≥ RAG_MIN_SCORE）采用最近邻条目；未命中或任何失败
+    走通用模板 _GENERIC_KB（severity=mid，建议=人工核查）。
 
-    未收录 type 走通用模板 _GENERIC_KB（severity=mid，建议=人工核查）。
     返回 dict[type, entry] 供 _build_causes / _build_suggestions / _llm_payload 使用。
     """
+    from app.dispatcher import rag  # 延迟 import：无 key 环境不影响 V1
+
+    use_rag = rag.backend_enabled()
     kb_map: dict[str, dict[str, Any]] = {}
     for type_ in issue_types:
-        kb_map[type_] = ISSUE_KB.get(type_, _GENERIC_KB)
+        if type_ in ISSUE_KB:
+            kb_map[type_] = ISSUE_KB[type_]
+            continue
+        entry: dict[str, Any] | None = None
+        if use_rag:
+            hits = rag.query_namespace("issue", type_, top_k=1)
+            if hits:
+                entry = _issue_entry_from_metadata(hits[0]["metadata"])
+        kb_map[type_] = entry if entry is not None else _GENERIC_KB
+        if entry is None:
+            rag.log_curation(type_, source="issue")
     return kb_map
 
 
@@ -385,7 +414,8 @@ def _build_causes(material: dict, cause_notes: dict[str, str],
             explanation = f"{explanation}（本批次共 {len(issues)} 条相关反馈）"
         causes.append({
             "type": type_,
-            "title": kb["title"] if type_ in ISSUE_KB else f"{_GENERIC_KB['title']}（{type_}）",
+            # RAG 命中的未知 type 用检索到的条目标题；通用模板才拼 type 后缀
+            "title": kb["title"] if kb is not _GENERIC_KB else f"{_GENERIC_KB['title']}（{type_}）",
             "explanation": explanation,
             "evidence_files": sorted({i["file"] for i in issues if i["file"]}),
             "affected_skus": [],

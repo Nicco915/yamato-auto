@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """操作指导问答工具（知识库 + LLM 问答）。
 
-知识库检索接口 _search_kb 预留 RAG 替换能力：
-- V1（当前）：硬编码 GUIDE_KB + 关键词匹配
-- V2（未来）：替换为向量库 API（当知识量 > 100 条时）
-替换时只需改 _search_kb 内部实现，外部调用不变。
+知识库检索接口 _search_kb 双后端（V1/V2 共存，对外签名不变）：
+- V1（默认）：硬编码 GUIDE_KB + 关键词匹配（KB_BACKEND=keyword）
+- V2：Pinecone 向量检索（KB_BACKEND=pinecone，见 agent设计/rag设计.md），
+  未命中或任何失败自动回落 V1；最终仍无命中记入待策展队列
+替换/升级只需改 _search_kb 内部实现，外部调用不变。
 
 铁律落点：**回答内容只来自知识库 GUIDE_KB，LLM 只负责措辞润色**。
 实现机制上把这条铁律做成了结构性约束——LLM 的输出契约只有
@@ -118,19 +119,41 @@ _GUIDE_PROMPT = r"""你是操作指导助手，服务于供应链单证提取流
 # 第一部分：知识库检索（纯代码，按 keywords 匹配 + priority 排序）
 # ---------------------------------------------------------------------------
 
+def _entry_from_metadata(md: dict) -> dict:
+    """把 Pinecone metadata 还原为 GUIDE_KB 条目结构（RAG 命中时用）。"""
+    return {
+        "keywords": md.get("keywords") or [],
+        "title": md.get("title", ""),
+        "content": md.get("content", ""),
+        "priority": int(md.get("priority", 99)),
+    }
+
+
 def _search_kb(question: str, top_k: int = 3) -> list[tuple[str, dict]]:
-    """检索知识库条目（V1 用关键词匹配，V2 替换为 RAG）。
+    """检索知识库条目（V1 关键词匹配 / V2 向量检索，见 rag设计.md）。
 
     返回匹配的条目列表（按 priority 排序，取前 top_k 条）。
     每个条目为 (key, entry) 元组，entry 包含 {keywords, title, content, priority}。
 
-    V1 实现：硬编码 GUIDE_KB + 关键词匹配。
-    V2 演进：替换为向量库 API 调用（Chroma/Milvus/pgvector），
-    当知识量 > 100 条时切换。替换时只需改函数内部实现，外部调用不变。
+    V2（KB_BACKEND=pinecone）：问题 embed 后查 guide namespace，
+    命中（score ≥ RAG_MIN_SCORE）直接返回；未命中或任何失败回落 V1。
+    V1：question 包含 entry.keywords 中任一 keyword 即命中（大小写不敏感）。
 
-    匹配规则：question 包含 entry.keywords 中任一 keyword 即命中（大小写不敏感）。
-    未命中任何条目时返回包含通用模板的列表（保证永远有内容可回答）。
+    兜底：完全没命中 → 返回通用模板（保证永远有内容可回答），
+    并把问题记入待策展队列（rag.log_curation，人工确认后才进知识库）。
     """
+    from app.dispatcher import rag  # 延迟 import：无 key 环境不影响 V1
+
+    # ---- V2：向量检索 ----
+    if rag.backend_enabled():
+        hits = rag.query_namespace("guide", question, top_k=top_k)
+        if hits:
+            return [
+                (m["id"].split(".", 1)[-1], _entry_from_metadata(m["metadata"]))
+                for m in hits
+            ]
+
+    # ---- V1：关键词匹配 ----
     q = question.lower()
     hits: list[tuple[str, dict, int]] = []
     for key, entry in GUIDE_KB.items():
@@ -143,9 +166,10 @@ def _search_kb(question: str, top_k: int = 3) -> list[tuple[str, dict]]:
     hits.sort(key=lambda x: x[2])
     top_hits = [(key, entry) for key, entry, _ in hits[:top_k]]
 
-    # 兜底：完全没命中 → 返回通用模板
+    # 兜底：完全没命中 → 返回通用模板 + 记待策展队列
     if not top_hits:
         top_hits = [("_generic", _GENERIC_GUIDE)]
+        rag.log_curation(question, source="guide")
 
     return top_hits
 

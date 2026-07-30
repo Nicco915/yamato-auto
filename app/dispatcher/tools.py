@@ -336,6 +336,201 @@ def _exec_set_paths(args: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# curate_kb 写工具（RAG 策展：队列排查 → 去重聚类 → 人工确认 → LLM 起草 → 入库）
+# ---------------------------------------------------------------------------
+
+_CURATE_PROMPT = r"""你是知识库策展助手。下面是多个操作员提出的相似问题（同一簇），
+请为知识库起草一条候选条目。
+
+## 簇的问题列表
+{questions}
+
+## 任务
+根据问题类型（操作指引 guide / 错误案例 issue），输出对应的 JSON 结构：
+
+如果是 **操作指引类（guide）**：
+{{"category": "guide", "key": "英文蛇形关键词", "entry": {{"keywords": ["中文关键词1", "关键词2"], "title": "中文标题", "content": "中文回答内容", "priority": 5}}}}
+
+如果是 **错误案例类（issue）**：
+{{"category": "issue", "key": "英文蛇形 TYPE 名（建议 ISSUE_XXX 格式）", "entry": {{"title": "中文标题", "explain": "错误原因解释", "severity": "high|mid|low", "suggest": [{{"action": "英文 action 名", "label": "中文建议标签", "tool": null, "args_hint": {{}}}}]}}}}
+
+## 铁律
+1. key 必须是英文蛇形（如 how_to_check_sku），不能含中文或空格；
+2. content/explain 必须基于簇中的实际问题，不得编造不存在的功能或场景；
+3. 只输出 JSON，不要任何额外文字。"""
+
+
+def _cluster_questions(items: list[dict]) -> list[dict]:
+    """向量聚类：返回 [{questions, representative, suggested_category}]。"""
+    from app.dispatcher import rag
+
+    questions = [it["question"] for it in items]
+    vecs = rag.embed_texts(questions)
+    if vecs is None:
+        # embed 不可用：每个问题单独成簇
+        return [{"questions": [it["question"]], "representative": it["question"],
+                 "suggested_category": "guide"} for it in items]
+
+    # 简单贪心聚类：cosine > 0.75 归为一簇
+    clusters: list[dict] = []
+    assigned: set[int] = set()
+    for i, it in enumerate(items):
+        if i in assigned:
+            continue
+        assigned.add(i)
+        cluster_qs = [it["question"]]
+        for j in range(i + 1, len(items)):
+            if j in assigned:
+                continue
+            score = _cosine_sim(vecs[i], vecs[j])
+            if score > 0.75:
+                cluster_qs.append(items[j]["question"])
+                assigned.add(j)
+        # 来源最多的类别作为建议类别
+        cluster_sources = [it["source"] for it in items
+                          if it["question"] in cluster_qs]
+        cat = "issue" if cluster_sources.count("issue") > cluster_sources.count("guide") \
+              else "guide"
+        clusters.append({
+            "questions": cluster_qs,
+            "representative": cluster_qs[0],
+            "suggested_category": cat,
+        })
+    return clusters
+
+
+def _cosine_sim(a: list[float], b: list[float]) -> float:
+    import math
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a)) or 1.0
+    nb = math.sqrt(sum(x * x for x in b)) or 1.0
+    return dot / (na * nb)
+
+
+def _preview_curate_kb(args: dict) -> dict:
+    """curate_kb 预览：读队列 → 聚类 → 查现有 KB 去重 → 结构化预览。"""
+    try:
+        from app.dispatcher import rag
+
+        max_items = int(args.get("max_items", 50))
+        items = rag.read_curation_queue(max_items)
+        if not items:
+            return _preview("待策展队列为空，无需排查", [],
+                           ["目前没有待策展的未命中问题"])
+
+        clusters = _cluster_questions(items)
+        lines: list[str] = []
+        warnings: list[str] = []
+
+        for idx, cl in enumerate(clusters):
+            rep = cl["representative"]
+            count = len(cl["questions"])
+            cat = cl["suggested_category"]
+            lines.append(f"[簇 {idx}] 出现 {count} 次 | 类别: {cat} | 代表: {rep}")
+
+            # 查重：代表问题在现有 KB 两个 namespace 中检索
+            guide_hits = rag.query_namespace("guide", rep, top_k=1, min_score=0.7)
+            issue_hits = rag.query_namespace("issue", rep, top_k=1, min_score=0.7)
+            near = guide_hits or issue_hits
+            if near:
+                hit = near[0]
+                lines.append(f"  ⚠ 已有近似条目: {hit['id']}（score={hit['score']:.2f}，建议跳过）")
+            else:
+                lines.append(f"  ✅ 无近似条目，建议新增 {cat} 条目")
+                if cat == "guide":
+                    lines.append("  📝 LLM 将起草: title/keywords/content")
+                else:
+                    lines.append("  📝 LLM 将起草: title/explain/severity/suggest")
+
+        total = len(items)
+        summary = (f"待策展队列共 {total} 条，去重后 {len(clusters)} 个问题簇"
+                   if total > 0 else "待策展队列为空")
+        return _preview(summary, lines, warnings)
+    except Exception as e:  # noqa: BLE001
+        return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
+
+
+def _exec_curate_kb(args: dict) -> dict:
+    """curate_kb 执行：LLM 起草 → 写入 kb_extension.json → 灌库 → 清队列。"""
+    try:
+        from app.dispatcher import rag
+        from app.extraction import llm_client
+
+        confirmed = args.get("confirmed_clusters") or []
+        if not isinstance(confirmed, list) or not confirmed:
+            return {"error": "confirmed_clusters 为空，未执行任何操作"}
+
+        max_items = int(args.get("max_items", 50))
+        items = rag.read_curation_queue(max_items)
+        if not items:
+            return {"error": "待策展队列为空"}
+
+        clusters = _cluster_questions(items)
+        drafted: dict[str, dict] = {"guide": {}, "issue": {}}
+        removed_questions: set[str] = set()
+
+        for ci in confirmed:
+            if not isinstance(ci, int) or ci < 0 or ci >= len(clusters):
+                continue
+            cl = clusters[ci]
+            cat = cl["suggested_category"]
+            qs_text = "\n".join(f"- {q}" for q in cl["questions"])
+            prompt = _CURATE_PROMPT.replace("{questions}", qs_text)
+
+            try:
+                raw = llm_client.chat_completion(
+                    [{"role": "user", "content": prompt}],
+                    json_mode=True, source_file="curate_kb", max_tokens=1024,
+                )
+                draft = json.loads(raw)
+            except Exception as exc:  # noqa: BLE001
+                return {"error": f"LLM 起草簇 {ci} 失败: {exc}"}
+
+            if not isinstance(draft, dict):
+                return {"error": f"簇 {ci} LLM 输出不是 JSON 对象"}
+
+            d_cat = draft.get("category", cat)
+            d_key = draft.get("key", "")
+            d_entry = draft.get("entry", {})
+            if not d_key or not isinstance(d_entry, dict):
+                return {"error": f"簇 {ci} 缺少 key 或 entry"}
+
+            drafted.setdefault(d_cat, {})[d_key] = d_entry
+            removed_questions.update(cl["questions"])
+
+        if not drafted["guide"] and not drafted["issue"]:
+            return {"error": "没有可入库的条目"}
+
+        ok = rag.save_extension(drafted)
+        if not ok:
+            return {"error": "写入 kb_extension.json 失败"}
+
+        # 灌库
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "sync_kb", str(Path(__file__).resolve().parents[3] / "scripts" / "sync_kb.py"),
+        )
+        if spec and spec.loader:
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            mod.main()
+
+        # 清理队列
+        rag.remove_from_queue(removed_questions)
+
+        guide_count = len(drafted.get("guide", {}))
+        issue_count = len(drafted.get("issue", {}))
+        return {
+            "status": "ok",
+            "message": (f"已新增 guide {guide_count} 条、issue {issue_count} 条，"
+                       f"已灌库并清理队列中 {len(removed_questions)} 个问题"),
+            "drafted": drafted,
+        }
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+# ---------------------------------------------------------------------------
 # 工具注册表
 # ---------------------------------------------------------------------------
 
@@ -555,6 +750,30 @@ TOOLS: dict[str, Tool] = {
         risk="write",
         preview=_preview_set_paths,
         execute=_exec_set_paths,
+    ),
+    "curate_kb": Tool(
+        name="curate_kb",
+        description="排查待策展队列（操作员未命中的问题），去重聚类后展示候选问题簇，"
+                    "经操作员确认后由 LLM 起草知识条目并写入扩展知识库。"
+                    "写操作：preview 展示去重后的簇与查重结果，操作员确认 confirmed_clusters "
+                    "后才执行起草+入库+灌库+清队列。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "max_items": {
+                    "type": "integer",
+                    "description": "最多排查的队列条目数，默认 50",
+                },
+                "confirmed_clusters": {
+                    "type": "array",
+                    "description": "操作员确认要入库的簇索引（0-based，空数组跳过入库）",
+                    "items": {"type": "integer"},
+                },
+            },
+        },
+        risk="write",
+        preview=_preview_curate_kb,
+        execute=_exec_curate_kb,
     ),
 }
 
