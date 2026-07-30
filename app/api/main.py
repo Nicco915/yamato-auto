@@ -9,10 +9,12 @@
 避免阻塞事件循环。Celery 迁移点见 service.py 顶部注释。
 """
 import asyncio
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -179,4 +181,111 @@ async def dispatcher_chat(request: DispatcherChatRequest):
         raise HTTPException(status_code=400, detail="message 不能为空")
     return await asyncio.to_thread(
         dispatcher.handle_message, request.message, request.session_id
+    )
+
+
+# ---------- 调度 Agent 对话（SSE 流式，实时展示工具调用进度）----------
+
+@app.post("/api/v1/dispatcher/chat/stream")
+async def dispatcher_chat_stream(request: DispatcherChatRequest):
+    """调度 Agent 对话 SSE 流式端点。
+
+    与 /api/v1/dispatcher/chat 功能相同，但通过 Server-Sent Events 实时推送
+    工具调用进度（llm_thinking → tool_call → tool_result → final /
+    pending_confirmation），前端可展示"正在思考…""正在调用 xxx…"等动态状态。
+
+    用法：前端用 fetch + ReadableStream 消费 SSE 事件流，每个事件一行 JSON。
+    """
+    from app import dispatcher
+
+    if request.confirm:
+        # 确认执行不流式（瞬间完成），直接返回 JSON
+        result = await asyncio.to_thread(
+            dispatcher.confirm, request.session_id, request.action
+        )
+        if result.get("status") == "error":
+            raise HTTPException(status_code=400, detail=result.get("message"))
+
+        async def confirm_generator():
+            yield f"data: {json.dumps({'type': 'applied', **result}, ensure_ascii=False)}\n\n"
+        return StreamingResponse(confirm_generator(), media_type="text/event-stream")
+
+    if not request.message:
+        raise HTTPException(status_code=400, detail="message 不能为空")
+
+    # asyncio.Queue 线程安全：同步 on_progress 回调 → queue.put() → 异步 get()
+    progress_queue: asyncio.Queue = asyncio.Queue()
+
+    def on_progress(event: dict) -> None:
+        """同步回调（在 asyncio.to_thread 线程中调用），把事件放入异步队列。"""
+        try:
+            progress_queue.put_nowait(event)
+        except asyncio.QueueFull:
+            pass  # 队列满了就丢弃（不应该发生，但防御性处理）
+
+    async def event_generator():
+        """异步生成器：从队列取事件 → SSE 格式输出。"""
+        # 先在后台线程启动 dispatch
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                dispatcher.handle_message,
+                request.message,
+                request.session_id,
+                on_progress=on_progress,
+            )
+        )
+
+        # 逐个推送进度事件
+        while True:
+            try:
+                # 等待事件或任务完成，取先到者
+                done, _ = await asyncio.wait(
+                    [asyncio.create_task(progress_queue.get()),
+                     task],
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            except Exception:
+                break
+
+            # 检查是否有进度事件
+            event = None
+            for d in done:
+                if d is not task and not d.exception():
+                    event = d.result()
+                elif d is task:
+                    break
+
+            if event is not None:
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                continue
+
+            # 任务完成：发送最终结果
+            if task.done():
+                break
+
+        # 消费队列中剩余事件（进度回调可能在 task 完成后才到达）
+        while not progress_queue.empty():
+            try:
+                event = progress_queue.get_nowait()
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            except asyncio.QueueEmpty:
+                break
+
+        # 发送最终结果
+        try:
+            result = task.result()
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+            return
+
+        yield f"data: {json.dumps({'type': 'done', **result}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
+        },
     )
