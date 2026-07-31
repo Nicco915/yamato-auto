@@ -477,7 +477,25 @@ $("btn-new-session").onclick = () => {
 
 /* ================= 初始化 ================= */
 renderTopbar("chat");
-addAgentText("你好！我是调度助手，可以帮你查批次、解释错误、发起/重跑/审核批次。直接告诉我你想做什么。");
+
+/* 开场白：有上次操作记忆时亮出摘要（哪个批次、什么工厂），否则静态文案 */
+async function greet() {
+  const fallback = "你好！我是调度助手，可以帮你查批次、解释错误、发起/重跑/审核批次。直接告诉我你想做什么。";
+  try {
+    const resp = await fetch(
+      "/api/v1/dispatcher/last_operation?session_id=" + encodeURIComponent(sessionId)
+    );
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.has_history && data.text) {
+        addAgentText(data.text);
+        return;
+      }
+    }
+  } catch (e) { /* 开场提示是辅助，失败不阻塞页面 */ }
+  addAgentText(fallback);
+}
+greet();
 $("inp").focus();
 </script>
 </body>

@@ -289,3 +289,57 @@ async def dispatcher_chat_stream(request: DispatcherChatRequest):
             "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
         },
     )
+
+
+# ---------- 调度 Agent 开场提示（上次操作摘要，纯确定性拼装，不经 LLM）----------
+
+_OP_NAME_CN = {
+    "create_batch": "创建",
+    "rerun": "重跑",
+    "submit_review": "提交审核",
+    "set_paths": "改路径",
+    "curate_kb": "策展知识库",
+}
+
+
+@app.get("/api/v1/dispatcher/last_operation")
+async def dispatcher_last_operation(session_id: str):
+    """对话开场提示：上次操作摘要（哪个批次、什么工厂）。
+
+    纯确定性拼装——L2 记忆（dispatcher_memory 表）取 last_thread_id/最近操作，
+    再由 service.get_order_state 反查 current_factory。任何异常都返回
+    {"has_history": False}，前端回退静态开场白，绝不让页面加载挂掉。
+    """
+    try:
+        from app.dispatcher.memory import OperationMemory, fmt_ago
+
+        summary = OperationMemory(session_id).get_last_operation_summary()
+        if not summary["has_history"]:
+            return {"has_history": False, "text": None,
+                    "thread_id": None, "factory": None}
+
+        thread_id = summary["thread_id"]
+        factory = None
+        if thread_id:
+            try:
+                factory = service.get_batch_summary(thread_id).get("current_factory")
+            except Exception:  # noqa: BLE001 批次被删/读库失败 → 无工厂不阻塞
+                factory = None
+
+        ago = fmt_ago(summary["ts"]) if summary["ts"] else ""
+        op_cn = _OP_NAME_CN.get(summary["tool"], summary["tool"] or "")
+
+        if thread_id and factory:
+            text = (f"上次你在处理批次 {thread_id}（工厂：{factory}），"
+                    f"{ago}{op_cn}。直接告诉我你想做什么。")
+        elif thread_id:
+            text = (f"上次处理批次 {thread_id}（{ago}{op_cn}）。"
+                    "直接告诉我你想做什么。")
+        else:
+            text = f"上次操作：{ago}{op_cn}。直接告诉我你想做什么。"
+
+        return {"has_history": True, "text": text,
+                "thread_id": thread_id, "factory": factory}
+    except Exception:  # noqa: BLE001 开场提示是辅助，绝不影响页面加载
+        return {"has_history": False, "text": None,
+                "thread_id": None, "factory": None}

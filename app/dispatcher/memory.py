@@ -38,7 +38,7 @@ def _ensure_table() -> None:
         logger.warning("dispatcher_memory 建表兜底失败: %s", exc)
 
 
-def _fmt_ago(ts: float) -> str:
+def fmt_ago(ts: float) -> str:
     """把 Unix 时间戳格式化为中文相对时间（'刚刚' / '3分钟前' / '2小时前'）。"""
     diff = time.time() - ts
     if diff < 60:
@@ -230,6 +230,35 @@ class OperationMemory:
         except Exception as exc:
             logger.warning("写操作后自动更新记忆失败: %s", exc)
 
+    def get_last_operation_summary(self) -> dict:
+        """供对话开场提示用的结构化摘要（不组装文案，只出数据）。
+
+        返回::
+
+            {"has_history": bool, "thread_id": str | None,
+             "tool": str | None, "ts": float | None}
+
+        operation_summary 与 last_thread_id 皆空时 has_history=False。
+        """
+        try:
+            mem = self.load()
+            ops = mem["operation_summary"]
+            latest = ops[-1] if ops else None
+            thread_id = mem["last_thread_id"]
+            if latest is None and not thread_id:
+                return {"has_history": False, "thread_id": None,
+                        "tool": None, "ts": None}
+            return {
+                "has_history": True,
+                "thread_id": thread_id,
+                "tool": latest["tool"] if latest else None,
+                "ts": latest["ts"] if latest else None,
+            }
+        except Exception as exc:  # noqa: BLE001 记忆是辅助设施，失败不阻塞
+            logger.warning("生成开场操作摘要失败: %s", exc)
+            return {"has_history": False, "thread_id": None,
+                    "tool": None, "ts": None}
+
     def get_context_for_prompt(self) -> str:
         """生成注入 system prompt 的上下文字符串。
 
@@ -247,14 +276,14 @@ class OperationMemory:
             ops = mem["operation_summary"]
             if ops:
                 latest = ops[-1]
-                ago = _fmt_ago(latest["ts"])
+                ago = fmt_ago(latest["ts"])
                 lines.append(f"最近操作：{ago}{latest['tool']}（{latest['args_summary']}）")
 
             # ---- 上次改路径 ----
             paths = mem["recent_paths"]
             if paths:
                 latest_path = paths[0]
-                ago = _fmt_ago(latest_path["updated_at"])
+                ago = fmt_ago(latest_path["updated_at"])
                 factory_hint = f"，工厂：{mem['last_factory']}" if mem["last_factory"] else ""
                 lines.append(
                     f"上次改路径：{latest_path['category']}={latest_path['path']}"

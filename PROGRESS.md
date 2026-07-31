@@ -34,6 +34,7 @@
 | 对话 Agent：L1 会话记忆 | ✅ 完成 | 多轮补充信息（先路径后类别）可合并，A+B 双层实现，实测通过（见第 6.6 节） |
 | 调度 Agent：智能体系统前台 | ✅ 完成 | 11 工具注册表 + 双适配器循环 + 确认门 + 操作指导，测试 21/21（见第 6.7 节） |
 | 调度 Agent L2 操作记忆 + RAG 接口 | ✅ 完成 | SQLite 持久化（按 session_id 分区）+ 自动更新 + 知识库检索接口预留 RAG，测试 27/27（见第 6.8 节） |
+| 调度 Agent 开场提示「上次操作」 | ✅ 完成 | 开场亮出上次批次+工厂，确定性拼装不经 LLM，5 场景实测+回归 8/8（见第 6.9 节） |
 
 ## 4. 提取引擎（app/extraction/）
 
@@ -472,6 +473,24 @@ Agent（6.3 节）的 `set_paths` 作为调度 Agent 的一个工具整合进来
 - `dispatcher_read_test.py`（8/8）+ `dispatcher_write_test.py`（8/8）+ `dispatcher_guide_test.py`（5/5）+ `dispatcher_memory_test.py`（6/6）
 - `chat_paths_test.py` 全绿（零回归）
 - `ui_api_test.py` 全绿（零回归）
+
+## 6.9 调度 Agent 开场提示「上次操作」（2026-07-31 完成）
+
+**问题**：L2 记忆已记录上次操作并在首轮真实消息时注入 system prompt——**LLM 知道上次干了什么，但操作员看不到**。开场白只是 `chat.html` 里一句静态文案，刷新页面后操作员要自己回忆"刚才在处理哪个批次"。
+
+**需求**（用户定）：每次打开对话页，开场提示亮出上次操作细节——处理哪个批次、什么工厂。
+
+**方案**：**确定性拼装，不经 LLM**。开场提示每次页面加载都触发，走 LLM 既慢又有幻觉风险；数据一律来自真实来源（L2 SQL + checkpoint state），符合项目"不编造"铁律。
+
+**实现**（3+1 个文件）：
+- `dispatcher/memory.py`：新增 `OperationMemory.get_last_operation_summary()`，返回结构化摘要 `{has_history, thread_id, tool, ts}`（取 `operation_summary[-1]` + `last_thread_id`，两者皆空则 `has_history=False`）；`_fmt_ago` 提为公开 `fmt_ago` 供端点复用。
+- `api/service.py`：新增 `get_batch_summary(thread_id)` 轻量摘要——复用 `_summarize_snapshot` 取 `current_factory`，不查 audit/不加载工厂会话（比 `get_batch_detail` 轻）；thread 不存在不抛异常，返回 `status="unknown"`。
+- `api/main.py`：新增 `GET /api/v1/dispatcher/last_operation?session_id=`——L2 摘要 + 反查工厂，拼中文文案（tool→中文映射：create_batch→创建/rerun→重跑/submit_review→提交审核/set_paths→改路径/curate_kb→策展知识库），返回 `{has_history, text, thread_id, factory}`；**任何异常返回 `has_history=False`，绝不让页面加载挂掉**。
+- `ui/static/chat.html`：静态开场白 → 动态 `greet()`——fetch 端点，`has_history` 为真亮出 `上次你在处理批次 X（工厂：Y），N 分钟前创建/重跑。直接告诉我你想做什么。`；否则/fetch 失败回退静态文案。纯客户端渲染、不进对话历史。「新会话」按钮行为不变（新 session_id → 记忆为空 → 自然回退静态文案）。
+
+**坑**：`service.get_order_state` 只返回 `{exists, next_nodes, values}`，**没有 `current_factory`**——工厂字段在私有 `_summarize_snapshot` 里（由 `list_batches`/`get_batch_detail` 内部用），这是加 `get_batch_summary` 公开轻量版的原因。
+
+**验证**（5 场景实测通过）：无历史回退静态文案；真实批次 → `上次你在处理批次 DISP-WRITE-TEST-RERUN-126（工厂：山東中地），刚刚创建。…`；批次被删 → 显示批次号、无工厂、不报错；只做过改路径 → `上次操作：刚刚改路径。…`；未知 thread → `get_batch_summary` 返回 `status="unknown"` 不抛。回归 `dispatcher_read_test.py` 8/8 全绿。
 
 ## 7. 关键设计决策记录
 

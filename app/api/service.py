@@ -283,6 +283,18 @@ def _summarize_snapshot(thread_id: str, snap, created_ts: str | None) -> dict[st
     }
 
 
+def get_batch_summary(thread_id: str) -> dict[str, Any]:
+    """单批次轻量摘要：三态 status + 进度 + 当前工厂（复用 _summarize_snapshot）。
+
+    调度 Agent 开场提示等只需状态/工厂的轻量场景用；比 get_batch_detail
+    轻——不查 audit、不加载工厂会话。thread 不存在时返回 status="unknown"、
+    current_factory=None 的摘要（不抛异常，调用方自行判空）。
+    """
+    graph = get_graph()
+    snap = graph.get_state(_config(thread_id))
+    return _summarize_snapshot(thread_id, snap, None)
+
+
 def list_batches() -> dict[str, Any]:
     """批次列表：只读连接枚举 thread，逐个 get_state 推导状态。
 
