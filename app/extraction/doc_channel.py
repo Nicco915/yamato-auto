@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 import subprocess
@@ -32,6 +33,8 @@ from .prompts import (
 
 MAX_DOC_HTML_CHARS = 20000  # 与 pdf_text_channel.MAX_PDF_TEXT_CHARS 一致
 TEXTUTIL_TIMEOUT = 60  # 秒
+
+logger = logging.getLogger(__name__)
 
 
 def _find_textutil() -> str | None:
@@ -111,8 +114,17 @@ def extract_doc(file_path: str) -> ChannelResult:
         except JsonParseError as e:
             result.json_parse_failures += 1
             if attempt >= 2:
+                # 重试耗尽：带堆栈记 ERROR 进 error.log，便于事后追查
+                logger.exception(
+                    "JSON 解析重试耗尽，最终失败 | %s | 共 %d 次尝试 | %s",
+                    source_name, attempt + 1, str(e)[:300],
+                )
                 result.error = f"JSON 解析重试 2 次后仍失败: {e}"
                 return result
+            logger.warning(
+                "JSON 解析失败，第 %d/2 次重试 | %s | 错误: %s",
+                attempt + 1, source_name, str(e)[:200],
+            )
             messages = messages + [
                 {"role": "assistant", "content": raw},
                 {"role": "user", "content": build_retry_message(raw, str(e))},

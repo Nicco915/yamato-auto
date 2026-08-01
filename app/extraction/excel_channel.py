@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,6 +42,8 @@ MAX_COLS = 30
 EXCEL_SUFFIXES = {".xlsx", ".xlsm", ".xls", ".csv"}
 # 旧版 .xls 走 pandas/xlrd，不做合并单元格拆分
 LEGACY_XLS_SUFFIXES = {".xls"}
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Sheet 级目标识别（2026-07-27 人工核对引入）
@@ -279,8 +282,17 @@ def extract_excel(file_path: str) -> ChannelResult:
         except JsonParseError as e:
             result.json_parse_failures += 1
             if attempt >= 2:
+                # 重试耗尽：带堆栈记 ERROR 进 error.log，便于事后追查
+                logger.exception(
+                    "JSON 解析重试耗尽，最终失败 | %s | 共 %d 次尝试 | %s",
+                    source_name, attempt + 1, str(e)[:300],
+                )
                 result.error = f"JSON 解析重试 2 次后仍失败: {e}"
                 return result
+            logger.warning(
+                "JSON 解析失败，第 %d/2 次重试 | %s | 错误: %s",
+                attempt + 1, source_name, str(e)[:200],
+            )
             messages = messages + [
                 {"role": "assistant", "content": raw},
                 {"role": "user", "content": build_retry_message(raw, str(e))},
