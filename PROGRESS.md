@@ -1,6 +1,6 @@
 # 供应链单证自动化 — 项目进度总览
 
-> 最后更新：2026-08-01（批次删除功能上线 + ui_api_test 扩展 16 步全绿）
+> 最后更新：2026-08-01（批次删除功能上线 + ui_api_test 扩展 16 步全绿 + 补记调度 Agent SSE 流式改造，见 6.10 节）
 > 设计文档：`../agent设计/`（第一/二/三阶段、api接口以及异步机制、人工审核界面设计、提取agent背景prompt）
 
 ## 1. 项目目标
@@ -36,6 +36,7 @@
 | 调度 Agent L2 操作记忆 + RAG 接口 | ✅ 完成 | SQLite 持久化（按 session_id 分区）+ 自动更新 + 知识库检索接口预留 RAG，测试 27/27（见第 6.8 节） |
 | 调度 Agent 开场提示「上次操作」 | ✅ 完成 | 开场亮出上次批次+工厂，确定性拼装不经 LLM，5 场景实测+回归 8/8（见第 6.9 节） |
 | 批次删除 | ✅ 完成 | DELETE /api/v1/batches/{id}（running 禁删 409），审计保留 + batch_deleted 留痕，工作台确认弹窗，测试 16 步全绿（见第 6.5 节） |
+| 调度 Agent SSE 流式 | ✅ 完成 | on_progress 回调穿透 loop→handle_message→SSE 端点，chat.html 流式消费 + 实时工具进度气泡；原 /chat 端点保留并存；未补专测（见第 6.10 节） |
 
 ## 4. 提取引擎（app/extraction/）
 
@@ -514,6 +515,61 @@ Agent（6.3 节）的 `set_paths` 作为调度 Agent 的一个工具整合进来
 
 **验证**（5 场景实测通过）：无历史回退静态文案；真实批次 → `上次你在处理批次 DISP-WRITE-TEST-RERUN-126（工厂：山東中地），刚刚创建。…`；批次被删 → 显示批次号、无工厂、不报错；只做过改路径 → `上次操作：刚刚改路径。…`；未知 thread → `get_batch_summary` 返回 `status="unknown"` 不抛。回归 `dispatcher_read_test.py` 8/8 全绿。
 
+## 6.10 调度 Agent SSE 流式（2026-07-30 完成，4 commit 补记）
+
+**问题**：6.7 节的 `POST /api/v1/dispatcher/chat` 是一次性 POST——前端发出请求后只能
+显示静态"思考中…"，等整个调度循环跑完（多轮 LLM 推理 + 多个工具调用，实测一次问答
+约 20s，见 6.7 双适配器实测表）才返回最终结果。工具调用链长时操作员看不到任何中间
+进度，无法分辨"在调工具"还是"卡死了"。
+
+**方案**：进度回调穿透 + SSE 端点 + 前端流式消费，三层各一个 commit：
+
+- **回调注入**（commit `9fe6f53`，`dispatcher/loop.py`）：`run_dispatch` 增加可选
+  `on_progress: Callable[[dict], None] = None` 参数，在 6 类节点推送进度事件：
+  每轮 LLM 推理前 `llm_thinking`（带 `round`）；工具调用前 `tool_call`
+  （带 `tool` + `args_summary`，只读/写工具都推）；只读工具结果 `tool_result`
+  （带 `result_summary`）；工具错误 `tool_error`（参数 JSON 解析失败 / 未知工具 /
+  参数校验失败三种，带 `error`）；写工具确认门 `pending_confirmation`（带 `preview` /
+  `message` / `action` / `warnings`）；最终回复 `final`（带 `message`，含超轮兜底）。
+  回调为 None 时零开销，原一次性调用路径行为不变。
+- **透传**（commit `c5542f2`，`dispatcher/__init__.py`）：`handle_message` 增加
+  `on_progress` 关键字参数原样传给 `run_dispatch`，docstring 注明事件类型清单。
+- **SSE 端点**（commit `acb0f23`，`api/main.py`）：新增
+  `POST /api/v1/dispatcher/chat/stream`。核心是用 `asyncio.Queue` 桥接同步→异步：
+  `handle_message` 在 `asyncio.to_thread` 线程里同步调 `on_progress` →
+  `queue.put_nowait`；异步生成器 `await queue.get()` 与调度 task 做
+  `asyncio.wait(FIRST_COMPLETED)` 竞争，取出事件按 SSE 格式逐条
+  `yield f"data: {json}\n\n"`。task 结束后先排空队列剩余事件，最后发
+  `{"type": "done", **result}`（result 即 `handle_message` 返回值，含
+  `status` / `session_id` 等）；task 抛异常则发 `{"type": "error", "message"}`。
+  响应 `StreamingResponse(media_type="text/event-stream")`，响应头
+  `Cache-Control: no-cache` + `X-Accel-Buffering: no`（禁 nginx 缓冲）。
+
+**端点语义**：请求体复用 `DispatcherChatRequest`，与原 `/chat` 端点同形。
+- 普通消息 → 事件流：`llm_thinking → (tool_call → tool_result | tool_error)×N
+  → final | pending_confirmation → done`
+- 确认执行（`confirm=true`）不流式（瞬间完成）：直接走 `dispatcher.confirm`，
+  成功发单个 `{"type": "applied", ...}` 事件，失败抛 400
+- 原 `POST /api/v1/dispatcher/chat` **一字未动**，两端点并存（向后兼容）
+
+**前端**（commit `6ce5f28`，`ui/static/chat.html`，+207/-118 行）：
+- 从一次性 POST 改为 `fetch` + `resp.body.getReader()`（ReadableStream）消费事件流：
+  按 `\n\n` 切分 SSE 事件、剥 `data: ` 前缀后 `JSON.parse`，缓冲区内不完整片段
+  留到下一轮拼接；事件统一进 `handleSSEEvent(event)` switch 分发，未知类型忽略。
+- 动态进度气泡三件套：`ensureProgressBubble` / `updateProgress` / `finishProgress`——
+  脉冲动画边框（`pulse-border` keyframes）的 agent 气泡逐行追加状态：
+  `正在思考…（第 N 轮）`（灰斜体）→ `🔧 正在调用 xxx…`（蓝）→ `✓ xxx 完成`（绿）/
+  `✗ xxx：错误`（红）；收到 `final` / `done` 时去掉动画、固化为最终回复文本。
+- `pending_confirmation` 事件：进度气泡固化后直接在其上渲染确认卡（preview 逐行 +
+  warnings + 确认/取消按钮）；确认执行同样 POST 流式端点（`confirm=true`），
+  等 `applied` 事件渲染执行结果，`error` 事件显示失败原因。
+- 随改造完成页面定位切换：标题/说明条从提取 Agent 路径配置改为调度 Agent 对话，
+  移除原 thread_id 输入行（commit message 注明"不再需要"）。
+
+**验证**：4 个 commit 均未补专门测试，当时以前端页面手工验证为准；调度 Agent 既有
+测试不受影响（`on_progress` 缺省 None，read/write/guide/memory 各测试走的是原
+`handle_message` 调用路径，零改动）。SSE 端点自动化测试已记入第 8 节 backlog。
+
 ## 7. 关键设计决策记录
 
 0. **路径集中配置 + agent 对话可改**（2026-07-28 用户授权）：`app/.env`「业务路径」节
@@ -551,7 +607,9 @@ Agent（6.3 节）的 `set_paths` 作为调度 Agent 的一个工具整合进来
 4. `--consolidate` 更新 10 工厂汇总报告（用修复后的通道重跑或基于人工核对结论更新）
 5. 按需：Celery 迁移（Windows 部署注意：Redis 需 WSL2/Docker 或 Memurai 替代）、
    UI Basic auth（内网认证，backlog）、删除留痕 batch_deleted 的 UI 查看入口
-   （目前只能直查 master.db review_audits，见 6.5 已知边界）、对话会话跨重启持久化（L1 现为进程内
+   （目前只能直查 master.db review_audits，见 6.5 已知边界）、调度 Agent SSE 流式端点
+   自动化测试（6.10 节，目前仅前端手工验证，可仿 dispatcher_read_test 用
+   DISPATCHER_MOCK 剧本断言事件序列）、对话会话跨重启持久化（L1 现为进程内
    dict，需要时迁 app/db）、L3 长期记忆（跨批次记工厂习惯，方向已讨论未定）。
    ~~LibreOffice 安装~~（2026-07-28 完成：清华镜像装 26.2.5，亿钻 doc 主路径实测通过；
    _find_soffice 三平台探测，textutil 降级纯兜底，commit c7583f8；
