@@ -1,15 +1,21 @@
 """中央日志配置：控制台 + 滚动文件双通道，供 API 服务与 CLI 入口统一接入。
 
-用途（L1 阶段）：
+用途：
 - 控制台 StreamHandler，级别取环境变量 LOG_LEVEL（默认 INFO）；
 - RotatingFileHandler 全量日志 app/data/logs/app.log（DEBUG 起）；
 - RotatingFileHandler 错误日志 app/data/logs/error.log（WARNING 起）；
 - 接管 uvicorn 三个 logger，统一走 root 的 handler/格式。
 
-后续 L2 步骤将在此之上加 contextvars 关联字段（thread_id/factory），
-Formatter 已预留占位：record 上有对应属性时输出 "[thread_id factory]"，
-没有则省略（属性缺失也能正常格式化）。
+L2 批次关联（contextvars）：
+- 业务入口（service 层批次函数、folder_router 工厂调度处）调
+  bind_context(thread_id=.../factory=...) 绑定关联字段，finally 里
+  clear_context() 清理；
+- ContextFilter（挂在各 handler 上）把 contextvars 当前值写入
+  record.thread_id / record.factory，ContextFormatter 据此渲染
+  "[thread_id factory]"；未绑定时不设属性、占位自动省略；
+- grep 批次号即可回放该批次全链路日志。
 """
+import contextvars
 import logging
 import os
 from logging.handlers import RotatingFileHandler
@@ -31,10 +37,62 @@ _BACKUP_COUNT = 5
 _CONTEXT_MISSING = object()
 
 
+# ---------------------------------------------------------------------------
+# L2：批次关联字段（contextvars）
+# ---------------------------------------------------------------------------
+# ContextVar 默认 None：未绑定时 ContextFilter 不设 record 属性，
+# ContextFormatter 自动省略 "[...]" 占位。
+#
+# 并发安全依据（实测验证）：
+# - asyncio.to_thread 会把调用处的 context 拷贝进 worker 线程，
+#   worker 内 set 只影响该拷贝，并发请求互不串扰；
+# - LangGraph 同步图每个节点也在拷贝的 context 中执行——节点能读到
+#   service 层绑定的 thread_id，但节点内 set 不外泄给后续节点
+#   （folder_router 绑 factory 因此只覆盖自身日志，离开即自动失效，
+#   无需显式清理；后续节点如需工厂名须各自从 state 绑定）。
+log_thread_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "log_thread_id", default=None
+)
+log_factory: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "log_factory", default=None
+)
+
+
+def bind_context(thread_id: str | None = None, factory: str | None = None) -> None:
+    """绑定当前上下文的关联字段；传 None 的字段保持现状（不清除）。"""
+    if thread_id is not None:
+        log_thread_id.set(thread_id)
+    if factory is not None:
+        log_factory.set(factory)
+
+
+def clear_context() -> None:
+    """清空当前上下文的全部关联字段（入口函数 finally 中调用）。"""
+    log_thread_id.set(None)
+    log_factory.set(None)
+
+
+class ContextFilter(logging.Filter):
+    """把 contextvars 当前值写入 record.thread_id / record.factory。
+
+    值为 None 时不设属性（ContextFormatter 对缺失属性自动省略占位，
+    也避免把 None 渲染进日志）。始终返回 True，不做级别过滤。
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        thread_id = log_thread_id.get()
+        factory = log_factory.get()
+        if thread_id is not None:
+            record.thread_id = thread_id
+        if factory is not None:
+            record.factory = factory
+        return True
+
+
 class ContextFormatter(logging.Formatter):
     """带关联字段占位的 Formatter。
 
-    record 上若存在 thread_id / factory 属性（后续由 Filter 从 contextvars
+    record 上若存在 thread_id / factory 属性（由 ContextFilter 从 contextvars
     注入），则在 logger 名后输出 "[thread_id factory]"；缺失时自动省略，
     不影响普通 record 的格式化。
     """
@@ -95,11 +153,17 @@ def setup_logging() -> None:
 
     formatter = _build_formatter()
 
+    # L2 关联字段注入：ContextFilter 必须挂在 handler 上，而不是 root logger 上——
+    # logger 级 filter 只作用于该 logger 自己产生的记录，对子 logger
+    # propagate 上来的记录不生效；handler.filter 才是每条日志的必经之处。
+    context_filter = ContextFilter()
+
     # a) 控制台：级别取 LOG_LEVEL 环境变量，默认 INFO
     console_level = os.environ.get("LOG_LEVEL", "INFO").upper()
     console_handler = logging.StreamHandler()
     console_handler.setLevel(getattr(logging, console_level, logging.INFO))
     console_handler.setFormatter(formatter)
+    console_handler.addFilter(context_filter)
 
     # b) 全量文件：DEBUG 起，滚动保留
     app_handler = RotatingFileHandler(
@@ -110,6 +174,7 @@ def setup_logging() -> None:
     )
     app_handler.setLevel(logging.DEBUG)
     app_handler.setFormatter(formatter)
+    app_handler.addFilter(context_filter)
 
     # c) 错误文件：WARNING 起，滚动保留
     error_handler = RotatingFileHandler(
@@ -120,6 +185,7 @@ def setup_logging() -> None:
     )
     error_handler.setLevel(logging.WARNING)
     error_handler.setFormatter(formatter)
+    error_handler.addFilter(context_filter)
 
     root.setLevel(logging.DEBUG)  # 总开关放到最低，由 handler 各自过滤
     root.addHandler(console_handler)

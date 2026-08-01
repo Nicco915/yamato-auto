@@ -205,6 +205,14 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
 
     session_id 提供时，加载 L2 操作记忆（跨会话持久化）并注入 system prompt。
     """
+    # L2 日志关联：上游 context 若已绑 thread_id（如调度工具链内部进入
+    # 批次流程），接力绑定确保本循环日志也携带；没有就跳过——会话记忆里
+    # 的 last_thread_id 是历史信息，不代表本次对话的日志归属，绝不发明。
+    from app.logging_config import bind_context, log_thread_id
+    _ctx_tid = log_thread_id.get()
+    if _ctx_tid:
+        bind_context(thread_id=_ctx_tid)
+
     # 构建 system prompt（基础 + L2 记忆上下文）
     sys_prompt = prompts.system_prompt(phase)
     if session_id:
