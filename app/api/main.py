@@ -10,12 +10,14 @@
 """
 import asyncio
 import json
+import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -24,6 +26,8 @@ from app.logging_config import _takeover_uvicorn, setup_logging
 from app.review.router import configure_review
 from app.review.router import router as review_router
 from app.ui.router import router as ui_router
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -54,6 +58,54 @@ app.mount(
     StaticFiles(directory=Path(__file__).resolve().parents[1] / "ui" / "static"),
     name="ui-static",
 )
+
+
+# ---------- 请求日志中间件 ----------
+# 每个请求记一行「method path → 状态码 耗时ms」；4xx/5xx 升级为 WARNING
+# 并尽力带出响应体中的 detail（读不到就省略，绝不影响请求本身）。
+# 注意：SSE 流式端点 /api/v1/dispatcher/chat/stream 的耗时是整个流的持续
+# 时间（流关闭才返回），不是首字节时间——其响应体不读取、原样透传。
+@app.middleware("http")
+async def request_logging_middleware(request, call_next):
+    start = time.perf_counter()
+    try:
+        # 下游异常照常上抛（交 FastAPI/uvicorn 默认处理），本中间件只记日志
+        response = await call_next(request)
+    except Exception:
+        logger.exception("[HTTP] %s %s → 未捕获异常（%.0fms）",
+                         request.method, request.url.path,
+                         (time.perf_counter() - start) * 1000)
+        raise
+
+    elapsed_ms = (time.perf_counter() - start) * 1000
+    status = response.status_code
+
+    if status >= 400:
+        # 尽力从 JSON 响应体取 detail：读完原样重建响应，取不到不勉强
+        detail = None
+        try:
+            if "application/json" in (response.headers.get("content-type") or ""):
+                body = b""
+                async for chunk in response.body_iterator:
+                    body += chunk if isinstance(chunk, bytes) else chunk.encode("utf-8")
+                data = json.loads(body)
+                if isinstance(data, dict):
+                    detail = data.get("detail")
+                response = Response(
+                    content=body, status_code=status,
+                    headers=dict(response.headers),
+                    media_type=response.media_type,
+                )
+        except Exception:  # noqa: BLE001 取 detail 只是锦上添花，绝不阻塞响应
+            detail = None
+        logger.warning("[HTTP] %s %s → %d（%.0fms）detail=%s",
+                       request.method, request.url.path, status, elapsed_ms,
+                       detail if detail is not None else "-")
+    else:
+        logger.info("[HTTP] %s %s → %d（%.0fms）",
+                    request.method, request.url.path, status, elapsed_ms)
+
+    return response
 
 
 # ---------- Pydantic 请求模型 ----------

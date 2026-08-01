@@ -6,10 +6,13 @@
   《第三阶段.md》改造点 D：届时直接从 DB 取中文品名/HS 编码生成合规单证）。
 """
 import json
+import logging
 from datetime import datetime, timezone
 
 from app.config import get_settings
 from app.state import AgentState
+
+logger = logging.getLogger(__name__)
 
 
 def export_node(state: AgentState) -> dict:
@@ -29,5 +32,5 @@ def export_node(state: AgentState) -> dict:
     summary_path.write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    print(f"[Node7] 导出完成：{out_path}；摘要 -> {summary_path}")
+    logger.info("[Node7] 导出完成：%s；摘要 -> %s", out_path, summary_path)
     return {"final_output_path": out_path}

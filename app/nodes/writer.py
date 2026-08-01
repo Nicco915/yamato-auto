@@ -12,6 +12,7 @@
    - 新 SKU：INSERT 人工补录的多语言品名/HS 编码/单件重量；
    - 老 SKU：人工微调过重量时 UPDATE 刷新历史重量。
 """
+import logging
 import shutil
 from copy import copy
 from pathlib import Path
@@ -23,6 +24,8 @@ from app.config import get_settings
 from app.db.models import Factory, FactorySKU
 from app.db.session import get_session
 from app.state import AgentState
+
+logger = logging.getLogger(__name__)
 
 # 待添加的三列（插入到 SHOHIN_MEI_E 之后，与既有填好文件布局一致）
 NEW_COL_NAMES = ("中文品名", "净重", "毛重")
@@ -36,7 +39,7 @@ def _ensure_output_copy(state: AgentState) -> Path:
     dst = settings.output_dir_abs / f"{src.stem}_filled{src.suffix}"
     if not dst.exists():
         shutil.copy2(src, dst)
-        print(f"[Node6] 已复制原件到 {dst}（绝不覆盖原件）")
+        logger.info("[Node6] 已复制原件到 %s（绝不覆盖原件）", dst)
     return dst
 
 
@@ -57,7 +60,8 @@ def _ensure_three_columns(ws) -> None:
     for j, name in enumerate(NEW_COL_NAMES):
         cell = ws.cell(row=1, column=anchor + 1 + j, value=name)
         cell._style = copy(ws.cell(row=1, column=anchor)._style)
-    print(f"[Node6] 原文件无 {list(NEW_COL_NAMES)} 三列，已在 {INSERT_AFTER_COL} 后插入")
+    logger.info("[Node6] 原文件无 %s 三列，已在 %s 后插入",
+                list(NEW_COL_NAMES), INSERT_AFTER_COL)
 
 
 def _write_excel(state: AgentState, out_path: Path) -> int:
@@ -165,14 +169,15 @@ def writer(state: AgentState) -> dict:
     factory = cur.get("factory_name")
 
     if state.get("validation_status") != "Approved":
-        print(f"[Node6] 工厂「{factory}」审核未通过（{state.get('validation_status')}），跳过写入")
+        logger.warning("[Node6] 工厂「%s」审核未通过（%s），跳过写入",
+                       factory, state.get('validation_status'))
         return {}
 
     out_path = _ensure_output_copy(state)
     written = _write_excel(state, out_path)
     inserted, updated = _upsert_db(state)
 
-    print(f"[Node6] 工厂「{factory}」：写入 {written} 行 Excel；"
-          f"落库 INSERT {inserted} / UPDATE {updated}")
+    logger.info("[Node6] 工厂「%s」：写入 %d 行 Excel；"
+                "落库 INSERT %d / UPDATE %d", factory, written, inserted, updated)
 
     return {"final_output_path": str(out_path)}
