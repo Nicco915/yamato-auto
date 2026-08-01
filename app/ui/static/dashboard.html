@@ -12,6 +12,39 @@
   .col-actions { white-space: nowrap; }
   .col-actions .btn { margin-right: 6px; }
   .refresh-btn { padding: 2px 10px; }
+  /* 删除批次：红字 ghost 按钮 */
+  .btn-danger-ghost {
+    background: transparent;
+    border-color: #fca5a5;
+    color: #dc2626;
+  }
+  .btn-danger-ghost:hover { background: #fef2f2; }
+  .btn-danger-ghost:disabled {
+    background: transparent;
+    border-color: var(--border);
+    color: #9ca3af;
+    cursor: not-allowed;
+  }
+  /* 删除确认弹窗：实心红按钮 + 状态提示 */
+  .btn-danger {
+    background: var(--err);
+    border-color: var(--err);
+    color: #fff;
+    font-weight: 600;
+  }
+  .btn-danger:hover { background: #b91c1c; }
+  .btn-danger:disabled {
+    background: #fca5a5;
+    border-color: #fca5a5;
+    color: #fff;
+    cursor: not-allowed;
+  }
+  .del-note { margin: 0 0 10px; font-size: 13px; }
+  .del-note-warn { color: var(--warn); }
+  .del-note-muted { color: var(--muted); }
+  .del-list { margin: 0 0 12px; padding-left: 20px; font-size: 13px; color: #4b5563; }
+  .del-confirm-label { font-size: 13px; color: #4b5563; margin: 0 0 6px; }
+  #del-confirm-input { width: 100%; }
 </style>
 </head>
 <body>
@@ -67,6 +100,24 @@
 
 </div>
 
+<!-- 删除批次确认弹窗（结构复用 ui.css 的 .modal-mask/.modal） -->
+<div id="delete-mask" class="modal-mask" onclick="if (event.target === this) closeDeleteModal()">
+  <div class="modal">
+    <h3 id="del-title"></h3>
+    <p id="del-status-note" class="del-note del-note-muted"></p>
+    <ul class="del-list">
+      <li><strong>将删除：</strong>状态机现场（不可恢复）</li>
+      <li><strong>将保留：</strong>审计记录、工厂会话、主数据、输出文件</li>
+    </ul>
+    <p class="del-confirm-label">请输入完整批次号 <strong id="del-hint-id" class="mono"></strong> 以确认：</p>
+    <input id="del-confirm-input" type="text" autocomplete="off" placeholder="输入完整批次号" oninput="onDelConfirmInput()">
+    <div class="modal-actions">
+      <button class="btn" onclick="closeDeleteModal()">取消</button>
+      <button id="del-confirm-btn" class="btn btn-danger" disabled onclick="confirmDelete()">确认删除</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -77,6 +128,12 @@ renderTopbar("dashboard");
 loadDefaults();
 refreshList(true);
 setInterval(autoRefresh, 10000);
+/* Esc 关闭删除弹窗 */
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && $("delete-mask").classList.contains("show")) {
+    closeDeleteModal();
+  }
+});
 
 /* ================= 默认路径预填 ================= */
 async function loadDefaults() {
@@ -167,6 +224,18 @@ function rowActions(b) {
   }
   html += '<a class="btn btn-sm" href="/batch/' + id + '">详情</a>';
   html += '<a class="btn btn-sm" href="/chat?thread_id=' + id + '">对话</a>';
+  if (b.status === "running") {
+    html +=
+      '<button class="btn btn-sm btn-danger-ghost" disabled title="运行中的批次不能删除">删除</button>';
+  } else {
+    // JSON.stringify 生成合法 JS 字符串字面量，esc() 负责 HTML 属性级转义，双重防注入
+    html +=
+      '<button class="btn btn-sm btn-danger-ghost" onclick="openDeleteModal(' +
+      esc(JSON.stringify(String(b.thread_id))) +
+      ", " +
+      esc(JSON.stringify(String(b.status || ""))) +
+      ')">删除</button>';
+  }
   return html;
 }
 
@@ -214,6 +283,70 @@ function autoRefresh() {
     return;
   }
   refreshList(false);
+}
+
+/* ================= 删除批次 ================= */
+let _delTarget = null; // { id, status }
+
+function openDeleteModal(threadId, status) {
+  _delTarget = { id: String(threadId), status: String(status || "") };
+  // textContent 赋值，天然防 XSS，无需 esc
+  $("del-title").textContent = "删除批次 " + _delTarget.id + "？";
+  $("del-hint-id").textContent = _delTarget.id;
+  const note = $("del-status-note");
+  if (_delTarget.status === "pending_review") {
+    note.textContent = "⚠ 该批次挂起待审，删除后无法恢复审核现场";
+    note.className = "del-note del-note-warn";
+  } else if (_delTarget.status === "completed") {
+    note.textContent = "该批次已完成";
+    note.className = "del-note del-note-muted";
+  } else {
+    note.textContent = "状态未知";
+    note.className = "del-note del-note-muted";
+  }
+  const input = $("del-confirm-input");
+  input.value = "";
+  const btn = $("del-confirm-btn");
+  btn.disabled = true;
+  btn.textContent = "确认删除";
+  $("delete-mask").classList.add("show");
+  setTimeout(() => input.focus(), 0);
+}
+
+function closeDeleteModal() {
+  $("delete-mask").classList.remove("show");
+  _delTarget = null;
+}
+
+/* 输入值与批次号完全一致才启用确认按钮（粘贴同样触发 input 事件） */
+function onDelConfirmInput() {
+  if (!_delTarget) return;
+  $("del-confirm-btn").disabled = $("del-confirm-input").value !== _delTarget.id;
+}
+
+async function confirmDelete() {
+  if (!_delTarget) return;
+  const id = _delTarget.id;
+  const btn = $("del-confirm-btn");
+  btn.disabled = true;
+  btn.textContent = "删除中…";
+  try {
+    await api("/api/v1/batches/" + encodeURIComponent(id), { method: "DELETE" });
+    toast("批次 " + id + " 已删除");
+    closeDeleteModal();
+    refreshList(false);
+  } catch (e) {
+    if (e.status === 409) {
+      // 状态可能刚变为进行中：关弹窗并刷新列表
+      toast("删除失败：批次正在运行", 4000);
+      closeDeleteModal();
+      refreshList(false);
+    } else {
+      toast("删除失败：" + e.message, 4000);
+      btn.disabled = false;
+      btn.textContent = "确认删除";
+    }
+  }
 }
 </script>
 </body>
