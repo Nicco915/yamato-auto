@@ -24,6 +24,7 @@ from app.db.session import get_session
 from app.extraction.llm_client import usage_tracker
 from app.extraction.session import SESSIONS_DIR
 from app.graph import get_graph
+from app.logging_config import bind_context, clear_context
 
 
 def _config(thread_id: str) -> dict:
@@ -42,30 +43,36 @@ def run_until_interrupt(
       - {"status": "pending_human_review", "review_data": payload}
       - {"status": "completed", "final_state": ...}
     """
-    graph = get_graph()
-    initial_state: dict[str, Any] = {}
-    if downstream_file_path:
-        initial_state["downstream_file_path"] = downstream_file_path
-    if upstream_root:
-        initial_state["upstream_root"] = upstream_root
-    if factory_filter:
-        initial_state["factory_filter"] = factory_filter
+    # L2 日志关联：绑定批次号，图内节点日志（context 拷贝传播）自动携带；
+    # finally 清理，避免污染复用的 worker 线程
+    bind_context(thread_id=thread_id)
+    try:
+        graph = get_graph()
+        initial_state: dict[str, Any] = {}
+        if downstream_file_path:
+            initial_state["downstream_file_path"] = downstream_file_path
+        if upstream_root:
+            initial_state["upstream_root"] = upstream_root
+        if factory_filter:
+            initial_state["factory_filter"] = factory_filter
 
-    for event in graph.stream(initial_state, _config(thread_id), stream_mode="updates"):
-        if "__interrupt__" in event:
-            payload = event["__interrupt__"][0].value
-            return {
-                "status": "pending_human_review",
-                "thread_id": thread_id,
-                "review_data": payload,
-            }
+        for event in graph.stream(initial_state, _config(thread_id), stream_mode="updates"):
+            if "__interrupt__" in event:
+                payload = event["__interrupt__"][0].value
+                return {
+                    "status": "pending_human_review",
+                    "thread_id": thread_id,
+                    "review_data": payload,
+                }
 
-    final = graph.get_state(_config(thread_id))
-    return {
-        "status": "completed",
-        "thread_id": thread_id,
-        "final_output_path": final.values.get("final_output_path"),
-    }
+        final = graph.get_state(_config(thread_id))
+        return {
+            "status": "completed",
+            "thread_id": thread_id,
+            "final_output_path": final.values.get("final_output_path"),
+        }
+    finally:
+        clear_context()
 
 
 def resume_order(thread_id: str, resume_data: dict) -> dict[str, Any]:
@@ -81,31 +88,39 @@ def resume_order(thread_id: str, resume_data: dict) -> dict[str, Any]:
     if not state.next:
         raise ValueError("该任务没有处于等待审核状态，或已完成。")
 
-    prepared = _prepare_audit(thread_id, resume_data)
+    # L2 日志关联：resume 与首次运行是不同的请求/context，需重新绑定；
+    # 工厂名从挂起现场取（首次运行的 finally 已清空），
+    # 保证审核后续节点（Node5 收尾/Node6 写回）日志仍带工厂名
+    factory = (state.values.get("current_factory_data") or {}).get("factory_name")
+    bind_context(thread_id=thread_id, factory=factory)
+    try:
+        prepared = _prepare_audit(thread_id, resume_data)
 
-    # 恢复执行，直到下一个 interrupt（多工厂循环时）或 END
-    for event in graph.stream(
-        Command(resume=resume_data), _config(thread_id), stream_mode="updates"
-    ):
-        if "__interrupt__" in event:
-            payload = event["__interrupt__"][0].value
-            result = {
-                "status": "pending_human_review",
-                "thread_id": thread_id,
-                "review_data": payload,
-            }
-            _write_audit(prepared, result.get("status"))
-            return result
+        # 恢复执行，直到下一个 interrupt（多工厂循环时）或 END
+        for event in graph.stream(
+            Command(resume=resume_data), _config(thread_id), stream_mode="updates"
+        ):
+            if "__interrupt__" in event:
+                payload = event["__interrupt__"][0].value
+                result = {
+                    "status": "pending_human_review",
+                    "thread_id": thread_id,
+                    "review_data": payload,
+                }
+                _write_audit(prepared, result.get("status"))
+                return result
 
-    final = graph.get_state(_config(thread_id))
-    result = {
-        "status": "success",
-        "message": "数据已成功落库并写入下游表格",
-        "final_validation_status": final.values.get("validation_status"),
-        "final_output_path": final.values.get("final_output_path"),
-    }
-    _write_audit(prepared, result.get("status"))
-    return result
+        final = graph.get_state(_config(thread_id))
+        result = {
+            "status": "success",
+            "message": "数据已成功落库并写入下游表格",
+            "final_validation_status": final.values.get("validation_status"),
+            "final_output_path": final.values.get("final_output_path"),
+        }
+        _write_audit(prepared, result.get("status"))
+        return result
+    finally:
+        clear_context()
 
 
 def rerun_with_paths(
@@ -141,21 +156,26 @@ def rerun_with_paths(
     if downstream_file_path:
         update["downstream_file_path"] = downstream_file_path
 
-    graph.update_state(cfg, update, as_node=START)
-    for event in graph.stream(None, cfg, stream_mode="updates"):
-        if "__interrupt__" in event:
-            return {
-                "status": "pending_human_review",
-                "thread_id": thread_id,
-                "review_data": event["__interrupt__"][0].value,
-            }
+    # L2 日志关联：重跑也是一次完整跑图，绑定批次号（工厂名由 Node2 重绑）
+    bind_context(thread_id=thread_id)
+    try:
+        graph.update_state(cfg, update, as_node=START)
+        for event in graph.stream(None, cfg, stream_mode="updates"):
+            if "__interrupt__" in event:
+                return {
+                    "status": "pending_human_review",
+                    "thread_id": thread_id,
+                    "review_data": event["__interrupt__"][0].value,
+                }
 
-    final = graph.get_state(cfg)
-    return {
-        "status": "completed",
-        "thread_id": thread_id,
-        "final_output_path": final.values.get("final_output_path"),
-    }
+        final = graph.get_state(cfg)
+        return {
+            "status": "completed",
+            "thread_id": thread_id,
+            "final_output_path": final.values.get("final_output_path"),
+        }
+    finally:
+        clear_context()
 
 
 def get_order_state(thread_id: str) -> dict[str, Any]:
@@ -460,40 +480,45 @@ def delete_batch(thread_id: str) -> dict[str, Any]:
     if not any(t.interrupts for t in snap.tasks) and snap.next:
         raise RuntimeError(f"批次正在运行，禁止删除: {thread_id}")
 
-    path = Path(get_settings().checkpoint_db_abs).resolve()
-    conn = sqlite3.connect(str(path))
+    # L2 日志关联：删除动作及其审计留痕日志携带批次号
+    bind_context(thread_id=thread_id)
     try:
-        cur = conn.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
-        writes_removed = cur.rowcount
-        cur = conn.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
-        checkpoints_removed = cur.rowcount
-        conn.commit()
+        path = Path(get_settings().checkpoint_db_abs).resolve()
+        conn = sqlite3.connect(str(path))
+        try:
+            cur = conn.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
+            writes_removed = cur.rowcount
+            cur = conn.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
+            checkpoints_removed = cur.rowcount
+            conn.commit()
+        finally:
+            conn.close()
+
+        # 审计留痕（顺序：先删成功再留痕；失败只警告，不阻塞返回）
+        try:
+            with get_session() as session:
+                session.add(ReviewAudit(
+                    thread_id=thread_id,
+                    factory_name=None,
+                    approved=False,
+                    edited_count=0,
+                    changes_json="[]",
+                    new_skus_json="[]",
+                    result_status="batch_deleted",
+                ))
+                session.commit()
+        except Exception as e:  # noqa: BLE001 与 _write_audit 同哲学：留痕失败不阻塞
+            print(f"⚠️⚠️ [审计落库失败] thread={thread_id} "
+                  f"批次已删除，但 batch_deleted 留痕写入失败："
+                  f"{type(e).__name__}: {e}")
+
+        return {
+            "deleted": thread_id,
+            "checkpoints_removed": checkpoints_removed,
+            "writes_removed": writes_removed,
+        }
     finally:
-        conn.close()
-
-    # 审计留痕（顺序：先删成功再留痕；失败只警告，不阻塞返回）
-    try:
-        with get_session() as session:
-            session.add(ReviewAudit(
-                thread_id=thread_id,
-                factory_name=None,
-                approved=False,
-                edited_count=0,
-                changes_json="[]",
-                new_skus_json="[]",
-                result_status="batch_deleted",
-            ))
-            session.commit()
-    except Exception as e:  # noqa: BLE001 与 _write_audit 同哲学：留痕失败不阻塞
-        print(f"⚠️⚠️ [审计落库失败] thread={thread_id} "
-              f"批次已删除，但 batch_deleted 留痕写入失败："
-              f"{type(e).__name__}: {e}")
-
-    return {
-        "deleted": thread_id,
-        "checkpoints_removed": checkpoints_removed,
-        "writes_removed": writes_removed,
-    }
+        clear_context()
 
 
 def create_batch(

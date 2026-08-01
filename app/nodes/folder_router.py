@@ -8,13 +8,17 @@
 匹配到后列出文件夹下所有单据文件（PDF/Excel/图片），写入 state。
 """
 import json
+import logging
 import unicodedata
 from pathlib import Path
 
 from rapidfuzz import fuzz, process
 
 from app.config import get_settings
+from app.logging_config import bind_context
 from app.state import AgentState
+
+logger = logging.getLogger(__name__)
 
 # 支持的上游单据扩展名（.doc/.docx 走 doc_channel：soffice/textutil 转换）
 SUPPORTED_EXTS = {".pdf", ".xlsx", ".xls", ".jpg", ".jpeg", ".png", ".csv",
@@ -42,6 +46,14 @@ def folder_router(state: AgentState) -> dict:
         return {"current_factory_data": {}}
 
     factory = queue.pop(0)
+
+    # L2 日志关联：多工厂循环的调度入口，进入某工厂处理即绑定工厂名。
+    # 实测：LangGraph 每个节点在拷贝的 context 中执行，节点内 set 不外泄
+    # （后续节点如需工厂名要各自从 state 绑定），故此处绑定只覆盖本节点
+    # 日志，离开自动失效、无需显式清理；批次号由 service 层绑定并随
+    # context 拷贝传播进所有节点。
+    bind_context(factory=factory)
+
     upstream_root = Path(state.get("upstream_root") or settings.upstream_root)
     expected_skus = (state.get("downstream_requirements") or {}).get(factory, [])
 
@@ -66,8 +78,9 @@ def folder_router(state: AgentState) -> dict:
                 (f for f in folders if f.lower() == alias_hit.lower()), None
             )
             if ci_hit:
-                print(f"[Node2] 别名「{alias_hit}」精确匹配未命中，"
-                      f"大小写不敏感兜底命中文件夹「{ci_hit}」")
+                logger.info(
+                    "[Node2] 别名「%s」精确匹配未命中，"
+                    "大小写不敏感兜底命中文件夹「%s」", alias_hit, ci_hit)
                 folder_path = str(upstream_root / ci_hit)
                 match_score = 100.0
         if folder_path is None and folders:
@@ -95,9 +108,10 @@ def folder_router(state: AgentState) -> dict:
             if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS
         )
 
-    print(f"[Node2] 工厂「{factory}」-> 文件夹 {folder_path or '未匹配'} "
-          f"(得分 {match_score})，单据 {len(source_documents)} 个，"
-          f"期望 SKU {len(expected_skus)} 个")
+    logger.info(
+        "[Node2] 工厂「%s」-> 文件夹 %s (得分 %s)，单据 %d 个，期望 SKU %d 个",
+        factory, folder_path or "未匹配", match_score,
+        len(source_documents), len(expected_skus))
 
     return {
         "pending_factories": queue,
