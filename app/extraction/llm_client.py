@@ -61,6 +61,9 @@ def _sanitize_messages(messages: list[dict]) -> list[dict]:
     """
     safe: list[dict] = []
     for m in messages:
+        if not isinstance(m, dict):
+            safe.append(m)  # 防御：非 dict 消息项原样保留，日志绝不抛异常
+            continue
         content = m.get("content")
         if isinstance(content, list):
             parts = []
@@ -83,6 +86,9 @@ def _response_text(resp) -> str:
     except (IndexError, AttributeError, TypeError):
         return "<无法解析响应结构>"
     text = msg.content or ""
+    if not isinstance(text, str):
+        # 防御：list 型 content 强转 str，避免日志处理抛 TypeError 击穿主流程
+        text = str(text)
     tool_calls = getattr(msg, "tool_calls", None) or []
     if tool_calls:
         names = [getattr(getattr(tc, "function", None), "name", "?")
@@ -264,6 +270,34 @@ def _create_with_retry(kwargs: dict, model: str, kind: str,
                 label, model, _truncate(_response_text(resp)),
             )
             return resp
+        # APITimeoutError 是 APIConnectionError（→APIError）的子类，
+        # 必须放在 except APIError 之前，否则超时永远落不到专属分支
+        except APITimeoutError as e:
+            last_exc = e
+            usage_tracker.add(
+                UsageRecord(
+                    model=model,
+                    kind=kind,
+                    source_file=source_file,
+                    success=False,
+                    error=f"APITimeoutError: {str(e)[:200]}",
+                )
+            )
+            if attempt < MAX_API_RETRIES:
+                backoff = (2**attempt) + random.uniform(0, 0.5)
+                logger.warning(
+                    "LLM 调用超时，第 %d/%d 次重试 | %s | model=%s | "
+                    "%.1fs 后重试 | %s",
+                    attempt + 1, MAX_API_RETRIES, label, model, backoff,
+                    str(e)[:200],
+                )
+                time.sleep(backoff)
+                continue
+            logger.exception(
+                "LLM 调用超时最终失败（重试耗尽）| %s | model=%s",
+                label, model,
+            )
+            raise
         except APIError as e:
             # 部分模型不支持 response_format，降级一次后按正常重试流程走
             if "response_format" in kwargs and "response_format" in str(e).lower():
@@ -299,32 +333,6 @@ def _create_with_retry(kwargs: dict, model: str, kind: str,
                 continue
             logger.exception(
                 "LLM 调用最终失败（重试耗尽或不可重试）| %s | model=%s",
-                label, model,
-            )
-            raise
-        except APITimeoutError as e:
-            last_exc = e
-            usage_tracker.add(
-                UsageRecord(
-                    model=model,
-                    kind=kind,
-                    source_file=source_file,
-                    success=False,
-                    error=f"APITimeoutError: {str(e)[:200]}",
-                )
-            )
-            if attempt < MAX_API_RETRIES:
-                backoff = (2**attempt) + random.uniform(0, 0.5)
-                logger.warning(
-                    "LLM 调用超时，第 %d/%d 次重试 | %s | model=%s | "
-                    "%.1fs 后重试 | %s",
-                    attempt + 1, MAX_API_RETRIES, label, model, backoff,
-                    str(e)[:200],
-                )
-                time.sleep(backoff)
-                continue
-            logger.exception(
-                "LLM 调用超时最终失败（重试耗尽）| %s | model=%s",
                 label, model,
             )
             raise
