@@ -101,15 +101,21 @@ def verify_weight_basis(
 
     flip_nw, flip_gw = sums(flip=True)
     if matches(flip_nw, flip_gw):
-        # 达安×75、亿钻×40 两类真实事故的防线：翻正必须留痕（WARNING）
-        basis_before = weighted[0].weight_basis if weighted else "?"
-        basis_after = "per_carton" if basis_before != "per_carton" else "total"
+        # 达安×75、亿钻×40 两类真实事故的防线：翻正必须留痕（WARNING）。
+        # 逐 item 独立翻转，混合口径组两方向可能同时存在，按方向汇总表述防误读
+        n_pc2t = sum(1 for it in weighted if it.weight_basis == "per_carton")
+        n_t2pc = len(weighted) - n_pc2t
+        flips = []
+        if n_pc2t:
+            flips.append(f"per_carton→total ×{n_pc2t}")
+        if n_t2pc:
+            flips.append(f"total→per_carton ×{n_t2pc}")
         matched = next(
             (p for p in pool if _close(flip_nw, p) or _close(flip_gw, p)), None)
         logger.warning(
-            "重量口径交叉校验翻正 | 文件=%s | 原标注=%s → 翻正后=%s | "
+            "重量口径交叉校验翻正 | 文件=%s | 翻正涉及 %d 个 SKU：%s | "
             "原口径合计 NW=%g/GW=%g 与 Total 行不符，翻正后 NW=%g/GW=%g 匹配 Total 行数值 %s",
-            src, basis_before, basis_after, cur_nw, cur_gw, flip_nw, flip_gw, matched)
+            src, len(weighted), "，".join(flips), cur_nw, cur_gw, flip_nw, flip_gw, matched)
         for it in weighted:
             it.weight_basis = "per_carton" if it.weight_basis != "per_carton" else "total"
         notes.append(

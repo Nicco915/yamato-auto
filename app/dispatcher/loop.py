@@ -406,7 +406,7 @@ def execute_confirmed(session: DispatcherSession | None,
     elif client_action is not None:
         if not isinstance(client_action, dict) \
                 or client_action.get("kind") != "dispatcher_tool":
-            logger.info("确认门拒绝执行 | 原因=无效的确认请求（action 非 dispatcher_tool 信封）")
+            logger.warning("确认门拒绝执行 | 原因=无效的确认请求（action 非 dispatcher_tool 信封）")
             return {"status": "error",
                     "message": "无效的确认请求：action 必须是 dispatcher_tool 信封"}
         action = client_action
@@ -416,7 +416,7 @@ def execute_confirmed(session: DispatcherSession | None,
 
     # TTL 防线：陈旧 action 不允许执行（防「上午的预览下午误确认」）
     if time.time() - float(action.get("created_at", 0)) > ACTION_TTL_SEC:
-        logger.info(
+        logger.warning(
             "确认门拒绝执行 | 工具=%s | 原因=TTL 过期（超过 %d 秒，须重新发起）",
             action.get("tool"), ACTION_TTL_SEC)
         if session is not None:
@@ -427,7 +427,7 @@ def execute_confirmed(session: DispatcherSession | None,
     name = str(action.get("tool") or "")
     tool = TOOLS.get(name)
     if tool is None or tool.risk != "write" or tool.execute is None:
-        logger.info(
+        logger.warning(
             "确认门拒绝执行 | 工具=%s | 原因=不是已注册的写工具", name)
         if session is not None:
             sessions.clear_pending(session)
