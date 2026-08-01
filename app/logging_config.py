@@ -7,14 +7,15 @@
 - 接管 uvicorn 三个 logger，统一走 root 的 handler/格式。
 
 L2 批次关联（contextvars）：
-- 业务入口（service 层批次函数、folder_router 工厂调度处）调
-  bind_context(thread_id=.../factory=...) 绑定关联字段，finally 里
-  clear_context() 清理；
+- 业务入口（service 层批次函数）用 logging_context(thread_id=.../factory=...)
+  上下文管理器绑定关联字段，退出时按 token 恢复前值（嵌套安全）；
+  图内节点入口用 bind_factory_from_state(state) 各自绑定当前工厂名；
 - ContextFilter（挂在各 handler 上）把 contextvars 当前值写入
   record.thread_id / record.factory，ContextFormatter 据此渲染
   "[thread_id factory]"；未绑定时不设属性、占位自动省略；
 - grep 批次号即可回放该批次全链路日志。
 """
+import contextlib
 import contextvars
 import logging
 import os
@@ -58,18 +59,65 @@ log_factory: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 )
 
 
-def bind_context(thread_id: str | None = None, factory: str | None = None) -> None:
-    """绑定当前上下文的关联字段；传 None 的字段保持现状（不清除）。"""
+def bind_context(
+    thread_id: str | None = None, factory: str | None = None
+) -> list[tuple[contextvars.ContextVar, contextvars.Token]]:
+    """绑定当前上下文的关联字段；传 None 的字段保持现状（不清除）。
+
+    返回 (ContextVar, token) 列表——ContextVar.set() 的 token 可供
+    var.reset(token) 恢复进入前的值（logging_context 的嵌套安全
+    正是基于此）；不关心恢复的调用方直接忽略返回值即可。
+    """
+    tokens: list[tuple[contextvars.ContextVar, contextvars.Token]] = []
     if thread_id is not None:
-        log_thread_id.set(thread_id)
+        tokens.append((log_thread_id, log_thread_id.set(thread_id)))
     if factory is not None:
-        log_factory.set(factory)
+        tokens.append((log_factory, log_factory.set(factory)))
+    return tokens
+
+
+@contextlib.contextmanager
+def logging_context(thread_id: str | None = None, factory: str | None = None):
+    """关联字段绑定的上下文管理器：进入时绑定，退出时恢复前值。
+
+    嵌套安全（L2 审查修复点 2）：与 "try/finally clear_context()" 不同，
+    __exit__ 用 var.reset(token) 恢复进入前的值——嵌套调用（如
+    dispatcher 工具同步调 service.resume_order）退出内层后，外层已绑的
+    thread_id 原样恢复，不会被抹成 None。
+    """
+    tokens = bind_context(thread_id=thread_id, factory=factory)
+    try:
+        yield
+    finally:
+        # 逆序 reset：与 set 顺序对称，逐层恢复前值
+        for var, token in reversed(tokens):
+            var.reset(token)
 
 
 def clear_context() -> None:
-    """清空当前上下文的全部关联字段（入口函数 finally 中调用）。"""
+    """清空当前上下文的全部关联字段（无条件置 None）。
+
+    仅用于"确知无外层绑定"的场景（如一次性 CLI 入口的最外层）；
+    可能被嵌套调用的入口必须改用 logging_context()——否则内层退出时
+    会把外层已绑的 thread_id 抹掉。
+    """
     log_thread_id.set(None)
     log_factory.set(None)
+
+
+def bind_factory_from_state(state) -> None:
+    """节点入口绑定当前工厂名：从 state["current_factory_data"]["factory_name"] 取。
+
+    多工厂批次 resume 链上，Node3 提取 / Node4 核算 / Node5 审核 / Node6 写回
+    处理的是工厂 F_{k+1} 的数据，但节点 context 在 submit 时拷贝自调用处
+    （service 层残留的是上一工厂 F_k），节点内 set 又不外泄——因此每个节点
+    入口须各自从 state 重绑（与 folder_router 的既有模式一致）。
+    节点独立 context 保证绑定离开即失效，无需清理。
+    取不到工厂名时不绑定、不抛异常（缺省容错）。
+    """
+    factory = ((state or {}).get("current_factory_data") or {}).get("factory_name")
+    if factory:
+        bind_context(factory=factory)
 
 
 class ContextFilter(logging.Filter):

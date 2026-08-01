@@ -16,6 +16,7 @@ import logging
 from langgraph.types import interrupt
 
 from app.config import get_settings
+from app.logging_config import bind_factory_from_state
 from app.nodes.compute_align import _safe_div
 from app.state import AgentState
 
@@ -26,6 +27,10 @@ NEW_SKU_REQUIRED_FIELDS = ["name_cn", "hs_code", "inspection_required"]
 
 
 def human_review(state: AgentState) -> dict:
+    # L2 日志关联：从 state 重绑当前工厂名（多工厂 resume 链上 submit 拷贝的
+    # context 残留上一工厂）；interrupt 恢复后节点从头重跑，入口绑定对
+    # 挂起前/恢复后两程日志都生效；节点独立 context 保证不外泄，无需清理
+    bind_factory_from_state(state)
     cur = dict(state.get("current_factory_data") or {})
 
     # ---- 构建审核负载（第一阶段.md 第 6 节结构）----

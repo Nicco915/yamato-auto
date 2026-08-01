@@ -25,7 +25,7 @@ from app.db.session import get_session
 from app.extraction.llm_client import usage_tracker
 from app.extraction.session import SESSIONS_DIR
 from app.graph import get_graph
-from app.logging_config import bind_context, clear_context
+from app.logging_config import logging_context
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +47,8 @@ def run_until_interrupt(
       - {"status": "completed", "final_state": ...}
     """
     # L2 日志关联：绑定批次号，图内节点日志（context 拷贝传播）自动携带；
-    # finally 清理，避免污染复用的 worker 线程
-    bind_context(thread_id=thread_id)
-    try:
+    # logging_context 退出时恢复前值（嵌套调用安全，不抹外层绑定）
+    with logging_context(thread_id=thread_id):
         graph = get_graph()
         initial_state: dict[str, Any] = {}
         if downstream_file_path:
@@ -74,8 +73,6 @@ def run_until_interrupt(
             "thread_id": thread_id,
             "final_output_path": final.values.get("final_output_path"),
         }
-    finally:
-        clear_context()
 
 
 def resume_order(thread_id: str, resume_data: dict) -> dict[str, Any]:
@@ -92,11 +89,10 @@ def resume_order(thread_id: str, resume_data: dict) -> dict[str, Any]:
         raise ValueError("该任务没有处于等待审核状态，或已完成。")
 
     # L2 日志关联：resume 与首次运行是不同的请求/context，需重新绑定；
-    # 工厂名从挂起现场取（首次运行的 finally 已清空），
+    # 工厂名从挂起现场取（首次运行的绑定已随 logging_context 退出恢复），
     # 保证审核后续节点（Node5 收尾/Node6 写回）日志仍带工厂名
     factory = (state.values.get("current_factory_data") or {}).get("factory_name")
-    bind_context(thread_id=thread_id, factory=factory)
-    try:
+    with logging_context(thread_id=thread_id, factory=factory):
         prepared = _prepare_audit(thread_id, resume_data)
 
         # 恢复执行，直到下一个 interrupt（多工厂循环时）或 END
@@ -122,8 +118,6 @@ def resume_order(thread_id: str, resume_data: dict) -> dict[str, Any]:
         }
         _write_audit(prepared, result.get("status"))
         return result
-    finally:
-        clear_context()
 
 
 def rerun_with_paths(
@@ -160,8 +154,7 @@ def rerun_with_paths(
         update["downstream_file_path"] = downstream_file_path
 
     # L2 日志关联：重跑也是一次完整跑图，绑定批次号（工厂名由 Node2 重绑）
-    bind_context(thread_id=thread_id)
-    try:
+    with logging_context(thread_id=thread_id):
         graph.update_state(cfg, update, as_node=START)
         for event in graph.stream(None, cfg, stream_mode="updates"):
             if "__interrupt__" in event:
@@ -177,8 +170,6 @@ def rerun_with_paths(
             "thread_id": thread_id,
             "final_output_path": final.values.get("final_output_path"),
         }
-    finally:
-        clear_context()
 
 
 def get_order_state(thread_id: str) -> dict[str, Any]:
@@ -484,8 +475,7 @@ def delete_batch(thread_id: str) -> dict[str, Any]:
         raise RuntimeError(f"批次正在运行，禁止删除: {thread_id}")
 
     # L2 日志关联：删除动作及其审计留痕日志携带批次号
-    bind_context(thread_id=thread_id)
-    try:
+    with logging_context(thread_id=thread_id):
         path = Path(get_settings().checkpoint_db_abs).resolve()
         conn = sqlite3.connect(str(path))
         try:
@@ -520,8 +510,6 @@ def delete_batch(thread_id: str) -> dict[str, Any]:
             "checkpoints_removed": checkpoints_removed,
             "writes_removed": writes_removed,
         }
-    finally:
-        clear_context()
 
 
 def create_batch(
