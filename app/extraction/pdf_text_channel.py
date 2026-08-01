@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -35,6 +36,8 @@ from .prompts import (
 MIN_CHARS_PER_PAGE = 50  # 每页平均可提取字符数阈值，低于此值判定为扫描件
 MAX_TOTAL_PAGES = 12  # 单文件最多处理的页数（与视觉通道一致，控制成本）
 MAX_PDF_TEXT_CHARS = 20000  # 文本最长字符数，超出截断
+
+logger = logging.getLogger(__name__)
 
 
 def pdf_to_text(file_path: str) -> tuple[str, bool]:
@@ -90,8 +93,17 @@ def extract_pdf_text(file_path: str) -> ChannelResult:
         except JsonParseError as e:
             result.json_parse_failures += 1
             if attempt >= 2:
+                # 重试耗尽：带堆栈记 ERROR 进 error.log，便于事后追查
+                logger.exception(
+                    "JSON 解析重试耗尽，最终失败 | %s | 共 %d 次尝试 | %s",
+                    source_name, attempt + 1, str(e)[:300],
+                )
                 result.error = f"JSON 解析重试 2 次后仍失败: {e}"
                 return result
+            logger.warning(
+                "JSON 解析失败，第 %d/2 次重试 | %s | 错误: %s",
+                attempt + 1, source_name, str(e)[:200],
+            )
             messages = messages + [
                 {"role": "assistant", "content": raw},
                 {"role": "user", "content": build_retry_message(raw, str(e))},

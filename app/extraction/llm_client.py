@@ -8,9 +8,16 @@
 - TEXT_MODEL            默认 Qwen/Qwen2.5-72B-Instruct
 
 可靠性：超时 120s；429/5xx 指数退避重试最多 3 次；每次调用记录 token 用量。
+
+可观测性（L4）：每次调用记 INFO（用途/模型/耗时/tokens/finish_reason），
+finish_reason=length（max_tokens 截断，历史"假死"事故指纹）单独 WARNING，
+请求消息与响应原文 DEBUG 级各截断到前 500 字符。
+铁律：绝不记 API key / Authorization 头；.env 内容不入日志。
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
 import random
 import threading
@@ -20,6 +27,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from openai import APIError, APITimeoutError, OpenAI, RateLimitError
+
+logger = logging.getLogger(__name__)
 
 # 加载项目根目录的 .env；override=True 表示 .env 中的值会覆盖已存在的同名环境变量。
 # 本文件位于 <project>/app/app/extraction/llm_client.py，项目根 = parents[2]，
@@ -33,6 +42,66 @@ DEFAULT_TEXT_MODEL = "Qwen/Qwen2.5-72B-Instruct"
 
 REQUEST_TIMEOUT = 120  # 秒
 MAX_API_RETRIES = 3  # 429/5xx 时最多重试 3 次
+
+DEBUG_TRUNC_LIMIT = 500  # 请求/响应原文 DEBUG 日志的截断长度
+
+
+def _truncate(text: str, limit: int = DEBUG_TRUNC_LIMIT) -> str:
+    """截断长文本用于 DEBUG 日志，超长时标注已截断及总长度。"""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"...[已截断，共 {len(text)} 字符]"
+
+
+def _sanitize_messages(messages: list[dict]) -> list[dict]:
+    """脱敏请求消息用于 DEBUG 日志：vision 消息的 base64 图片数据替换为占位符。
+
+    只动 content 里的 image_url 部分；messages 本身不含 API key
+    （key 在 client 的 Authorization 头里，本模块任何地方都不入日志）。
+    """
+    safe: list[dict] = []
+    for m in messages:
+        content = m.get("content")
+        if isinstance(content, list):
+            parts = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    parts.append({"type": "image_url",
+                                  "image_url": "<base64 图片数据已省略>"})
+                else:
+                    parts.append(part)
+            safe.append({**m, "content": parts})
+        else:
+            safe.append(m)
+    return safe
+
+
+def _response_text(resp) -> str:
+    """取响应原文用于 DEBUG 日志：正文 + tool_calls 摘要（如有）。"""
+    try:
+        msg = resp.choices[0].message
+    except (IndexError, AttributeError, TypeError):
+        return "<无法解析响应结构>"
+    text = msg.content or ""
+    tool_calls = getattr(msg, "tool_calls", None) or []
+    if tool_calls:
+        names = [getattr(getattr(tc, "function", None), "name", "?")
+                 for tc in tool_calls]
+        text += f" [tool_calls: {', '.join(names)}]"
+    return text
+
+
+def _finish_reason(resp) -> str:
+    """取 finish_reason，缺choices/字段时返回空串。"""
+    try:
+        return resp.choices[0].finish_reason or ""
+    except (IndexError, AttributeError, TypeError):
+        return ""
+
+
+def _call_label(kind: str, source_file: str) -> str:
+    """调用点标识：用途（text/vision）+ 来源文件。"""
+    return f"kind={kind} source={source_file or '-'}"
 
 
 def thinking_enabled() -> bool:
@@ -138,33 +207,71 @@ def _create_with_retry(kwargs: dict, model: str, kind: str,
 
     - 429/5xx 指数退避重试最多 MAX_API_RETRIES 次；
     - 每次调用（含失败）记录 token 用量到 usage_tracker；
+    - 每次调用记 INFO（模型/耗时/tokens/finish_reason），
+      finish_reason=length 单独 WARNING（历史"假死"事故指纹），
+      请求消息与响应原文 DEBUG 级各截断 500 字符（图片 base64 省略）；
     - 成功返回原始 ChatCompletion 响应对象（由调用方取 content / tool_calls）。
     """
     client = _get_client()
+    label = _call_label(kind, source_file)
     last_exc: Exception | None = None
+    logger.debug(
+        "LLM 请求 | %s | model=%s | messages=%s",
+        label, model,
+        _truncate(json.dumps(
+            _sanitize_messages(kwargs.get("messages", [])),
+            ensure_ascii=False, default=str)),
+    )
     for attempt in range(MAX_API_RETRIES + 1):
         t0 = time.time()
         try:
             resp = client.chat.completions.create(**kwargs)
             elapsed = time.time() - t0
             usage = getattr(resp, "usage", None)
+            prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+            completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+            total_tokens = getattr(usage, "total_tokens", 0) or 0
+            finish_reason = _finish_reason(resp)
             usage_tracker.add(
                 UsageRecord(
                     model=model,
                     kind=kind,
                     source_file=source_file,
-                    prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-                    completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
-                    total_tokens=getattr(usage, "total_tokens", 0) or 0,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
                     elapsed_sec=round(elapsed, 2),
                     success=True,
                 )
+            )
+            logger.info(
+                "LLM 调用完成 | %s | model=%s | 耗时=%.2fs | "
+                "tokens prompt=%d completion=%d total=%d | finish_reason=%s",
+                label, model, elapsed,
+                prompt_tokens, completion_tokens, total_tokens,
+                finish_reason or "unknown",
+            )
+            if finish_reason == "length":
+                # max_tokens 截断：输出 JSON 大概率不完整，后续解析失败重试叠加
+                # 曾导致正达批次 30 分钟"假死"——这是事故指纹，必须单独 WARNING
+                logger.warning(
+                    "LLM 输出被 max_tokens 截断（finish_reason=length）| %s | "
+                    "model=%s | completion_tokens=%d | 输出 JSON 可能不完整",
+                    label, model, completion_tokens,
+                )
+            logger.debug(
+                "LLM 响应原文 | %s | model=%s | %s",
+                label, model, _truncate(_response_text(resp)),
             )
             return resp
         except APIError as e:
             # 部分模型不支持 response_format，降级一次后按正常重试流程走
             if "response_format" in kwargs and "response_format" in str(e).lower():
                 kwargs.pop("response_format", None)
+                logger.info(
+                    "模型不支持 response_format，降级为普通输出重试 | %s | model=%s",
+                    label, model,
+                )
                 continue
             last_exc = e
             elapsed = time.time() - t0
@@ -181,8 +288,19 @@ def _create_with_retry(kwargs: dict, model: str, kind: str,
             )
             if retryable:
                 # 指数退避：1s, 2s, 4s + 抖动
-                time.sleep((2**attempt) + random.uniform(0, 0.5))
+                backoff = (2**attempt) + random.uniform(0, 0.5)
+                logger.warning(
+                    "LLM 调用失败，第 %d/%d 次重试 | %s | model=%s | "
+                    "%.1fs 后重试 | %s: %s",
+                    attempt + 1, MAX_API_RETRIES, label, model, backoff,
+                    type(e).__name__, str(e)[:200],
+                )
+                time.sleep(backoff)
                 continue
+            logger.exception(
+                "LLM 调用最终失败（重试耗尽或不可重试）| %s | model=%s",
+                label, model,
+            )
             raise
         except APITimeoutError as e:
             last_exc = e
@@ -196,8 +314,19 @@ def _create_with_retry(kwargs: dict, model: str, kind: str,
                 )
             )
             if attempt < MAX_API_RETRIES:
-                time.sleep((2**attempt) + random.uniform(0, 0.5))
+                backoff = (2**attempt) + random.uniform(0, 0.5)
+                logger.warning(
+                    "LLM 调用超时，第 %d/%d 次重试 | %s | model=%s | "
+                    "%.1fs 后重试 | %s",
+                    attempt + 1, MAX_API_RETRIES, label, model, backoff,
+                    str(e)[:200],
+                )
+                time.sleep(backoff)
                 continue
+            logger.exception(
+                "LLM 调用超时最终失败（重试耗尽）| %s | model=%s",
+                label, model,
+            )
             raise
     assert last_exc is not None
     raise last_exc

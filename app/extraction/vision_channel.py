@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -31,6 +32,8 @@ MAX_IMAGE_EDGE = 2000  # 图片最长边像素上限，超出则等比缩小
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 PDF_SUFFIXES = {".pdf"}
+
+logger = logging.getLogger(__name__)
 
 
 def _png_bytes_to_data_uri(data: bytes) -> str:
@@ -102,8 +105,17 @@ def _extract_batch(
         except JsonParseError as e:
             result.json_parse_failures += 1
             if attempt >= 2:
+                # 重试耗尽：带堆栈记 ERROR 进 error.log，便于事后追查
+                logger.exception(
+                    "JSON 解析重试耗尽，最终失败 | %s | 共 %d 次尝试 | %s",
+                    source_name, attempt + 1, str(e)[:300],
+                )
                 result.error = f"JSON 解析重试 2 次后仍失败: {e}"
                 return result
+            logger.warning(
+                "JSON 解析失败，第 %d/2 次重试 | %s | 错误: %s",
+                attempt + 1, source_name, str(e)[:200],
+            )
             messages = messages + [
                 {"role": "assistant", "content": raw},
                 {"role": "user", "content": build_retry_message(raw, str(e))},
