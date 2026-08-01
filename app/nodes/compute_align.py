@@ -15,6 +15,7 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.db.models import Factory, FactorySKU
 from app.db.session import get_session
+from app.logging_config import bind_factory_from_state
 from app.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,9 @@ def _safe_div(total, qty):
 
 def compute_align(state: AgentState) -> dict:
     settings = get_settings()
+    # L2 日志关联：从 state 重绑当前工厂名（多工厂 resume 链上 submit 拷贝的
+    # context 残留上一工厂）；节点独立 context 保证不外泄，无需清理
+    bind_factory_from_state(state)
     cur = dict(state.get("current_factory_data") or {})
     factory_name = cur.get("factory_name", "")
     extracted = cur.get("extracted_items") or []

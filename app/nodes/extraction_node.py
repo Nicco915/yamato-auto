@@ -19,6 +19,7 @@ import logging
 from pathlib import Path
 
 from app.config import get_settings
+from app.logging_config import bind_factory_from_state
 from app.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,10 @@ def _run_factory_session(folder_path: str, factory_name: str,
 
 
 def extraction_node(state: AgentState) -> dict:
+    # L2 日志关联：多工厂循环中本节点处理的是 state 里的新工厂，须从 state
+    # 重绑（submit 时拷贝的 context 残留上一工厂）；节点独立 context 保证
+    # 绑定不外泄，无需清理（与 folder_router 同，见 logging_config 注释）
+    bind_factory_from_state(state)
     cur = dict(state.get("current_factory_data") or {})
     factory_name = cur.get("factory_name") or "未知工厂"
     folder_path = cur.get("folder_path")
