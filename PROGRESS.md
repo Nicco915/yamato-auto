@@ -1,6 +1,6 @@
 # 供应链单证自动化 — 项目进度总览
 
-> 最后更新：2026-08-01（批次删除功能上线 + ui_api_test 扩展 16 步全绿 + 补记调度 Agent SSE 流式改造，见 6.10 节）
+> 最后更新：2026-08-01（全链路日志体系上线，见 6.11 节）
 > 设计文档：`../agent设计/`（第一/二/三阶段、api接口以及异步机制、人工审核界面设计、提取agent背景prompt）
 
 ## 1. 项目目标
@@ -37,6 +37,7 @@
 | 调度 Agent 开场提示「上次操作」 | ✅ 完成 | 开场亮出上次批次+工厂，确定性拼装不经 LLM，5 场景实测+回归 8/8（见第 6.9 节） |
 | 批次删除 | ✅ 完成 | DELETE /api/v1/batches/{id}（running 禁删 409），审计保留 + batch_deleted 留痕，工作台确认弹窗，测试 16 步全绿（见第 6.5 节） |
 | 调度 Agent SSE 流式 | ✅ 完成 | on_progress 回调穿透 loop→handle_message→SSE 端点，chat.html 流式消费 + 实时工具进度气泡；原 /chat 端点保留并存；未补专测（见第 6.10 节） |
+| 全链路日志体系 | ✅ 完成 | 三 handler 中央配置 + 批次/工厂关联 + LLM 调用可观测 + 路由决策留痕，7 测试套全绿（见第 6.11 节） |
 
 ## 4. 提取引擎（app/extraction/）
 
@@ -569,6 +570,58 @@ Agent（6.3 节）的 `set_paths` 作为调度 Agent 的一个工具整合进来
 **验证**：4 个 commit 均未补专门测试，当时以前端页面手工验证为准；调度 Agent 既有
 测试不受影响（`on_progress` 缺省 None，read/write/guide/memory 各测试走的是原
 `handle_message` 调用路径，零改动）。SSE 端点自动化测试已记入第 8 节 backlog。
+
+## 6.11 全链路日志体系（2026-08-01 完成，sub-agent 并行实施 + 逐步代码审查）
+
+**动机**：此前全项目只有 24 处散落 print（终端即丢）+ 2 个模块裸用 logging 无配置，
+排错只能靠终端 scrollback。历史事故（正达 30 分钟假死=finish_reason:length 截断+
+重试叠加；达安×75/亿钻×40 口径误标）证明：事后追查必须靠持久化、可关联的日志。
+
+**架构**（`app/logging_config.py` 中央配置，`setup_logging()` 幂等）：
+- 三 handler：控制台（`LOG_LEVEL` env，默认 INFO）/ `app/data/logs/app.log`
+  （DEBUG 起，RotatingFileHandler 10MB×5，utf-8）/ `error.log`（WARNING 起）；
+  排错先翻 error.log，全量回放看 app.log
+- 接管 uvicorn 三 logger（模块级 + lifespan 双保险，防 `uvicorn.run(app 对象)`
+  启动方式被 dictConfig 覆盖）；CLI（run_cli.py）同套配置
+- **批次关联**（排错核心）：contextvars 持有 thread_id/factory，ContextFilter
+  挂 handler 注入 record（logger 级 filter 对 propagate 记录不生效，必须挂 handler），
+  每行日志自动带 `[批次号 工厂名]`，grep 批次号可回放全链路；
+  service 四入口（run_until_interrupt/resume_order/rerun_with_paths/delete_batch）
+  用 `logging_context()` contextmanager 绑定（token 复位，嵌套调用不抹外层绑定）；
+  Node2-6 各节点入口 `bind_factory_from_state(state)` 绑工厂名（节点独立 context
+  不泄漏，langgraph 1.2.9 copy_context 语义已固化回归测试）
+
+**记什么**（按历史事故排优先级）：
+- LLM 调用（llm_client，dispatcher 共用全覆盖）：每次 INFO（模型/耗时/tokens/
+  finish_reason）；`finish_reason=length` 单独 WARNING（假死事故指纹）；JSON 解析
+  失败重试 WARNING + 耗尽 exception；请求/响应 DEBUG 截 500 字符，vision base64
+  脱敏；API key 绝不入日志
+- 节点事件（原 24 处 print 全迁 logger，app/ 下 print 清零）：正常 INFO、
+  降级/兜底 WARNING、异常 logger.exception 带堆栈
+- 提取路由决策：目标识别候选判定 DEBUG、负向信号硬否决/选定目标 INFO
+  （"不拿汇总版凑合"执行点）、select_pl_sheets 筛选、_drop_zero_rows 计数、
+  verify 翻正 WARNING（按方向汇总：per_carton→total ×a，防混合口径误读）、
+  apply_weight_basis 换算/无法换算强制 review
+- 调度 Agent：工具调用/结果摘要（脱敏截 200）、确认门拦截/执行/拒绝——
+  篡改类拒绝（非法信封/TTL 过期/非写工具）WARNING 进 error.log
+- HTTP 中间件：每请求 method/path/状态码/耗时；4xx/5xx 升 WARNING 带 detail
+  （原地替换 body_iterator，字节无损）；静态资产/health 降 DEBUG 降噪
+
+**审查修复记录**（每步 sub-agent 实现 → 代码审查员审查 → 修复 → commit）：
+- L4：`except APITimeoutError` 原为 APIError 子类死分支（超时日志不可达），前移；
+  `_response_text` 非 str content 强转 + `_sanitize_messages` 非 dict 哨兵
+- L2：resume 链 Node3/4 工厂名错配（日志会标错工厂）→ 节点入口各自绑定；
+  clear_context 嵌套抹除外层绑定 → token 式 logging_context；loop.py 接力绑定死代码删除
+- L3：中间件 400/500 非 JSON body 被吞（消费后未重建）→ 原地替换 body_iterator
+- 新增 `tests/logging_context_test.py`：嵌套恢复/节点 context 语义/双工厂 resume
+  链工厂名断言，固化 langgraph 内部行为防升级 silently 失效
+
+**验证**：7 测试套全绿（logging_context/smoke/ui_api 16 步/dispatcher read 8 + write 8
++ memory 6 + guide 5）；uvicorn 实测三去向输出正确（控制台/app.log/error.log 各就其位）。
+
+**已知边界**：多 worker（--workers N）写同一 app.log 非多进程安全（当前单 worker）；
+root DEBUG 下三方库 DEBUG 全进 app.log，嫌吵可对特定 logger 提级；HTTP 请求行
+不带批次号（中间件在 bind 之前，靠节点/service 日志回放已够）。
 
 ## 7. 关键设计决策记录
 
