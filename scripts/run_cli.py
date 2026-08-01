@@ -29,6 +29,11 @@ from app.api import service  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.db.models import FactorySKU  # noqa: E402
 from app.db.session import get_session  # noqa: E402
+from app.logging_config import setup_logging  # noqa: E402
+
+# 中央日志配置（幂等）：CLI 跑图同样写 app.log/error.log 文件
+# 必须放在 import 链（内部已 load_dotenv）之后调用，否则 .env 的 LOG_LEVEL 不生效
+setup_logging()
 
 THREAD_ID = "ETD0725-中地"
 TARGET_FACTORY = "山東中地"  # 下游文件中的真实工厂名（日文）

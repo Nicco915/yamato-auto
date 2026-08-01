@@ -10,6 +10,7 @@
 """
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -19,11 +20,26 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.api import service
+from app.logging_config import _takeover_uvicorn, setup_logging
 from app.review.router import configure_review
 from app.review.router import router as review_router
 from app.ui.router import router as ui_router
 
-app = FastAPI(title="供应链单证自动化 API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # uvicorn.run(app 对象) 方式启动时，uvicorn 会在模块导入（setup_logging）
+    # 之后才用自带 dictConfig 重配 uvicorn 系列 logger，把接管结果覆盖掉；
+    # startup 阶段再接管一次，确保 uvicorn 日志统一走 root 的 handler/格式
+    _takeover_uvicorn()
+    yield
+
+
+app = FastAPI(title="供应链单证自动化 API", version="0.1.0", lifespan=lifespan)
+
+# 中央日志配置（幂等）：控制台 + app.log/error.log 滚动文件，接管 uvicorn
+# 必须放在 import 链（内部已 load_dotenv）之后调用，否则 .env 的 LOG_LEVEL 不生效
+setup_logging()
 
 # 人工双屏审核界面（/review + 单据查看 + payload 读取）
 app.include_router(review_router)
