@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from typing import Callable
@@ -28,6 +29,8 @@ from typing import Callable
 from app.dispatcher import prompts, sessions
 from app.dispatcher.sessions import DispatcherSession
 from app.dispatcher.tools import TOOLS, openai_tool_defs, validate_args, visible_tools
+
+logger = logging.getLogger(__name__)
 
 MAX_ROUNDS = 6          # 单次消息允许的最大 LLM 步数（防工具调用死循环）
 TOOL_RESULT_CAP = 6000  # 工具结果 JSON 序列化后回喂 LLM 的字符上限
@@ -160,6 +163,39 @@ def _result_summary(result: dict) -> str:
     return json.dumps(result, ensure_ascii=False, default=str)[:300]
 
 
+# 日志专用摘要上限（比 tool_history 的 300 更紧，单行可读）
+_LOG_SUMMARY_CAP = 200
+# 敏感参数键：命中即脱敏，绝不进日志（api_key/token/secret/password 类）
+_SENSITIVE_KEY_PARTS = ("api_key", "apikey", "token", "secret", "password", "passwd")
+
+
+def _redact_args(args: dict) -> dict:
+    """参数脱敏拷贝：敏感键值替换为 ***（日志专用，不影响原对象）。"""
+    safe: dict = {}
+    for k, v in args.items():
+        if any(part in str(k).lower() for part in _SENSITIVE_KEY_PARTS):
+            safe[k] = "***"
+        else:
+            safe[k] = v
+    return safe
+
+
+def _log_args_summary(args: dict) -> str:
+    """日志用的参数摘要：先脱敏再截断，绝不泄露 api_key 类敏感值。"""
+    try:
+        return json.dumps(_redact_args(args), ensure_ascii=False, default=str)[:_LOG_SUMMARY_CAP]
+    except Exception:  # noqa: BLE001 日志绝不抛异常
+        return "<参数摘要序列化失败>"
+
+
+def _log_result_summary(result: dict) -> str:
+    """日志用的结果摘要（截断防爆）。"""
+    try:
+        return json.dumps(result, ensure_ascii=False, default=str)[:_LOG_SUMMARY_CAP]
+    except Exception:  # noqa: BLE001 日志绝不抛异常
+        return "<结果摘要序列化失败>"
+
+
 def _assistant_message(step: dict) -> dict:
     """把一步 tool_calls 以 assistant 消息形态回写进 messages。
 
@@ -251,6 +287,9 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
 
             # 哨兵：native 模式参数 JSON 解析失败，回喂让模型重新调用
             if name == "__parse_error__":
+                logger.warning(
+                    "工具错误：参数 JSON 解析失败，已回喂重试 | raw=%s",
+                    str(call["args"].get("raw", ""))[:_LOG_SUMMARY_CAP])
                 if on_progress:
                     on_progress({"type": "tool_error", "tool": name,
                                  "error": "工具参数 JSON 解析失败"})
@@ -262,6 +301,7 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
             # 未知工具 / 当前 phase 不可见：回喂错误，绝不执行
             tool = TOOLS.get(name)
             if tool is None or name not in visible:
+                logger.warning("工具错误：未知工具或当前阶段不可见 | 工具=%s", name)
                 if on_progress:
                     on_progress({"type": "tool_error", "tool": name,
                                  "error": f"未知工具：{name}"})
@@ -271,6 +311,8 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
 
             args, arg_error = validate_args(call["args"], tool.parameters)
             if arg_error:
+                logger.warning(
+                    "工具错误：参数校验未通过 | 工具=%s | 错误=%s", name, arg_error)
                 if on_progress:
                     on_progress({"type": "tool_error", "tool": name,
                                  "error": arg_error})
@@ -286,6 +328,8 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
                 try:
                     preview = tool.preview(args)
                 except Exception as exc:  # preview 契约未保证不抛，兜底回喂
+                    logger.warning(
+                        "工具错误：写工具预览生成失败 | 工具=%s | 错误=%s", name, exc)
                     messages.append(_tool_message(
                         call, f"工具 {name} 预览生成失败：{exc}。"))
                     continue
@@ -299,6 +343,10 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
                     "created_at": time.time(),
                 }
                 session.pending_action = action
+                logger.info(
+                    "确认门拦截写工具 | 工具=%s | 参数=%s | 预览摘要=%s",
+                    name, _log_args_summary(args),
+                    str(preview["summary"])[:_LOG_SUMMARY_CAP])
                 sessions.record_tool(session, tool=name,
                                      args_summary=_args_summary(args),
                                      result_summary="待人工确认",
@@ -324,7 +372,15 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
             if on_progress:
                 on_progress({"type": "tool_call", "tool": name,
                              "args_summary": _args_summary(args)})
+            logger.info("工具调用 | 工具=%s | 参数=%s", name, _log_args_summary(args))
             result = tool.func(args)
+            if isinstance(result, dict) and result.get("error"):
+                logger.warning(
+                    "工具错误：执行返回错误 | 工具=%s | 错误=%s",
+                    name, str(result.get("error"))[:_LOG_SUMMARY_CAP])
+            else:
+                logger.info(
+                    "工具结果 | 工具=%s | 结果=%s", name, _log_result_summary(result))
             sessions.record_tool(session, tool=name,
                                  args_summary=_args_summary(args),
                                  result_summary=_result_summary(result))
@@ -358,14 +414,19 @@ def execute_confirmed(session: DispatcherSession | None,
     elif client_action is not None:
         if not isinstance(client_action, dict) \
                 or client_action.get("kind") != "dispatcher_tool":
+            logger.info("确认门拒绝执行 | 原因=无效的确认请求（action 非 dispatcher_tool 信封）")
             return {"status": "error",
                     "message": "无效的确认请求：action 必须是 dispatcher_tool 信封"}
         action = client_action
     if action is None:
+        logger.info("确认门拒绝执行 | 原因=没有待确认的操作")
         return {"status": "error", "message": "没有待确认的操作"}
 
     # TTL 防线：陈旧 action 不允许执行（防「上午的预览下午误确认」）
     if time.time() - float(action.get("created_at", 0)) > ACTION_TTL_SEC:
+        logger.info(
+            "确认门拒绝执行 | 工具=%s | 原因=TTL 过期（超过 %d 秒，须重新发起）",
+            action.get("tool"), ACTION_TTL_SEC)
         if session is not None:
             sessions.clear_pending(session)
         return {"status": "expired", "message": "该操作已超时，请重新发起"}
@@ -374,6 +435,8 @@ def execute_confirmed(session: DispatcherSession | None,
     name = str(action.get("tool") or "")
     tool = TOOLS.get(name)
     if tool is None or tool.risk != "write" or tool.execute is None:
+        logger.info(
+            "确认门拒绝执行 | 工具=%s | 原因=不是已注册的写工具", name)
         if session is not None:
             sessions.clear_pending(session)
         return {"status": "error",
@@ -382,10 +445,15 @@ def execute_confirmed(session: DispatcherSession | None,
     # confirm 防线：参数再校验一次（action 可能来自客户端，不可信）
     args, arg_error = validate_args(action.get("args") or {}, tool.parameters)
     if arg_error:
+        logger.info(
+            "确认门拒绝执行 | 工具=%s | 原因=参数校验未通过：%s", name, arg_error)
         return {"status": "error",
                 "message": f"参数校验未通过：{arg_error}，未执行任何操作"}
 
     result = tool.execute(args)
+    logger.info(
+        "确认门已执行写工具 | 工具=%s | 参数=%s | 结果=%s",
+        name, _log_args_summary(args), _log_result_summary(result))
     if session is not None:
         sessions.record_tool(session, tool=name,
                              args_summary=_args_summary(args),

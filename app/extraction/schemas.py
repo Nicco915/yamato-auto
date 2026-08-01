@@ -8,9 +8,12 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class ExtractedItem(BaseModel):
@@ -66,6 +69,7 @@ def apply_weight_basis(items: list[ExtractedItem]) -> list[ExtractedItem]:
     件数缺失无法换算时置 needs_human_review，绝不静默丢数。
     （2026-07-27 亿钻案例：通用箱单只印每箱毛/净重，如 13.00/12.00 × 50 CTNS。）
     """
+    converted = 0
     for it in items:
         if it.weight_basis != "per_carton":
             continue
@@ -75,9 +79,17 @@ def apply_weight_basis(items: list[ExtractedItem]) -> list[ExtractedItem]:
             if it.total_gross_weight is not None:
                 it.total_gross_weight = round(it.total_gross_weight * it.total_quantity, 3)
             it.weight_basis = "total"
+            converted += 1
         else:
             it.needs_human_review = True
             it.review_reason = (it.review_reason or "") + "重量为每箱口径但件数缺失，无法换算合计"
+            # 「绝不静默丢数」铁律执行点：无法换算必须留痕（WARNING）
+            logger.warning(
+                "每箱口径重量无法换算，已强制人工审核 | SKU=%s（%s）| 件数缺失 | 文件=%s",
+                it.sku_code or "（无编码）", it.sku_name or "（无品名）",
+                it.source_file or "（未知文件）")
+    if converted:
+        logger.info("每箱口径重量换算完成 | per_carton→total 条目数=%d（单箱重×件数）", converted)
     return items
 
 
