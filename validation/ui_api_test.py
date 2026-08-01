@@ -9,7 +9,12 @@
 
 断言流：defaults → 发起批次（首工厂挂起）→ 重名 409 → 坏路径 422 → 批次列表
 → 批次详情 → 审核 payload → resume（改总净重 +50 + 新 SKU 补录）→ 审计落库
-→ usage → 4 个页面路由 → 详情 404。
+→ usage → 4 个页面路由 → 详情 404 → 删除挂起批次 → 列表确认消失
+→ 审计留痕（既有 resume 行保留 + batch_deleted 留痕行）→ 重复删除/详情 404。
+
+（删除步骤放最后：第 9 步审计断言依赖批次存在，第 11 步页面路由为静态页不受影响。
+ running 409 分支在 mock/TestClient 下难以稳定构造——需要批次恰好处于
+ "next 非空且无 interrupt" 的瞬态，单线程串行请求抓不到，此处注释说明不强制断言。）
 
 用法（在 app/ 目录下）：
   python3 validation/ui_api_test.py
@@ -18,6 +23,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -210,7 +216,7 @@ def main() -> int:
     # ---- 11. 页面路由 ----
     print("\n===== 11. 页面路由 200 + 特征字符串 =====")
     for path, marker in (("/", "发起批次"),
-                         ("/chat", "关联批次"),
+                         ("/chat", "调度 Agent"),  # 6.7 起 /chat 为调度 Agent 页
                          (f"/batch/{THREAD_ID}", "批次详情"),
                          ("/ui/static/ui.css", "--primary")):
         r = client.get(path)
@@ -223,6 +229,55 @@ def main() -> int:
     r = client.get("/api/v1/batches/不存在的批次")
     assert r.status_code == 404, f"期望 404，实际 {r.status_code}: {r.text}"
     print(f"  ✓ 404: {r.json()['detail']}")
+
+    # ---- 13. 删除挂起批次：DELETE → 200，checkpoints_removed>0 ----
+    # （第 8 步 resume 后 UI-TEST-1 处于"下一工厂挂起"的 pending_review 状态，
+    #   删除它是合法分支；running 409 分支见文件头注释，不强制断言）
+    print("\n===== 13. DELETE /api/v1/batches/UI-TEST-1（挂起批次）=====")
+    r = client.delete(f"/api/v1/batches/{THREAD_ID}")
+    assert r.status_code == 200, f"期望 200，实际 {r.status_code}: {r.text}"
+    deleted = r.json()
+    assert deleted["deleted"] == THREAD_ID, deleted
+    assert deleted["checkpoints_removed"] > 0, \
+        f"checkpoints_removed 应 >0: {deleted}"
+    assert deleted["writes_removed"] >= 0, deleted
+    print(f"  ✓ 200: checkpoints_removed={deleted['checkpoints_removed']}，"
+          f"writes_removed={deleted['writes_removed']}")
+
+    # ---- 14. 批次列表：UI-TEST-1 已消失 ----
+    print("\n===== 14. GET /api/v1/batches（删除后）=====")
+    r = client.get("/api/v1/batches")
+    assert r.status_code == 200, r.text
+    remaining = [b["thread_id"] for b in r.json()["batches"]]
+    assert THREAD_ID not in remaining, f"删除后列表仍有 {THREAD_ID}: {remaining}"
+    print(f"  ✓ {THREAD_ID} 已从列表消失（现存 {len(remaining)} 个批次）")
+
+    # ---- 15. 审计留痕：既有 resume 行保留 + 新增 batch_deleted 行 ----
+    print("\n===== 15. review_audits 留痕（直查临时 master.db）=====")
+    master_db = str(settings.master_db_abs)
+    assert master_db.startswith(str(TMP)), f"master.db 未隔离: {master_db}"
+    conn = sqlite3.connect(master_db)
+    try:
+        rows = conn.execute(
+            "SELECT result_status FROM review_audits WHERE thread_id = ? "
+            "ORDER BY audit_id", (THREAD_ID,)).fetchall()
+    finally:
+        conn.close()
+    statuses = [r[0] for r in rows]
+    assert len(rows) == 2, f"应恰有 2 行审计（resume + 留痕）: {statuses}"
+    assert statuses[0] != "batch_deleted", f"既有 resume 审计行被改动: {statuses}"
+    assert statuses[-1] == "batch_deleted", f"缺 batch_deleted 留痕行: {statuses}"
+    print(f"  ✓ resume 行保留（result_status={statuses[0]!r}）"
+          f" + 新增留痕行（result_status='batch_deleted'）")
+
+    # ---- 16. 重复删除 → 404；详情 → 404 ----
+    print("\n===== 16. 重复删除/详情 → 404 =====")
+    r = client.delete(f"/api/v1/batches/{THREAD_ID}")
+    assert r.status_code == 404, f"重复删除期望 404，实际 {r.status_code}: {r.text}"
+    print(f"  ✓ 重复删除 404: {r.json()['detail']}")
+    r = client.get(f"/api/v1/batches/{THREAD_ID}")
+    assert r.status_code == 404, f"删除后详情期望 404，实际 {r.status_code}: {r.text}"
+    print(f"  ✓ 详情 404: {r.json()['detail']}")
 
     print("\nui_api_test: PASS")
     return 0

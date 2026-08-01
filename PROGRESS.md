@@ -1,6 +1,6 @@
 # 供应链单证自动化 — 项目进度总览
 
-> 最后更新：2026-07-28（对话 Agent L1 会话记忆：多轮补充信息可合并，A+B 双层实现）
+> 最后更新：2026-08-01（批次删除功能上线 + ui_api_test 扩展 16 步全绿）
 > 设计文档：`../agent设计/`（第一/二/三阶段、api接口以及异步机制、人工审核界面设计、提取agent背景prompt）
 
 ## 1. 项目目标
@@ -290,7 +290,24 @@ payload.weight_diff_warn_ratio（fallback 0.05）高亮，编辑实时重算）�
   两种场景实测）；
 - `app.extraction.llm_client` import 时 `load_dotenv(override=True)` 会盖回
   os.environ 中 .env 已有的同名变量——测试脚本用 env 隔离 db 时必须在 import app
-  之后重设 env + `get_settings.cache_clear()`（图/引擎为惰性单例，首个请求才创建）。
+  之后重设 env + `get_settings.cache_clear()`（图/引擎为惰性单例，首个请求才创建）；
+- 批次删除后详情一律 404（checkpoint 已清，无墓碑概念）；`batch_deleted` 留痕行
+  只能在 master.db 的 review_audits 里直查，UI 无入口（留 backlog）。
+
+**批次删除**（2026-08-01 上线，commit f2e1005 后端 + 4669890 前端）：
+- `DELETE /api/v1/batches/{thread_id}`（ui/router.py → `service.delete_batch`）：
+  不存在 404 / running 409 / 成功 200 `{"deleted","checkpoints_removed","writes_removed"}`。
+  状态判定与列表三态一致：有 task.interrupts = pending_review（可删，废弃场景）、
+  next 非空且无 interrupt = running（拒删）、next 为空 = completed（可删）。
+- **删什么留什么**：只删 checkpoints.db 里该 thread_id 的 checkpoints + writes
+  （独立 rw 连接，WAL 下与 graph 单例 saver 连接并发安全）；既有 review_audits
+  审计记录一律保留，删成功后追加一行 `result_status="batch_deleted"` 留痕
+  （留痕失败只警告，不反过来搞挂已完成的删除）；sessions/*.json、主数据、
+  输出文件一律不碰。
+- **前端**（dashboard.html）：running 批次删除按钮置灰（title 说明原因）；
+  确认弹窗按状态出专属警告（挂起待审提示"删除后无法恢复审核现场"），
+  明示"将删除状态机现场 / 将保留审计记录、工厂会话、主数据、输出文件"；
+  必须输入完整批次号才解锁红色确认按钮，Esc/点遮罩可取消。
 
 **全链路测试** `validation/ui_api_test.py`（`python3 validation/ui_api_test.py`，
 mock 提取不调 LLM，秒级）：checkpoint/master db + output 目录全部隔离到临时目录
@@ -299,7 +316,11 @@ mock 提取不调 LLM，秒级）：checkpoint/master db + output 目录全部�
 坏路径 422 → 批次列表（信封/状态/进度/created_at）→ 详情（factories 角色/audit 空/
 usage scope）→ 审核 payload（weight_diff_warn_ratio=0.05）→ resume（改总净重 +50 +
 新 SKU 补录）→ 审计落库（扁平 changes old→new、edited_count、new_skus）→ usage →
-4 页面路由 200 + 特征字符串 → 详情 404。全绿。
+4 页面路由 200 + 特征字符串 → 详情 404 → 删除挂起批次（200，checkpoints_removed>0）
+→ 列表确认消失 → 审计留痕（直查临时 master.db：既有 resume 行保留 +
+batch_deleted 留痕行）→ 重复删除/详情 404。16 步全绿。
+（running 409 分支在 mock/TestClient 单线程下抓不到瞬态，脚本内注释说明不强制断言；
+ 6.7 起 /chat 为调度 Agent 页，特征字符串已同步为"调度 Agent"。）
 
 ## 6.6 对话 Agent L1 会话记忆（2026-07-28 完成）
 
