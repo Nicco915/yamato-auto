@@ -10,6 +10,7 @@
 """
 import contextlib
 import json
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,8 @@ from app.extraction.llm_client import usage_tracker
 from app.extraction.session import SESSIONS_DIR
 from app.graph import get_graph
 from app.logging_config import bind_context, clear_context
+
+logger = logging.getLogger(__name__)
 
 
 def _config(thread_id: str) -> dict:
@@ -508,9 +511,9 @@ def delete_batch(thread_id: str) -> dict[str, Any]:
                 ))
                 session.commit()
         except Exception as e:  # noqa: BLE001 与 _write_audit 同哲学：留痕失败不阻塞
-            print(f"⚠️⚠️ [审计落库失败] thread={thread_id} "
-                  f"批次已删除，但 batch_deleted 留痕写入失败："
-                  f"{type(e).__name__}: {e}")
+            logger.warning("⚠️⚠️ [审计落库失败] thread=%s "
+                           "批次已删除，但 batch_deleted 留痕写入失败：%s: %s",
+                           thread_id, type(e).__name__, e)
 
         return {
             "deleted": thread_id,
@@ -626,7 +629,7 @@ def _write_audit(prepared: dict[str, Any] | None, result_status: str | None) -> 
     """把审计快照写入 review_audits。
 
     审计是辅助设施，不能反过来搞挂已成功的 resume：本函数 try/except
-    包死，任何失败只打印大声警告，绝不向外抛出。
+    包死，任何失败只记警告日志，绝不向外抛出。
     """
     if not prepared:
         return
@@ -643,6 +646,6 @@ def _write_audit(prepared: dict[str, Any] | None, result_status: str | None) -> 
             ))
             session.commit()
     except Exception as e:  # noqa: BLE001 故意包死，见 docstring
-        print(f"⚠️⚠️ [审计落库失败] thread={prepared.get('thread_id')} "
-              f"resume 已成功，但 review_audits 写入失败："
-              f"{type(e).__name__}: {e}")
+        logger.warning("⚠️⚠️ [审计落库失败] thread=%s "
+                       "resume 已成功，但 review_audits 写入失败：%s: %s",
+                       prepared.get('thread_id'), type(e).__name__, e)

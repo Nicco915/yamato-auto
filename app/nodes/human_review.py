@@ -11,11 +11,15 @@ resume 数据约定：
              新 SKU 必须补齐 name_cn / hs_code / inspection_required） ... ]
 }
 """
+import logging
+
 from langgraph.types import interrupt
 
 from app.config import get_settings
 from app.nodes.compute_align import _safe_div
 from app.state import AgentState
+
+logger = logging.getLogger(__name__)
 
 # 新 SKU 需人工补录的合规字段清单（《第三阶段.md》改造点 B）
 NEW_SKU_REQUIRED_FIELDS = ["name_cn", "hs_code", "inspection_required"]
@@ -57,8 +61,8 @@ def human_review(state: AgentState) -> dict:
         "weight_diff_warn_ratio": get_settings().weight_diff_warn_ratio,
     }
 
-    print(f"[Node5] 🔴 挂起等待人工审核：工厂「{cur.get('factory_name')}」，"
-          f"{len(items_payload)} 个 SKU")
+    logger.info("[Node5] 🔴 挂起等待人工审核：工厂「%s」，%d 个 SKU",
+                cur.get('factory_name'), len(items_payload))
 
     # 🔴 系统在此暂停！resume 值为人类反馈数据
     human_feedback = interrupt(review_payload)
@@ -125,6 +129,7 @@ def human_review(state: AgentState) -> dict:
 
     cur["calculated_items"] = merged_items
     status = "Approved" if approved else "Rejected"
-    print(f"[Node5] 人工审核完成：{status}（修改 {sum(1 for i in merged_items if i.get('is_human_edited'))} 项）")
+    logger.info("[Node5] 人工审核完成：%s（修改 %d 项）", status,
+                sum(1 for i in merged_items if i.get('is_human_edited')))
 
     return {"current_factory_data": cur, "validation_status": status}

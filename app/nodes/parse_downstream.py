@@ -11,10 +11,14 @@
 - 原文件无 中文品名/净重/毛重 三列，由 Node6 首次写入时在 SHOHIN_MEI_E 后插入；
 - 工厂名样例：山東中地 / Ｃ．正達工芸品 / TOP KOPH（青島）/ 上海億鑽五金工具有限公司（青島）。
 """
+import logging
+
 import pandas as pd
 
 from app.config import get_settings
 from app.state import AgentState
+
+logger = logging.getLogger(__name__)
 
 
 def parse_downstream(state: AgentState) -> dict:
@@ -48,8 +52,8 @@ def parse_downstream(state: AgentState) -> dict:
         allow = set(factory_filter)
         pending = [f for f in pending if f in allow]
 
-    print(f"[Node1] 解析 {file_path}：共 {len(df)} 行，"
-          f"{len(requirements)} 个工厂，本次队列 {len(pending)} 个")
+    logger.info("[Node1] 解析 %s：共 %d 行，%d 个工厂，本次队列 %d 个",
+                file_path, len(df), len(requirements), len(pending))
 
     return {
         "downstream_file_path": file_path,

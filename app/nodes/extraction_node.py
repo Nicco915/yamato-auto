@@ -15,10 +15,13 @@ EXTRACTION_MOCK=1 或提取线 import 失败时回落 mock 数据，保证骨架
 提取线；文件夹未匹配/提取为空时生成 needs_human_review 占位条目，让人工在
 Node5 补录，不中断流转。
 """
+import logging
 from pathlib import Path
 
 from app.config import get_settings
 from app.state import AgentState
+
+logger = logging.getLogger(__name__)
 
 # 提取线接口的惰性引用（import 失败不代表系统不可用）
 _session_mod = None
@@ -82,7 +85,7 @@ def _run_factory_session(folder_path: str, factory_name: str,
     )
     for p in files:
         r = _session_mod.process_file(session, str(p))
-        print(f"[Node3]   [{r.action}] {p.name}：{r.message}")
+        logger.info("[Node3]   [%s] %s：%s", r.action, p.name, r.message)
     session.save()  # 落盘 app/data/sessions/<工厂名>.json 供审计
     return session
 
@@ -94,20 +97,21 @@ def extraction_node(state: AgentState) -> dict:
     expected_skus = cur.get("expected_skus") or []
 
     if not folder_path:
-        print(f"[Node3] 工厂「{factory_name}」未匹配到文件夹，生成人工补录占位数据")
+        logger.warning("[Node3] 工厂「%s」未匹配到文件夹，生成人工补录占位数据",
+                       factory_name)
         cur["extracted_items"] = _placeholder_items(expected_skus, "no_folder_matched")
         return {"current_factory_data": cur}
 
     if _session_mod is None:
-        print(f"[Node3] 提取引擎不可用（{_session_import_error or 'EXTRACTION_MOCK=1'}），"
-              f"使用 mock 数据")
+        logger.warning("[Node3] 提取引擎不可用（%s），使用 mock 数据",
+                       _session_import_error or 'EXTRACTION_MOCK=1')
         cur["extracted_items"] = _mock_items(expected_skus, "mock")
         return {"current_factory_data": cur}
 
     try:
         session = _run_factory_session(folder_path, factory_name, expected_skus)
     except Exception as e:  # 提取异常不中断流转，转人工兜底
-        print(f"[Node3] 提取引擎异常：{e}，生成人工补录占位数据")
+        logger.exception("[Node3] 提取引擎异常：%s，生成人工补录占位数据", e)
         cur["extracted_items"] = _placeholder_items(expected_skus, f"extraction_error: {e}")
         return {"current_factory_data": cur}
 
@@ -120,13 +124,15 @@ def extraction_node(state: AgentState) -> dict:
     cur["extraction_coverage"] = coverage
 
     n_blocking = sum(1 for i in session.issues if i.get("level") == "blocking")
-    print(f"[Node3] 工厂「{factory_name}」：提取 {len(items)} 条 SKU，"
-          f"覆盖率 {coverage.get('extracted')}/{coverage.get('expected') or '?'}，"
-          f"反馈 {len(session.issues)} 条（blocking {n_blocking}），状态 {session.status}")
+    logger.info("[Node3] 工厂「%s」：提取 %d 条 SKU，"
+                "覆盖率 %s/%s，反馈 %d 条（blocking %d），状态 %s",
+                factory_name, len(items),
+                coverage.get('extracted'), coverage.get('expected') or '?',
+                len(session.issues), n_blocking, session.status)
 
     if not items:
         # 零容错：一条都没提出来绝不空转，全量占位交人工补录
-        print(f"[Node3] 提取结果为空，生成人工补录占位数据")
+        logger.warning("[Node3] 提取结果为空，生成人工补录占位数据")
         cur["extracted_items"] = _placeholder_items(expected_skus, "no_items_extracted")
 
     return {"current_factory_data": cur}

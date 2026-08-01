@@ -8,12 +8,16 @@
   - 老 SKU：挂载中文品名/HS 编码，对比历史单重，差异 >5% 标 Warning；
   - 新 SKU：标记 is_new_sku=True，Node5 将强制人工补录合规字段。
 """
+import logging
+
 from sqlalchemy import select
 
 from app.config import get_settings
 from app.db.models import Factory, FactorySKU
 from app.db.session import get_session
 from app.state import AgentState
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_div(total, qty):
@@ -124,7 +128,8 @@ def compute_align(state: AgentState) -> dict:
 
     n_err = sum(1 for i in calculated_items if i["status"] == "Error")
     n_new = sum(1 for i in calculated_items if i["is_new_sku"])
-    print(f"[Node4] 工厂「{factory_name}」：{len(calculated_items)} 项计算完成"
-          f"（Error {n_err} / 新SKU {n_new} / 缺失SKU {len(missing)}）")
+    logger.info("[Node4] 工厂「%s」：%d 项计算完成"
+                "（Error %d / 新SKU %d / 缺失SKU %d）",
+                factory_name, len(calculated_items), n_err, n_new, len(missing))
 
     return {"current_factory_data": cur}

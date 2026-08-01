@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -40,6 +41,8 @@ from .vision_channel import IMAGE_SUFFIXES, PDF_SUFFIXES, extract_vision
 DOC_SUFFIXES = {".doc", ".docx"}
 # 明显的系统垃圾文件
 IGNORE_NAMES = {".DS_Store", "Thumbs.db"}
+
+logger = logging.getLogger(__name__)
 
 
 class ExtractionReport(list):
@@ -73,7 +76,8 @@ def _find_soffice() -> str | None:
     if env_path:
         if Path(env_path).exists():
             return env_path
-        print(f"[doc通道] SOFFICE_PATH 指向的文件不存在：{env_path}，继续自动探测")
+        logger.warning("[doc通道] SOFFICE_PATH 指向的文件不存在：%s，继续自动探测",
+                       env_path)
     for name in ("soffice", "libreoffice"):
         path = shutil.which(name)
         if path:
@@ -106,12 +110,13 @@ def _convert_doc_to_pdf(doc_path: str, out_dir: str) -> str | None:
       （Windows 上常见的转换静默失败原因；临时目录随 out_dir 一并清理）；
     - 不读取/依赖 soffice 的 stdout 内容，只依赖 check=True 与输出文件
       存在性，中文 Windows 控制台编码（GBK/cp936）不影响流程；
-    - 失败时 print 具体原因（soffice 不存在 / 调用了但失败 / 未产出 PDF），
+    - 失败时记日志说明具体原因（soffice 不存在 / 调用了但失败 / 未产出 PDF），
       便于区分排障；返回 None 后由上层回退其他通道。
     """
     soffice = _find_soffice()
     if not soffice:
-        print(f"[doc通道] 未检测到 LibreOffice(soffice)，跳过 PDF 转换：{doc_path}")
+        logger.info("[doc通道] 未检测到 LibreOffice(soffice)，跳过 PDF 转换：%s",
+                    doc_path)
         return None
     # 独立 user profile（as_uri 生成 file:/// URL，Windows 下为正斜杠 file:///C:/...）
     profile_dir = Path(out_dir) / "lo_user_profile"
@@ -133,15 +138,16 @@ def _convert_doc_to_pdf(doc_path: str, out_dir: str) -> str | None:
     except subprocess.CalledProcessError as e:
         # stderr 仅用于排障，尽力解码（Windows 上可能是 GBK）
         stderr = (e.stderr or b"").decode("utf-8", errors="replace").strip()
-        print(f"[doc通道] soffice 转换失败（退出码 {e.returncode}）{doc_path}：{stderr[:300]}")
+        logger.error("[doc通道] soffice 转换失败（退出码 %s）%s：%s",
+                     e.returncode, doc_path, stderr[:300])
         return None
     except Exception as e:  # noqa: BLE001 - 超时/权限等，记录原因后回退其他通道
-        print(f"[doc通道] soffice 调用异常 {doc_path}：{type(e).__name__}: {e}")
+        logger.exception("[doc通道] soffice 调用异常 %s", doc_path)
         return None
     pdf = Path(out_dir) / (Path(doc_path).stem + ".pdf")
     if pdf.exists():
         return str(pdf)
-    print(f"[doc通道] soffice 执行成功但未产出 PDF：{doc_path}")
+    logger.warning("[doc通道] soffice 执行成功但未产出 PDF：%s", doc_path)
     return None
 
 
