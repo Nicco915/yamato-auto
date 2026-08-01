@@ -9,6 +9,7 @@ API（路由极薄，逻辑全在 app.api.service；全部 asyncio.to_thread 防
 - GET  /api/v1/batches              批次列表
 - POST /api/v1/batches              发起批次（409 重名 / 422 路径无效）
 - GET  /api/v1/batches/{thread_id}  批次详情（404 不存在）
+- DELETE /api/v1/batches/{thread_id} 删除过往批次（404 不存在 / 409 进行中）
 - GET  /api/v1/usage                全局 LLM 用量（scope=process_lifetime）
 - GET  /api/v1/config/defaults      路径默认值 + 单重预警阈值
 """
@@ -107,6 +108,17 @@ async def batch_detail(thread_id: str):
         return await asyncio.to_thread(service.get_batch_detail, thread_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.delete("/api/v1/batches/{thread_id}")
+async def delete_batch(thread_id: str):
+    """删除过往批次：不存在 404，进行中 409；review_audits 留痕 batch_deleted。"""
+    try:
+        return await asyncio.to_thread(service.delete_batch, thread_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
 @router.get("/api/v1/usage")

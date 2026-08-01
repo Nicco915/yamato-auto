@@ -439,6 +439,63 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
     return detail
 
 
+def delete_batch(thread_id: str) -> dict[str, Any]:
+    """删除过往批次：清掉 checkpoints.db 里该 thread_id 的全部状态（checkpoints + writes）。
+
+    状态语义（与 _summarize_snapshot 一致）：
+      - snap.values 为空 → ValueError（路由转 404）；
+      - 有 task.interrupts → pending_review（允许删，废弃场景）；
+      - next 非空且无 interrupt → running → RuntimeError（路由转 409）；
+      - next 为空 → completed（允许删）。
+
+    删除用独立 rw 连接（不碰 graph 单例 saver 连接，WAL 下并发安全）；
+    只动 checkpoints.db——sessions/*.json、主数据、输出文件一律不碰。
+    删除成功后再向 review_audits 插一条 batch_deleted 留痕行
+    （既有审计记录一律保留；留痕失败只警告，不反过来搞挂已完成的删除）。
+    """
+    graph = get_graph()
+    snap = graph.get_state(_config(thread_id))
+    if not snap.values:
+        raise ValueError(f"thread {thread_id} 不存在")
+    if not any(t.interrupts for t in snap.tasks) and snap.next:
+        raise RuntimeError(f"批次正在运行，禁止删除: {thread_id}")
+
+    path = Path(get_settings().checkpoint_db_abs).resolve()
+    conn = sqlite3.connect(str(path))
+    try:
+        cur = conn.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
+        writes_removed = cur.rowcount
+        cur = conn.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
+        checkpoints_removed = cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+
+    # 审计留痕（顺序：先删成功再留痕；失败只警告，不阻塞返回）
+    try:
+        with get_session() as session:
+            session.add(ReviewAudit(
+                thread_id=thread_id,
+                factory_name=None,
+                approved=False,
+                edited_count=0,
+                changes_json="[]",
+                new_skus_json="[]",
+                result_status="batch_deleted",
+            ))
+            session.commit()
+    except Exception as e:  # noqa: BLE001 与 _write_audit 同哲学：留痕失败不阻塞
+        print(f"⚠️⚠️ [审计落库失败] thread={thread_id} "
+              f"批次已删除，但 batch_deleted 留痕写入失败："
+              f"{type(e).__name__}: {e}")
+
+    return {
+        "deleted": thread_id,
+        "checkpoints_removed": checkpoints_removed,
+        "writes_removed": writes_removed,
+    }
+
+
 def create_batch(
     thread_id: str,
     downstream_file_path: str | None = None,
