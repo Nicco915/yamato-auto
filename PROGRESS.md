@@ -35,6 +35,7 @@
 | 调度 Agent：智能体系统前台 | ✅ 完成 | 11 工具注册表 + 双适配器循环 + 确认门 + 操作指导，测试 21/21（见第 6.7 节） |
 | 调度 Agent L2 操作记忆 + RAG 接口 | ✅ 完成 | SQLite 持久化（按 session_id 分区）+ 自动更新 + 知识库检索接口预留 RAG，测试 27/27（见第 6.8 节） |
 | 调度 Agent 开场提示「上次操作」 | ✅ 完成 | 开场亮出上次批次+工厂，确定性拼装不经 LLM，5 场景实测+回归 8/8（见第 6.9 节） |
+| 批次删除 | ✅ 完成 | DELETE /api/v1/batches/{id}（running 禁删 409），审计保留 + batch_deleted 留痕，工作台确认弹窗，测试 16 步全绿（见第 6.5 节） |
 
 ## 4. 提取引擎（app/extraction/）
 
@@ -251,7 +252,7 @@ Node3 真实分支改为以**增量会话 FactorySession** 驱动（与生产"�
 - `/review`：审核页生产加固（在原有文件上改，自包含不引 ui 资产，
   demo_server 不挂 /ui/static 仍可用）
 
-**5 个新 API**（ui/router.py → service.py）：
+**6 个新 API**（ui/router.py → service.py，第 6 个 DELETE /api/v1/batches/{thread_id} 见下「批次删除」小节）：
 - `GET /api/v1/batches`：checkpoint 只读连接（URI mode=ro）枚举 thread →
   逐个 get_state 推导三态 status（pending_review/running/completed）+ 进度 +
   创建时间（checkpoint blob msgpack ts 解出）；单线程异常降级 status="error" 不拖垮整表
@@ -549,7 +550,8 @@ Agent（6.3 节）的 `set_paths` 作为调度 Agent 的一个工具整合进来
    前端 /review 尚未展示「暂无箱单/改单/冲突」等 Agent 反馈条
 4. `--consolidate` 更新 10 工厂汇总报告（用修复后的通道重跑或基于人工核对结论更新）
 5. 按需：Celery 迁移（Windows 部署注意：Redis 需 WSL2/Docker 或 Memurai 替代）、
-   UI Basic auth（内网认证，backlog）、对话会话跨重启持久化（L1 现为进程内
+   UI Basic auth（内网认证，backlog）、删除留痕 batch_deleted 的 UI 查看入口
+   （目前只能直查 master.db review_audits，见 6.5 已知边界）、对话会话跨重启持久化（L1 现为进程内
    dict，需要时迁 app/db）、L3 长期记忆（跨批次记工厂习惯，方向已讨论未定）。
    ~~LibreOffice 安装~~（2026-07-28 完成：清华镜像装 26.2.5，亿钻 doc 主路径实测通过；
    _find_soffice 三平台探测，textutil 降级纯兜底，commit c7583f8；
