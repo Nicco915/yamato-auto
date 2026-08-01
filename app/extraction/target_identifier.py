@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,8 @@ from pathlib import Path
 from .doc_channel import doc_to_html
 from .excel_channel import UnsupportedFileError, excel_to_markdown
 from .pdf_text_channel import pdf_to_text
+
+logger = logging.getLogger(__name__)
 
 # 13 位数字条码（JAN）。本批 10 个工厂的全部 SKU 编码均为 13 位；
 # 8–10 位会误中 HS 编码（如 63053300/4421999090），11 位误中手机号，
@@ -130,12 +133,39 @@ def identify_targets(folder_path: str) -> list[FileProfile]:
     root = Path(folder_path)
     files = sorted(p for p in root.rglob("*") if p.is_file() and p.name != ".DS_Store")
     profiles = [scan_file(str(p)) for p in files]
+
+    # 候选判定留痕（路由可回放：每个文件为什么接受/否决都有据可查）
+    for prof in profiles:
+        if prof.is_candidate:
+            logger.debug(
+                "候选判定：接受 | 文件=%s | 通道=%s | 条码数=%d | 信号=净重:%s/毛重:%s/件数:%s",
+                prof.path, prof.channel, len(prof.barcodes),
+                prof.has_net, prof.has_gross, prof.has_qty)
+        else:
+            missing = (["" if prof.barcodes else "条码"]
+                       + ["" if prof.has_net else "净重"]
+                       + ["" if prof.has_gross else "毛重"]
+                       + ["" if prof.has_qty else "件数"])
+            missing = [m for m in missing if m]
+            reason = prof.error or ("缺信号：" + "/".join(missing))
+            logger.debug(
+                "候选判定：否决 | 文件=%s | 通道=%s | 条码数=%d | 原因=%s",
+                prof.path, prof.channel, len(prof.barcodes), reason)
+
     candidates = [p for p in profiles if p.is_candidate]
 
     # 负向路径信号（报关/发票/入仓…）的候选仅在"别无选择"时启用：
     # 这类文件即使内容含条码明细，也几乎从不是最优目标（正达通関単、
     # 兆丰按日期的报关资料拆分版）；整个文件夹只有它们时才兜底保留。
     clean = [p for p in candidates if _name_score(p.path) > -100]
+    if clean:
+        # 「不拿汇总版凑合」铁律的执行点：有无负向信号候选时，报关/发票类
+        # 候选一律硬否决，必须留痕（INFO，事后可回放路由依据）
+        for p in candidates:
+            if _name_score(p.path) <= -100:
+                logger.info(
+                    "路径负向信号硬否决 | 文件=%s | 条码数=%d | 原因=路径命中报关/发票类负向信号，"
+                    "且存在无负向信号候选", p.path, len(p.barcodes))
     pool = clean if clean else candidates
 
     kept: list[FileProfile] = []
@@ -149,7 +179,12 @@ def identify_targets(folder_path: str) -> list[FileProfile]:
         # 当前候选是某些已保留项的超集 → 替换掉它们
         kept = [k for k in kept if not k.barcodes < prof.barcodes]
         kept.append(prof)
-    return sorted(kept, key=lambda p: p.path)
+    kept = sorted(kept, key=lambda p: p.path)
+    for prof in kept:
+        logger.info(
+            "选定目标文件 | 文件=%s | 通道=%s | 条码数=%d | 命中信号=条码+净重+毛重+件数 | 路径分=%d",
+            prof.path, prof.channel, len(prof.barcodes), _name_score(prof.path))
+    return kept
 
 
 def scan_folder(folder_path: str) -> list[FileProfile]:

@@ -14,9 +14,12 @@
 """
 from __future__ import annotations
 
+import logging
 import re
 
 from .schemas import ExtractedItem
+
+logger = logging.getLogger(__name__)
 
 _NUM_RE = re.compile(r"\d[\d,]*\.?\d*")
 _TOTAL_LINE_RE = re.compile(r"(?i)total|合计")
@@ -86,12 +89,27 @@ def verify_weight_basis(
     def matches(nw: float, gw: float) -> bool:
         return any(_close(nw, p) for p in pool) or any(_close(gw, p) for p in pool)
 
+    # 留痕用的来源标识（工厂/文件路径，便于按批次回放）
+    src = next((it.source_file for it in weighted if it.source_file), "（未知文件）")
+
     cur_nw, cur_gw = sums(flip=False)
     if matches(cur_nw, cur_gw):
+        logger.debug(
+            "重量口径交叉校验通过（无翻正）| 文件=%s | 合计 NW=%g/GW=%g 与 Total 行吻合",
+            src, cur_nw, cur_gw)
         return items, notes
 
     flip_nw, flip_gw = sums(flip=True)
     if matches(flip_nw, flip_gw):
+        # 达安×75、亿钻×40 两类真实事故的防线：翻正必须留痕（WARNING）
+        basis_before = weighted[0].weight_basis if weighted else "?"
+        basis_after = "per_carton" if basis_before != "per_carton" else "total"
+        matched = next(
+            (p for p in pool if _close(flip_nw, p) or _close(flip_gw, p)), None)
+        logger.warning(
+            "重量口径交叉校验翻正 | 文件=%s | 原标注=%s → 翻正后=%s | "
+            "原口径合计 NW=%g/GW=%g 与 Total 行不符，翻正后 NW=%g/GW=%g 匹配 Total 行数值 %s",
+            src, basis_before, basis_after, cur_nw, cur_gw, flip_nw, flip_gw, matched)
         for it in weighted:
             it.weight_basis = "per_carton" if it.weight_basis != "per_carton" else "total"
         notes.append(
@@ -100,6 +118,10 @@ def verify_weight_basis(
         )
         return items, notes
 
+    logger.warning(
+        "重量口径交叉校验不符，已强制人工审核 | 文件=%s | 合计 NW=%g/GW=%g，"
+        "翻转口径后 NW=%g/GW=%g 亦不匹配 Total 行数值池=%s",
+        src, cur_nw, cur_gw, flip_nw, flip_gw, pool[:10])
     for it in weighted:
         it.needs_human_review = True
         it.review_reason = (it.review_reason or "") + "；重量合计与单据 Total 行交叉校验不符"

@@ -68,9 +68,13 @@ def select_pl_sheets(names: list[str]) -> list[str]:
     """
     pl = [n for n in names if any(re.search(p, n) for p in PL_SHEET_PATTERNS)]
     if pl:
-        return pl
-    rest = [n for n in names if not any(re.search(p, n) for p in NON_PL_SHEET_PATTERNS)]
-    return rest or list(names)
+        selected = pl
+    else:
+        rest = [n for n in names if not any(re.search(p, n) for p in NON_PL_SHEET_PATTERNS)]
+        selected = rest or list(names)
+    excluded = [n for n in names if n not in selected]
+    logger.info("箱单 sheet 筛选 | 选中=%s | 排除=%s", selected, excluded or "（无）")
+    return selected
 
 
 class UnsupportedFileError(RuntimeError):
@@ -224,7 +228,9 @@ def _drop_zero_rows(markdown_text: str) -> str:
     被截断 / 生成超 120s 超时）
     """
     kept: list[str] = []
-    for line in markdown_text.split("\n"):
+    dropped = 0
+    lines = markdown_text.split("\n")
+    for line in lines:
         if not line.startswith("|"):
             kept.append(line)
             continue
@@ -233,8 +239,15 @@ def _drop_zero_rows(markdown_text: str) -> str:
         has_barcode = any(_BARCODE_RE.match(c) for c in numerics)
         others = [c for c in numerics if not _BARCODE_RE.match(c)]
         if has_barcode and others and all(float(c.replace(",", "")) == 0 for c in others):
+            dropped += 1
             continue  # 全 0 占位行，丢弃
         kept.append(line)
+    if dropped:
+        logger.info(
+            "全 0 占位行预过滤 | 原行数=%d → 剩余行数=%d（过滤 %d 行）",
+            len(lines), len(kept), dropped)
+    else:
+        logger.debug("全 0 占位行预过滤 | 原行数=%d，无需过滤", len(lines))
     return "\n".join(kept)
 
 
