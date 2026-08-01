@@ -81,26 +81,37 @@ async def request_logging_middleware(request, call_next):
     status = response.status_code
 
     if status >= 400:
-        # 尽力从 JSON 响应体取 detail：读完原样重建响应，取不到不勉强
+        # 尽力从 JSON 响应体取 detail：读完原地替换 body_iterator（不重建
+        # Response，headers/background 等属性全保留），取不到不勉强
         detail = None
-        try:
-            if "application/json" in (response.headers.get("content-type") or ""):
+        if "application/json" in (response.headers.get("content-type") or ""):
+            body = None
+            try:
                 body = b""
                 async for chunk in response.body_iterator:
                     body += chunk if isinstance(chunk, bytes) else chunk.encode("utf-8")
+            except Exception:  # noqa: BLE001 消费中途失败无法补救，原样返回
+                logger.warning("[HTTP] %s %s → %d（%.0fms）响应体读取异常",
+                               request.method, request.url.path, status, elapsed_ms)
+                return response
+
+            async def _replay():
+                yield body
+            response.body_iterator = _replay()
+
+            try:
                 data = json.loads(body)
                 if isinstance(data, dict):
                     detail = data.get("detail")
-                response = Response(
-                    content=body, status_code=status,
-                    headers=dict(response.headers),
-                    media_type=response.media_type,
-                )
-        except Exception:  # noqa: BLE001 取 detail 只是锦上添花，绝不阻塞响应
-            detail = None
+            except Exception:  # noqa: BLE001 非合法 JSON 只影响 detail 提取
+                detail = None
         logger.warning("[HTTP] %s %s → %d（%.0fms）detail=%s",
                        request.method, request.url.path, status, elapsed_ms,
                        detail if detail is not None else "-")
+    elif request.url.path.startswith("/ui/static") or request.url.path == "/health":
+        # 静态资产/健康检查属高频噪音，降为 DEBUG
+        logger.debug("[HTTP] %s %s → %d（%.0fms）",
+                     request.method, request.url.path, status, elapsed_ms)
     else:
         logger.info("[HTTP] %s %s → %d（%.0fms）",
                     request.method, request.url.path, status, elapsed_ms)
