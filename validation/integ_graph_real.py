@@ -63,6 +63,10 @@ DOWNSTREAM_FILE = os.environ.get(
 )
 TOL = 0.01
 
+# 上游工厂目录：必须显式传（GT 对应 96 批次数据；.env 的 UPSTREAM_ROOT
+# 会随生产批次切换到 82/…，缺省走 settings 必与 GT 对不上）
+REAL_ROOT = os.environ.get("YAMATO_TEST_REAL_ROOT", "/Users/nz/Downloads/yamato/96/工厂")
+
 
 def reset_env() -> None:
     settings = get_settings()
@@ -197,6 +201,7 @@ def main() -> int:
     print(f"\n===== 启动真实流程 thread_id={THREAD_ID}（LLM 真实调用）=====")
     result = service.run_until_interrupt(
         THREAD_ID, downstream_file_path=DOWNSTREAM_FILE,
+        upstream_root=REAL_ROOT,
         factory_filter=[TARGET_FACTORY_JP],
     )
     assert result["status"] == "pending_human_review", f"未挂起: {result}"
