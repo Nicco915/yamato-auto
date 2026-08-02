@@ -314,8 +314,13 @@ function handleSSEEvent(event) {
       break;
 
     case "applied":
-      // confirm 执行结果
-      finishProgress(event.message || event.result?.message || "已执行");
+      // confirm 执行结果（兜底路径；正常 confirm 由 confirmApply 消费），统一走 renderApplied
+      if (progressBubble) {
+        progressBubble.classList.remove("progress-bubble");
+        progressBubble = null;
+        progressLines = [];
+      }
+      renderApplied(event);
       break;
 
     case "error":
@@ -431,22 +436,52 @@ async function confirmApply(action, srcBubble) {
 function renderApplied(data, tid) {
   const b = addBubble("agent");
 
+  const failed = data.status && data.status !== "applied";
   const head = document.createElement("div");
-  head.textContent = "已执行：" + (data.tool || "操作") + " 完成";
+  head.textContent = data.message || (data.result && data.result.message)
+    || (failed ? "执行失败" : "已执行完成");
+  if (failed) head.classList.add("err-line");
   b.appendChild(head);
 
-  // 显示结果摘要
-  if (data.result && typeof data.result === "object") {
-    const keys = Object.keys(data.result);
-    if (keys.length) {
-      keys.forEach((k) => {
-        const line = document.createElement("div");
-        line.className = "mono";
-        line.style.fontSize = "12px";
-        const v = data.result[k];
-        line.textContent = k + "=" + (typeof v === "object" ? JSON.stringify(v) : v);
-        b.appendChild(line);
-      });
+  // 执行失败（status !== "applied"）：只显示 message，不渲染摘要/链接/原始结果
+  if (!failed) {
+    // 摘要行（后端确定性中文总结）
+    const lines = Array.isArray(data.summary_lines) ? data.summary_lines : [];
+    lines.forEach((line) => {
+      const div = document.createElement("div");
+      div.className = "mono";
+      div.style.fontSize = "12px";
+      div.textContent = line;
+      b.appendChild(div);
+    });
+
+    // 链接按钮（去审核 / 看批次）
+    const links = Array.isArray(data.links) ? data.links : [];
+    const linkRow = document.createElement("div");
+    linkRow.className = "preview-actions";
+    links.forEach((lnk) => {
+      if (!lnk || !lnk.href) return;
+      const a = document.createElement("a");
+      a.className = "btn btn-primary btn-sm";
+      a.href = lnk.href;
+      a.textContent = lnk.label || lnk.href;
+      linkRow.appendChild(a);
+    });
+    if (linkRow.children.length) b.appendChild(linkRow);
+
+    // 原始结果折叠（保留排错口）
+    if (data.result && typeof data.result === "object" && Object.keys(data.result).length) {
+      const det = document.createElement("details");
+      det.style.marginTop = "6px";
+      const sum = document.createElement("summary");
+      sum.textContent = "查看原始结果";
+      sum.style.cssText = "cursor:pointer;font-size:12px;color:var(--muted)";
+      const pre = document.createElement("pre");
+      pre.style.cssText = "font-size:11px;white-space:pre-wrap;word-break:break-all;margin:6px 0 0";
+      pre.textContent = JSON.stringify(data.result, null, 2);
+      det.appendChild(sum);
+      det.appendChild(pre);
+      b.appendChild(det);
     }
   }
 
