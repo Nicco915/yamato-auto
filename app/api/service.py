@@ -516,6 +516,7 @@ def create_batch(
     thread_id: str,
     downstream_file_path: str | None = None,
     upstream_root: str | None = None,
+    factory_filter: list[str] | None = None,
 ) -> dict[str, Any]:
     """发起新批次：thread_id 查重 + 路径存在性校验后复用 run_until_interrupt。
 
@@ -523,7 +524,9 @@ def create_batch(
     - checkpoints 已有同名 thread → FileExistsError（路由层转 409）；
     - 路径缺省取 settings；downstream 必须是文件、upstream 必须是目录
       （Path(p).expanduser() 兼容 Windows 盘符路径），否则 ValueError
-      且消息指明哪个路径不存在（路由层转 422）。
+      且消息指明哪个路径不存在（路由层转 422）；
+    - factory_filter 只处理指定工厂（调试/冒烟/跳过已处理用），透传
+      run_until_interrupt，None=全部工厂。
     """
     thread_id = (thread_id or "").strip()
     if not thread_id:
@@ -548,7 +551,8 @@ def create_batch(
     if not u_path.is_dir():
         raise ValueError(f"上游工厂文件夹路径不存在或不是目录: {upstream}")
 
-    return run_until_interrupt(thread_id, str(d_path), str(u_path))
+    return run_until_interrupt(thread_id, str(d_path), str(u_path),
+                               factory_filter=factory_filter)
 
 
 # ---------------------------------------------------------------------------

@@ -21,9 +21,17 @@ from app.state import AgentState
 logger = logging.getLogger(__name__)
 
 
-def parse_downstream(state: AgentState) -> dict:
+def parse_requirements(
+    file_path: str,
+) -> tuple[dict[str, list[str]], dict[str, dict[str, list[int]]]]:
+    """解析下游装箱明细表 → (requirements, row_map) 纯函数（不依赖 state）。
+
+    Node1 与预扫/预检共用：
+    - requirements: {工厂名: [SKU, ...]}（按出现顺序去重）；
+    - row_map: {工厂名: {SKU: [Excel 行号, ...]}}（openpyxl 行号 = idx + 2），
+      供 Node6 精准写回单元格。
+    """
     settings = get_settings()
-    file_path = state.get("downstream_file_path") or settings.downstream_file_path
 
     # SKU 是 13 位数字条码，必须按字符串读取，避免科学计数法/精度丢失
     df = pd.read_excel(file_path, sheet_name=0, dtype={settings.col_sku: str})
@@ -45,6 +53,17 @@ def parse_downstream(state: AgentState) -> dict:
             requirements[factory].append(sku)
         row_map.setdefault(factory, {}).setdefault(sku, []).append(excel_row)
 
+    logger.info("[Node1] 解析 %s：共 %d 行，%d 个工厂",
+                file_path, len(df), len(requirements))
+    return requirements, row_map
+
+
+def parse_downstream(state: AgentState) -> dict:
+    settings = get_settings()
+    file_path = state.get("downstream_file_path") or settings.downstream_file_path
+
+    requirements, row_map = parse_requirements(file_path)
+
     pending = list(requirements.keys())
     # 调试/冒烟测试：只处理指定工厂
     factory_filter = state.get("factory_filter")
@@ -52,8 +71,7 @@ def parse_downstream(state: AgentState) -> dict:
         allow = set(factory_filter)
         pending = [f for f in pending if f in allow]
 
-    logger.info("[Node1] 解析 %s：共 %d 行，%d 个工厂，本次队列 %d 个",
-                file_path, len(df), len(requirements), len(pending))
+    logger.info("[Node1] 本次队列 %d 个", len(pending))
 
     return {
         "downstream_file_path": file_path,
