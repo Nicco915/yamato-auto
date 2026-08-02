@@ -63,6 +63,13 @@
   }
   .preview-actions { margin-top: 10px; display: flex; gap: 10px; }
 
+  /* ---------- 工厂对照预扫（W5 三档） ---------- */
+  .factory-scan { margin-top: 8px; }
+  .scan-ok { color: #059669; font-weight: 600; }
+  .scan-doubt { color: var(--warn); font-weight: 600; }
+  .scan-miss { color: var(--err); font-weight: 600; }
+  .scan-hint { font-size: 12px; color: var(--warn); margin-top: 6px; }
+
   /* ---------- 进度气泡 ---------- */
   .progress-bubble {
     animation: pulse-border 1.5s ease-in-out infinite;
@@ -358,6 +365,68 @@ function handleSSEEvent(event) {
   }
 }
 
+/* ================= 工厂对照预扫渲染（W5 三档：确定/存疑候选/无候选） ================= */
+/* 一律 textContent 渲染，防 XSS */
+function renderFactoryScan(scan) {
+  const box = document.createElement("div");
+  box.className = "preview-card factory-scan";
+
+  const title = document.createElement("div");
+  title.className = "preview-line";
+  title.style.fontWeight = "600";
+  title.textContent = "工厂文件夹对照";
+  box.appendChild(title);
+
+  const addRow = (tag, tagCls, text) => {
+    const row = document.createElement("div");
+    row.className = "preview-line";
+    if (tag) {
+      const span = document.createElement("span");
+      span.className = tagCls;
+      span.textContent = tag;
+      row.appendChild(span);
+      row.appendChild(document.createTextNode(" " + text));
+    } else {
+      row.textContent = text;
+    }
+    box.appendChild(row);
+  };
+
+  // ①确定命中：工厂 → 文件夹（匹配方式）
+  const resolved = scan.resolved && typeof scan.resolved === "object" ? scan.resolved : {};
+  Object.keys(resolved).forEach((factory) => {
+    const r = resolved[factory] || {};
+    const method = r.method ? "（" + r.method + "）" : "";
+    addRow("[确定]", "scan-ok", factory + " → " + (r.folder || "?") + method);
+  });
+
+  // ②低置信存疑：工厂 → 候选列表（分数 + 信号）
+  const candidates = scan.candidates && typeof scan.candidates === "object" ? scan.candidates : {};
+  Object.keys(candidates).forEach((factory) => {
+    const list = Array.isArray(candidates[factory]) ? candidates[factory] : [];
+    addRow("[存疑]", "scan-doubt", factory + " → 候选：");
+    if (!list.length) {
+      addRow("", "", "　- （无候选明细）");
+      return;
+    }
+    list.forEach((c) => {
+      if (!c || typeof c !== "object") return;
+      const score = (c.score != null) ? c.score + " 分" : "? 分";
+      const signals = Array.isArray(c.signals) && c.signals.length
+        ? "｜" + c.signals.join("、") : "";
+      addRow("", "", "　- " + (c.folder || "?") + "（" + score + signals + "）");
+    });
+  });
+
+  // ③无候选：需手动选
+  const unmatched = Array.isArray(scan.unmatched) ? scan.unmatched : [];
+  unmatched.forEach((factory) => {
+    addRow("[无候选]", "scan-miss", String(factory));
+  });
+
+  return box;
+}
+
 /* ================= 预览卡 + 确认/取消（第二段） ================= */
 function renderConfirmation(data, srcBubble) {
   const b = srcBubble || addBubble("agent");
@@ -365,6 +434,12 @@ function renderConfirmation(data, srcBubble) {
   const reply = document.createElement("div");
   reply.textContent = (data.action && data.action.reply) || data.message || "请确认以下变更：";
   if (!srcBubble) b.appendChild(reply);
+
+  // W5 工厂对照预扫：有 factory_scan 时在预览卡上方渲染三档结构化对照区
+  const scan = data.factory_scan || (data.action && data.action.factory_scan);
+  if (scan && typeof scan === "object") {
+    b.appendChild(renderFactoryScan(scan));
+  }
 
   // 预览卡：preview 数组逐行，等宽字体，原样保留换行
   const card = document.createElement("div");
@@ -398,6 +473,18 @@ function renderConfirmation(data, srcBubble) {
   actions.appendChild(btnOk);
   actions.appendChild(btnNo);
   b.appendChild(actions);
+
+  // W5：有存疑/无候选工厂时，确认卡下方提示先用对话告知 Agent 选择
+  if (scan && typeof scan === "object") {
+    const hasDoubt = (scan.candidates && Object.keys(scan.candidates).length > 0)
+      || (Array.isArray(scan.unmatched) && scan.unmatched.length > 0);
+    if (hasDoubt) {
+      const hint = document.createElement("div");
+      hint.className = "scan-hint";
+      hint.textContent = "存疑工厂请在确认前用对话告知 Agent 你的选择（可说明仅本次或永久保存）。";
+      b.appendChild(hint);
+    }
+  }
 
   const lock = () => { btnOk.disabled = true; btnNo.disabled = true; };
 
