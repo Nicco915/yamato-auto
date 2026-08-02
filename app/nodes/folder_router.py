@@ -1,20 +1,17 @@
 """Node 2: 文件夹路由与读取（Folder Router Node）。
 
-从 pending_factories 队列弹出一个工厂，定位本地上游文件夹：
-1. 先查 alias_map.json（人工维护：下游日文/英文名 -> 本地中文文件夹名），
-   解决跨语言完全无法模糊匹配的问题（如 山東中地 -> 中地）；
-2. 查不到再用 rapidfuzz 对规范化后的名字做模糊匹配兜底。
+从 pending_factories 队列弹出一个工厂，定位本地上游文件夹。
+匹配逻辑（批次覆盖 -> alias -> 规范化精确 -> fuzzy）已抽至
+app/factory_match.py（匹配/推荐/alias 读写唯一事实来源），
+本节点只负责队列调度、目录枚举与单据收集。
 
 匹配到后列出文件夹下所有单据文件（PDF/Excel/图片），写入 state。
 """
-import json
 import logging
-import unicodedata
 from pathlib import Path
 
-from rapidfuzz import fuzz, process
-
 from app.config import get_settings
+from app.factory_match import load_alias_map, match_factory_folder
 from app.logging_config import bind_context
 from app.state import AgentState
 
@@ -23,19 +20,6 @@ logger = logging.getLogger(__name__)
 # 支持的上游单据扩展名（.doc/.docx 走 doc_channel：soffice/textutil 转换）
 SUPPORTED_EXTS = {".pdf", ".xlsx", ".xls", ".jpg", ".jpeg", ".png", ".csv",
                   ".doc", ".docx"}
-
-
-def _normalize(name: str) -> str:
-    """规范化名称：全角转半角、去空白、小写，提高模糊匹配命中率。"""
-    s = unicodedata.normalize("NFKC", name)
-    return "".join(s.split()).lower()
-
-
-def _load_alias_map() -> dict:
-    path = get_settings().alias_map_abs
-    if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
-    return {}
 
 
 def folder_router(state: AgentState) -> dict:
@@ -59,46 +43,24 @@ def folder_router(state: AgentState) -> dict:
 
     folder_path: str | None = None
     match_score = 0.0
+    match_method = "none"
 
     if upstream_root.is_dir():
         folders = [d.name for d in upstream_root.iterdir() if d.is_dir()]
 
-        # 1) 别名映射表优先（跨语言场景的确定性解法）
-        alias_map = _load_alias_map()
-        alias_hit = alias_map.get(factory)
-        if alias_hit and alias_hit in folders:
-            folder_path = str(upstream_root / alias_hit)
-            match_score = 100.0
-        elif alias_hit and folders:
-            # 精确匹配失败时追加一次大小写不敏感兜底：
-            # Windows/macOS 文件系统不区分大小写（"TOP" 与 "Top" 是同一文件夹），
-            # 但 Python 字符串比较区分大小写。Linux 文件系统大小写敏感，
-            # 不敏感匹配可能匹错目录，故仅在精确匹配失败时启用并打印日志提示。
-            ci_hit = next(
-                (f for f in folders if f.lower() == alias_hit.lower()), None
-            )
-            if ci_hit:
-                logger.info(
-                    "[Node2] 别名「%s」精确匹配未命中，"
-                    "大小写不敏感兜底命中文件夹「%s」", alias_hit, ci_hit)
-                folder_path = str(upstream_root / ci_hit)
-                match_score = 100.0
-        if folder_path is None and folders:
-            # 2) rapidfuzz 模糊匹配兜底（先精确比对规范化结果，再算相似分）
-            norm_map = {_normalize(f): f for f in folders}
-            if _normalize(factory) in norm_map:
-                folder_path = str(upstream_root / norm_map[_normalize(factory)])
-                match_score = 100.0
-            else:
-                hit = process.extractOne(
-                    _normalize(factory),
-                    list(norm_map.keys()),
-                    scorer=fuzz.ratio,
-                    score_cutoff=settings.fuzzy_match_score_cutoff,
-                )
-                if hit:
-                    folder_path = str(upstream_root / norm_map[hit[0]])
-                    match_score = hit[1]
+        # 批次级「仅本次生效」对照（用户在预扫确认时给出，不落盘）；
+        # state 字段由另一 workstream 补进 AgentState，此处防御式读取。
+        overrides = state.get("factory_alias_overrides") or None
+
+        folder_name, match_score, match_method = match_factory_folder(
+            factory,
+            folders,
+            load_alias_map(),
+            cutoff=settings.fuzzy_match_score_cutoff,
+            overrides=overrides,
+        )
+        if folder_name:
+            folder_path = str(upstream_root / folder_name)
 
     # 收集该文件夹下的单据文件
     source_documents: list[str] = []
@@ -109,8 +71,9 @@ def folder_router(state: AgentState) -> dict:
         )
 
     logger.info(
-        "[Node2] 工厂「%s」-> 文件夹 %s (得分 %s)，单据 %d 个，期望 SKU %d 个",
-        factory, folder_path or "未匹配", match_score,
+        "[Node2] 工厂「%s」-> 文件夹 %s (方式 %s，得分 %s)，单据 %d 个，"
+        "期望 SKU %d 个",
+        factory, folder_path or "未匹配", match_method, match_score,
         len(source_documents), len(expected_skus))
 
     return {
