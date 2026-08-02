@@ -382,6 +382,12 @@ def apply_paths(paths: dict, thread_id: str | None = None,
         os.environ[env_key] = value
     get_settings.cache_clear()
 
+    # 审核页白名单立即跟随新 upstream_root（W1：不等下一请求的懒刷新；
+    # 延迟 import 避免环——review.router 的批次兜底会反向 import service）
+    if "upstream_root" in paths:
+        from app.review import router as review_router
+        review_router.refresh_review_roots()
+
     result: dict = {"applied": updates, "env_file": str(env_path)}
     # 异平台路径天然通过校验，但须把警告带给操作员（提示核实目标机）
     warnings = cross_platform_warnings(paths)

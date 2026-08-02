@@ -309,6 +309,21 @@ def get_batch_summary(thread_id: str) -> dict[str, Any]:
     return _summarize_snapshot(thread_id, snap, None)
 
 
+def get_batch_upstream_root(thread_id: str) -> str:
+    """该批次 checkpoint state 里记录的 upstream_root；无 state 时回退 settings 当前值。
+
+    供审核页白名单做批次级二级兜底（W1）：改全局路径后，旧批次的单据
+    仍应按其创建时（已经过 is_dir 校验）的 root 放行。绝不接受请求参数，
+    唯一来源是 checkpoint state / settings。
+    """
+    graph = get_graph()
+    snap = graph.get_state(_config(thread_id))
+    root = (snap.values or {}).get("upstream_root")
+    if root:
+        return str(root)
+    return get_settings().upstream_root
+
+
 def list_batches() -> dict[str, Any]:
     """批次列表：只读连接枚举 thread，逐个 get_state 推导状态。
 

@@ -19,7 +19,9 @@
 from __future__ import annotations
 
 import html
+import logging
 import mimetypes
+import threading
 import time
 from pathlib import Path
 from typing import Any, Protocol
@@ -30,6 +32,8 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from app.config import get_settings
 from app.extraction.excel_channel import excel_to_markdown
 from app.extraction.vision_channel import render_pdf_pages
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -52,22 +56,107 @@ _IMAGE_MIME_MAP = {
 # ---------------------------------------------------------------------------
 
 _allowed_roots: list[Path] = []
+# 白名单来源：str=来自 settings.upstream_root 的原文（_auto_refresh_roots 的
+# 比较基准，允许自动跟随 settings 变化）；None=显式 configure_review 配置
+# （demo 等场景），settings 不是其事实来源，不做自动刷新
+_allowed_roots_source: str | None = None
+_roots_lock = threading.Lock()
 
 
 def configure_review(allowed_roots: list[str] | None = None) -> None:
-    """配置文件访问白名单根目录（可多个）。不传则用 settings.upstream_root。"""
-    global _allowed_roots
-    roots = allowed_roots or [get_settings().upstream_root]
-    _allowed_roots = [Path(r).resolve() for r in roots]
+    """配置文件访问白名单根目录（可多个）。不传则用 settings.upstream_root。
+
+    显式传 allowed_roots 时记录来源为 None（不自动刷新）；缺省时记录
+    settings 原文，供 _auto_refresh_roots 每请求字符串比较。
+    """
+    global _allowed_roots, _allowed_roots_source
+    if allowed_roots is None:
+        roots = [get_settings().upstream_root]
+        source: str | None = roots[0]
+    else:
+        roots = allowed_roots
+        source = None
+    with _roots_lock:
+        _allowed_roots = [Path(r).resolve() for r in roots]
+        _allowed_roots_source = source
 
 
-def _resolve_whitelisted(path: str) -> Path:
-    """把请求路径解析为白名单内的真实文件，越权/不存在则抛 HTTP 错误。"""
+def _auto_refresh_roots() -> None:
+    """每请求白名单自动感知：settings.upstream_root 字符串变了才加锁重建。
+
+    快路径只做字符串比较（get_settings 有 lru_cache，零 I/O）；唯一刷新
+    来源是 settings.upstream_root，无任何外部注入口子。显式配置来源
+    （_allowed_roots_source 为 None，demo）不自动刷新。
+    """
+    global _allowed_roots, _allowed_roots_source
+    source = _allowed_roots_source
+    if source is None:
+        return
+    current = get_settings().upstream_root
+    if current == source and _allowed_roots:
+        return
+    with _roots_lock:
+        # 双检：等锁期间可能已有别的请求重建过
+        if current == _allowed_roots_source and _allowed_roots:
+            return
+        _allowed_roots = [Path(current).resolve()]
+        _allowed_roots_source = current
+        logger.info("[白名单] settings.upstream_root 已变更，白名单自动刷新: %s", current)
+
+
+def refresh_review_roots() -> None:
+    """按 settings.upstream_root 显式重建白名单（对话改路径后立即生效）。
+
+    apply_paths 改完 upstream_root 后调用，无需等下一次请求的懒刷新。
+    显式 configure_review(allowed_roots=...) 的部署（demo）不受影响。
+    """
+    if _allowed_roots_source is None and _allowed_roots:
+        return  # 显式配置部署：settings 不是白名单事实来源，不覆盖
+    configure_review()
+
+
+# 批次级 root 小缓存（thread_id → checkpoint state 里的 upstream_root）：
+# 只缓存命中结果；miss/异常不缓存（批次后建的也能再查到），规模受批次数约束
+_batch_root_cache: dict[str, Path] = {}
+
+
+def _batch_upstream_root(thread_id: str) -> Path | None:
+    """批次 checkpoint state 里的 upstream_root（服务端派生，创建时已校验 is_dir）。
+
+    安全红线：绝不从请求参数取 root，唯一来源是 checkpoint state
+    （无 state 时 service 回退 settings 当前值）。
+    """
+    cached = _batch_root_cache.get(thread_id)
+    if cached is not None:
+        return cached
+    try:
+        from app.api import service  # 延迟导入，避免 demo 依赖 LangGraph
+
+        root = Path(service.get_batch_upstream_root(thread_id)).expanduser().resolve()
+    except Exception as e:  # noqa: BLE001 checkpoint 读取失败不阻塞白名单判定
+        logger.warning("[白名单] 批次 root 查询失败 thread=%s：%s: %s",
+                       thread_id, type(e).__name__, e)
+        return None
+    if len(_batch_root_cache) > 64:
+        _batch_root_cache.clear()
+    _batch_root_cache[thread_id] = root
+    return root
+
+
+def _resolve_whitelisted(path: str, thread_id: str | None = None) -> Path:
+    """把请求路径解析为白名单内的真实文件，越权/不存在则抛 HTTP 错误。
+
+    放行顺序：全局白名单（自动跟随 settings）→ 带 thread_id 时二级查
+    批次 checkpoint state 的 upstream_root（改全局路径后旧批次仍可审）。
+    """
     if not _allowed_roots:
         configure_review()
+    _auto_refresh_roots()
     p = Path(path).expanduser().resolve()  # resolve 会同时解开符号链接
     if not any(p.is_relative_to(root) for root in _allowed_roots):
-        raise HTTPException(status_code=403, detail="路径不在工厂文件夹白名单内")
+        batch_root = _batch_upstream_root(thread_id) if thread_id else None
+        if batch_root is None or not p.is_relative_to(batch_root):
+            raise HTTPException(status_code=403, detail="路径不在工厂文件夹白名单内")
     if not p.is_file():
         raise HTTPException(status_code=404, detail=f"文件不存在: {p.name}")
     return p
@@ -183,12 +272,16 @@ async def get_payload(thread_id: str) -> dict[str, Any]:
 
 @router.get("/api/v1/review/{thread_id}/document")
 async def get_document(
-    thread_id: str,  # noqa: ARG001 预留：未来可按 thread 收窄白名单到本工厂目录
+    thread_id: str,
     path: str = Query(..., description="单据文件绝对路径（必须在白名单内）"),
     page: int = Query(1, ge=1, description="PDF 页码，从 1 开始"),
 ) -> Response:
-    """左屏单据查看：PDF→PNG 单页 / Excel→HTML 快照 / 图片流式返回。"""
-    p = _resolve_whitelisted(path)
+    """左屏单据查看：PDF→PNG 单页 / Excel→HTML 快照 / 图片流式返回。
+
+    thread_id 参与白名单判定：全局白名单未命中时，二级查该批次 checkpoint
+    state 的 upstream_root（改全局路径后旧批次单据仍可放行）。
+    """
+    p = _resolve_whitelisted(path, thread_id=thread_id)
     suffix = p.suffix.lower()
 
     try:
