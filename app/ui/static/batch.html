@@ -276,7 +276,8 @@ function renderFactories(d) {
   var cards = list.map(function (f) {
     f = f || {};
     var role = ROLE_MAP[f.role] || [f.role || "-", "b-gray"];
-    var open = f.role === "current" ? " open" : "";
+    var fname = f.factory || "(未命名工厂)";
+    var open = (f.role === "current" || openFactories[fname]) ? " open" : "";
     var sess = f.session || null;
     var sessBadge = "";
     if (sess && sess.status) {
@@ -284,7 +285,7 @@ function renderFactories(d) {
       sessBadge = badge(SESS_STATUS_MAP[ss] || ss, "b-gray");
     }
     return '<details class="card fcard' + (f.role === "current" ? " cur" : "") + '"' + open + ">" +
-      "<summary><span class=\"fname\">" + _esc(f.factory || "(未命名工厂)") + "</span>" +
+      "<summary><span class=\"fname\">" + _esc(fname) + "</span>" +
       badge(role[0], role[1]) + sessBadge + "</summary>" +
       '<div class="fbody">' +
       '<div class="note" style="margin-top:8px">会话为该工厂最近一次提取记录，不专属本批次</div>' +
@@ -358,6 +359,73 @@ function renderAll(d) {
   }
 }
 
+/* ================= 进度自动刷新（W4a 轮询底座） ================= */
+var POLL_MS = 5000;
+var POLL_ACTIVE_STATUS = { running: 1, pending_review: 1 };
+var pollTimer = null;       // setInterval 句柄，非空即表示轮询激活
+var pollInflight = false;   // 重入保护：上一轮请求未返回则跳过
+var openFactories = {};     // 已展开的工厂名集合（跨 renderAll 保持 details open）
+
+function shouldPoll(d) { return !!(d && POLL_ACTIVE_STATUS[d.status]); }
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+function startPolling() {
+  stopPolling();
+  pollTimer = setInterval(pollOnce, POLL_MS);
+}
+
+function showDeletedBanner() {
+  if ($id("batch-deleted-banner")) return;
+  var b = document.createElement("div");
+  b.id = "batch-deleted-banner";
+  b.className = "card lcard";
+  b.style.borderColor = "#f87171";
+  b.innerHTML = '<span class="c-red"><b>批次已删除</b>：该批次记录已不存在（404），' +
+    '以下为最后一次成功加载的内容快照。</span> <a class="btn lbtn" href="/">← 返回工作台</a>';
+  var app = $id("app");
+  if (app) app.insertBefore(b, app.firstChild);
+}
+
+async function pollOnce() {
+  if (pollInflight) return;                 // 避免重入
+  if (document.hidden) return;              // 页面不可见：跳过本轮（hidden 降频）
+  pollInflight = true;
+  try {
+    var d = await api("/api/v1/batches/" + encodeURIComponent(threadId));
+    if (d && typeof d === "string") { try { d = JSON.parse(d); } catch (e) {} }
+    renderAll(d || {});
+    if (!shouldPoll(d)) stopPolling();      // completed/unknown/error：停止轮询
+  } catch (e) {
+    if (e && e.status === 404) {            // 批次被删：停轮询 + 顶部提示（保留现有内容）
+      stopPolling();
+      showDeletedBanner();
+      showToast("批次已删除");
+    }
+    /* 其他错误静默，下一轮自动重试 */
+  } finally {
+    pollInflight = false;
+  }
+}
+
+/* 页面重新可见时立即补一轮（仅当轮询仍在进行） */
+document.addEventListener("visibilitychange", function () {
+  if (!document.hidden && pollTimer) pollOnce();
+});
+
+/* 工厂卡展开/收起状态维护（toggle 不冒泡，用捕获阶段委托） */
+document.addEventListener("toggle", function (ev) {
+  var t = ev.target;
+  if (t && t.tagName === "DETAILS" && t.classList && t.classList.contains("fcard")) {
+    var n = t.querySelector("summary .fname");
+    var name = n ? n.textContent : "";
+    if (!name) return;
+    if (t.open) openFactories[name] = true;
+    else delete openFactories[name];
+  }
+}, true);
+
 async function load() {
   mountTopbar();
   if (!threadId) {
@@ -368,6 +436,7 @@ async function load() {
     var d = await api("/api/v1/batches/" + encodeURIComponent(threadId));
     if (d && typeof d === "string") { try { d = JSON.parse(d); } catch (e) {} }
     renderAll(d || {});
+    if (shouldPoll(d)) startPolling();      // running/pending_review：启动 5s 自刷
   } catch (e) {
     $id("app").innerHTML = '<div class="card lcard"><span class="c-red">加载失败：' +
       _esc(e && e.message ? e.message : e) + '</span> <a class="btn lbtn" href="/">← 返回工作台</a></div>';
