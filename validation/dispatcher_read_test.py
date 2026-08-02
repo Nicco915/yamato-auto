@@ -20,6 +20,10 @@ session_id 每用例唯一，避免历史串扰。sqlite checkpoint 为共享文
 
 用法（在 app/ 目录下）：
   python3 validation/dispatcher_read_test.py
+
+隔离（血泪红线）：checkpoint/master db、output、sessions 目录全部指向
+临时目录（import app 之后再设 env + cache_clear + 真实库断言守卫，
+见 validation/_test_isolation.py）。
 """
 from __future__ import annotations
 
@@ -28,13 +32,14 @@ import sys
 import time
 from pathlib import Path
 
-# ---- env 前置（必须在 import app 之前）----
+# ---- env 前置（EXTRACTION_MOCK 需在 import app 之前；db 路径在 import 后隔离）----
 os.environ.setdefault("EXTRACTION_MOCK", "1")   # 提取走 mock（本测试不跑图，防御性设置）
 os.environ["DISPATCHER_MOCK"] = "1"             # 调度循环走剧本，不调真实 LLM
 os.environ["EXPLAIN_MOCK"] = "1"                # explain_errors 走模板降级（确定性输出）
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(APP_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -44,6 +49,11 @@ from app.api.main import app  # noqa: E402
 from app.dispatcher import loop, sessions  # noqa: E402
 from app.dispatcher.explain import explain_errors  # noqa: E402
 from app.graph import get_graph  # noqa: E402
+
+from _test_isolation import isolate_to_tmp  # noqa: E402
+
+# ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----
+TMP = isolate_to_tmp("yamato_read_test_")
 
 GHOST_THREAD = "DISP-READ-TEST-GHOST-000"   # 保证不存在的批次号
 

@@ -12,6 +12,10 @@
 
 用法：
   EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_memory_test.py
+
+隔离（血泪红线）：L2 记忆落 master.db、case 6 建批次落 checkpoints.db，
+全部指向临时目录（import app 之后再设 env + cache_clear + 真实库断言
+守卫，见 validation/_test_isolation.py）。
 """
 from __future__ import annotations
 
@@ -25,10 +29,16 @@ os.environ["DISPATCHER_MOCK"] = "1"
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(APP_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app.dispatcher.memory import OperationMemory  # noqa: E402
 from app import dispatcher  # noqa: E402
 from app.dispatcher import loop  # noqa: E402
+
+from _test_isolation import isolate_to_tmp  # noqa: E402
+
+# ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----
+TMP = isolate_to_tmp("yamato_mem_test_", alias_map_copy=True)
 
 
 def case_1_basic_readwrite() -> None:

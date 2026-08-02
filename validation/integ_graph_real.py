@@ -12,7 +12,12 @@
 用法（在 app/ 目录下）：
   LLM_ENABLE_THINKING=0 python3 validation/integ_graph_real.py --reset
 
---reset：删除 master.db / checkpoints.db / 输出副本（此前均为 mock 冒烟数据）。
+--reset：删除临时 master.db / checkpoints.db / 输出副本。
+
+隔离（血泪红线，2026-08-02 起）：checkpoint/master db、output、
+data/sessions、alias_map 全部指向临时目录（import app 之后再设 env +
+cache_clear + 真实库断言守卫，见 validation/_test_isolation.py）——
+真实 LLM 提取质量验证照旧，但绝不写生产 db / 生产会话文件。
 
 下游表使用_原文件（无 中文品名/净重/毛重 三列的客户原始文件），按 2026-07-28
 用户定的写入规则断言：
@@ -38,6 +43,11 @@ from app.db.models import FactorySKU  # noqa: E402
 from app.db.session import get_session  # noqa: E402
 from ground_truth import get_factory_ground_truth  # noqa: E402
 from sqlalchemy import select  # noqa: E402
+
+from _test_isolation import isolate_to_tmp  # noqa: E402
+
+# ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----
+TMP = isolate_to_tmp("yamato_integ_real_", alias_map_copy=True)
 
 THREAD_ID = "INTEG-ZD3-REAL"
 TARGET_FACTORY_JP = "山東中地"   # 下游表 MAKER_MEI_KJ 原文

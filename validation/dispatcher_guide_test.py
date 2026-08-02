@@ -10,6 +10,10 @@
 
 用法：
   EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 GUIDE_MOCK=1 python3 validation/dispatcher_guide_test.py
+
+隔离（血泪红线）：checkpoint/master db、output、sessions 目录全部指向
+临时目录（import app 之后再设 env + cache_clear + 真实库断言守卫，
+见 validation/_test_isolation.py）。
 """
 from __future__ import annotations
 
@@ -23,10 +27,16 @@ os.environ["GUIDE_MOCK"] = "1"
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(APP_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app.dispatcher import loop, tools  # noqa: E402
 from app.dispatcher.guide import ask_guide  # noqa: E402
 from app.dispatcher.sessions import DispatcherSession  # noqa: E402
+
+from _test_isolation import isolate_to_tmp  # noqa: E402
+
+# ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----
+TMP = isolate_to_tmp("yamato_guide_test_")
 
 
 def case_1_interface() -> None:

@@ -27,15 +27,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-# ---- env 前置（必须在 import app 之前，get_settings 有 lru_cache）----
-TMP = Path(tempfile.mkdtemp(prefix="yamato_logctx_test_"))
+# ---- env 前置（EXTRACTION_MOCK 需在 import app 之前；db 路径在 import 后隔离）----
 os.environ["EXTRACTION_MOCK"] = "1"                      # 提取走 mock，不调 LLM
-os.environ["CHECKPOINT_DB_PATH"] = str(TMP / "checkpoints.db")
-os.environ["MASTER_DB_PATH"] = str(TMP / "master.db")
-os.environ["OUTPUT_DIR"] = str(TMP / "output")           # Node6 写回副本也隔离
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(APP_ROOT))
+sys.path.insert(0, str(APP_ROOT / "validation"))
 
 from openpyxl import Workbook  # noqa: E402
 
@@ -51,12 +48,12 @@ from app.logging_config import (  # noqa: E402
     logging_context,
 )
 
-# 防御：import 链里若有 load_dotenv(override=True) 把 env 盖回去，
-# 这里重设并清 lru_cache——graph/engine 都是惰性单例，首次调用才建
-os.environ["CHECKPOINT_DB_PATH"] = str(TMP / "checkpoints.db")
-os.environ["MASTER_DB_PATH"] = str(TMP / "master.db")
-os.environ["OUTPUT_DIR"] = str(TMP / "output")
-get_settings.cache_clear()
+from _test_isolation import isolate_to_tmp  # noqa: E402
+
+# 防御：import 链里 llm_client 的 load_dotenv(override=True) 会把 env 盖回去，
+# 这里重设并清 lru_cache + 真实库断言守卫——graph/engine 都是惰性单例，
+# 首次调用才建连接，此刻清缓存重建 Settings 即指向临时目录
+TMP = isolate_to_tmp("yamato_logctx_test_")
 
 # ---- 测试夹具：两个工厂的最小下游装箱单 + 上游空文件夹 ----
 F1, F2 = "工厂甲", "工厂乙"

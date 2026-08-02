@@ -12,6 +12,10 @@
 用法（在 app/ 目录下）：
   EXTRACTION_MOCK=1 LLM_ENABLE_THINKING=0 python3 validation/chat_paths_test.py
   # 换机器跑时：YAMATO_TEST_REAL_ROOT="D:\factory\工厂" python3 validation/chat_paths_test.py
+
+隔离（血泪红线）：批次 thread INTEG-CHAT-PATHS 落 checkpoints.db，全部指向
+临时目录（import app 之后再设 env + cache_clear + 真实库断言守卫，
+见 validation/_test_isolation.py）。
 """
 from __future__ import annotations
 
@@ -25,9 +29,15 @@ os.environ.setdefault("EXTRACTION_MOCK", "1")  # 提取走 mock，只测对话�
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(APP_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app import agent_chat  # noqa: E402
 from app.api import service  # noqa: E402
+
+from _test_isolation import isolate_to_tmp  # noqa: E402
+
+# ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----
+TMP = isolate_to_tmp("yamato_chatpaths_test_", alias_map_copy=True)
 
 THREAD_ID = "INTEG-CHAT-PATHS"
 EMPTY_DIR = Path(tempfile.mkdtemp(prefix="yamato_empty_"))

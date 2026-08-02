@@ -28,15 +28,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-# ---- env 前置（必须在 import app 之前，get_settings 有 lru_cache）----
-TMP = Path(tempfile.mkdtemp(prefix="yamato_ui_test_"))
+# ---- env 前置（EXTRACTION_MOCK 需在 import app 之前；db 路径在 import 后隔离）----
 os.environ["EXTRACTION_MOCK"] = "1"                      # 提取走 mock，不调 LLM
-os.environ["CHECKPOINT_DB_PATH"] = str(TMP / "checkpoints.db")
-os.environ["MASTER_DB_PATH"] = str(TMP / "master.db")
-os.environ["OUTPUT_DIR"] = str(TMP / "output")           # Node6 写回副本也隔离
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(APP_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -44,15 +41,13 @@ from app.api.main import app  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.graph import get_graph  # noqa: E402
 
+from _test_isolation import isolate_to_tmp  # noqa: E402
+
 # 关键坑：app.extraction.llm_client 在 import 时执行 load_dotenv(override=True)，
-# 会把 .env 里的 MASTER_DB_PATH/CHECKPOINT_DB_PATH 重新盖回 os.environ，
-# 导致上面的 env 前置对这两个字段失效（OUTPUT_DIR 不在 .env 中所以幸存）。
-# 这里 import 完成后重设 env 并清 lru_cache——graph/engine 都是惰性单例，
-# 首个请求才创建，此刻清缓存重建 Settings 即可让 db 全部指向临时目录。
-os.environ["CHECKPOINT_DB_PATH"] = str(TMP / "checkpoints.db")
-os.environ["MASTER_DB_PATH"] = str(TMP / "master.db")
-os.environ["OUTPUT_DIR"] = str(TMP / "output")
-get_settings.cache_clear()
+# 会把 .env 里的 MASTER_DB_PATH/CHECKPOINT_DB_PATH 盖回 os.environ——因此
+# db 隔离必须放在 import 完成之后：重设 env + 清 lru_cache + 真实库断言守卫
+# （graph/engine 都是惰性单例，首个请求才创建，此刻清缓存即指向临时目录）。
+TMP = isolate_to_tmp("yamato_ui_test_", alias_map_copy=True)
 
 THREAD_ID = "UI-TEST-1"
 client = TestClient(app)

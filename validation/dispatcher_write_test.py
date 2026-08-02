@@ -14,6 +14,11 @@ dispatcher_read_test.py 隔离）：
 
 用法（在 app/ 目录下）：
   EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_write_test.py
+
+隔离（血泪红线）：checkpoint/master db、output、alias_map、sessions 目录
+全部指向临时目录（import app 之后再设 env + cache_clear + 真实库断言守卫，
+防 llm_client 的 load_dotenv(override=True) 把 env 盖回真实路径，
+见 validation/_test_isolation.py）。
 """
 from __future__ import annotations
 
@@ -30,6 +35,7 @@ os.environ["DISPATCHER_MOCK"] = "1"
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(APP_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -38,6 +44,11 @@ from app.api import service  # noqa: E402
 from app.api.main import app  # noqa: E402
 from app.dispatcher import loop, sessions  # noqa: E402
 from app.graph import get_graph  # noqa: E402
+
+from _test_isolation import isolate_to_tmp  # noqa: E402
+
+# ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----
+TMP = isolate_to_tmp("yamato_write_test_", alias_map_copy=True)
 
 
 # ---- 真实 fixture（复用 chat_paths_test 同款数据）----
@@ -210,8 +221,11 @@ def case_5_submit_review_diff_preview() -> None:
     # 确认执行
     r2 = with_lock_retry(lambda: dispatcher.confirm(sid, None))
     assert r2["status"] == "applied", r2
-    # 审计链落库（review_audits 在 master.db）
-    conn = sqlite3.connect(str(APP_ROOT / "app" / "data" / "master.db"))
+    # 审计链落库（review_audits 在临时 master.db）
+    from app.config import get_settings
+    master_db = str(get_settings().master_db_abs)
+    assert master_db.startswith(str(TMP)), f"master.db 未隔离: {master_db}"
+    conn = sqlite3.connect(master_db)
     try:
         rows = conn.execute(
             "SELECT thread_id, approved, edited_count FROM review_audits "
