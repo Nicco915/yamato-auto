@@ -75,6 +75,22 @@ def get_session(session_id: str) -> DispatcherSession:
         return sess
 
 
+def peek_session(session_id: str) -> DispatcherSession | None:
+    """只读查看会话：不创建、不刷新 updated_at（不续 TTL），不存在返回 None。
+
+    供 GET /api/v1/dispatcher/history 用（W3）——切页刷新是高频只读动作，
+    绝不能像 get_session 那样刷出空会话（刷爆 _SESSION_MAX 淘汰无辜会话）
+    或给濒死会话续命。锁内顺手清理 TTL 过期会话（含被查询的这个）。
+    """
+    with _SESSIONS_LOCK:
+        now = time.time()
+        expired = [k for k, s in _SESSIONS.items()
+                   if now - s.updated_at > _SESSION_TTL_SEC]
+        for k in expired:
+            del _SESSIONS[k]
+        return _SESSIONS.get(session_id)
+
+
 def record_turn(session: DispatcherSession, user_msg: str, agent_msg: str) -> None:
     """把一轮对话写入历史，超出上限裁掉最旧的。"""
     session.history.append({"role": "user", "content": user_msg})

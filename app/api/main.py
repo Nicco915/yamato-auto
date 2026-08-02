@@ -422,3 +422,54 @@ async def dispatcher_last_operation(session_id: str):
     except Exception:  # noqa: BLE001 开场提示是辅助，绝不影响页面加载
         return {"has_history": False, "text": None,
                 "thread_id": None, "factory": None}
+
+
+# ---------- 调度 Agent 对话历史（W3：切页刷新恢复对话）----------
+
+# pending_action 回传白名单：绝不回传 args（submit_review 的 items 巨大，
+# 且确认执行以服务端留存为准，前端不需要参数本体）
+_PENDING_ACTION_KEYS = ("tool", "summary", "preview_lines",
+                        "warnings", "created_at", "factory_scan")
+
+
+@app.get("/api/v1/dispatcher/history")
+async def dispatcher_history(session_id: str = ""):
+    """拉取对话历史 + 活着的待确认操作（前端切页/刷新后恢复对话用）。
+
+    - session_id 空 / 超长（>128）→ 400；
+    - peek_session 只读不创建、不续 TTL：peek 不到 → 200 {"found": false, ...}；
+    - found：返回 history + 裁剪后 pending_action（白名单字段，绝不回传 args）；
+      pending 超 ACTION_TTL_SEC 顺手 clear_pending 清尸，按 None 返回；
+    - 任何意外异常兜底返回 found:false，绝不 500（页面加载不能挂）。
+    """
+    try:
+        if not session_id or not session_id.strip():
+            raise HTTPException(status_code=400, detail="session_id 不能为空")
+        if len(session_id) > 128:
+            raise HTTPException(status_code=400,
+                                detail="session_id 过长（上限 128 字符）")
+
+        from app.dispatcher import sessions as _sessions
+        from app.dispatcher.loop import ACTION_TTL_SEC
+
+        sess = _sessions.peek_session(session_id)
+        if sess is None:
+            return {"found": False, "history": [], "pending_action": None}
+
+        pending = None
+        action = sess.pending_action
+        if isinstance(action, dict):
+            age = time.time() - float(action.get("created_at", 0) or 0)
+            if age > ACTION_TTL_SEC:
+                # 陈旧 pending 顺手清尸：恢复了也不能执行，不给前端假希望
+                _sessions.clear_pending(sess)
+            else:
+                pending = {k: action.get(k) for k in _PENDING_ACTION_KEYS}
+
+        return {"found": True, "history": list(sess.history),
+                "pending_action": pending}
+    except HTTPException:
+        raise
+    except Exception:  # noqa: BLE001 历史拉取是辅助，绝不让页面加载 500
+        logger.exception("[HTTP] dispatcher/history 拉取异常，降级 found:false")
+        return {"found": False, "history": [], "pending_action": None}
