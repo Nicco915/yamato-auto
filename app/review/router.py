@@ -116,15 +116,17 @@ def refresh_review_roots() -> None:
 
 
 # 批次级 root 小缓存（thread_id → checkpoint state 里的 upstream_root）：
-# 只缓存命中结果；miss/异常不缓存（批次后建的也能再查到），规模受批次数约束
+# 只缓存 state 显式记录的 root；走 .env 缺省的批次（service 返回 None）
+# 与查询异常一律不缓存——缺省批次由全局白名单（自动跟随 settings）覆盖，
+# 缓存"当时的 settings"会在改路径后产生陈旧放行
 _batch_root_cache: dict[str, Path] = {}
 
 
 def _batch_upstream_root(thread_id: str) -> Path | None:
     """批次 checkpoint state 里的 upstream_root（服务端派生，创建时已校验 is_dir）。
 
-    安全红线：绝不从请求参数取 root，唯一来源是 checkpoint state
-    （无 state 时 service 回退 settings 当前值）。
+    安全红线：绝不从请求参数取 root，唯一来源是 checkpoint state；
+    state 无此键（走 .env 缺省）返回 None，由全局白名单覆盖。
     """
     cached = _batch_root_cache.get(thread_id)
     if cached is not None:
@@ -132,11 +134,14 @@ def _batch_upstream_root(thread_id: str) -> Path | None:
     try:
         from app.api import service  # 延迟导入，避免 demo 依赖 LangGraph
 
-        root = Path(service.get_batch_upstream_root(thread_id)).expanduser().resolve()
+        raw = service.get_batch_upstream_root(thread_id)
     except Exception as e:  # noqa: BLE001 checkpoint 读取失败不阻塞白名单判定
         logger.warning("[白名单] 批次 root 查询失败 thread=%s：%s: %s",
                        thread_id, type(e).__name__, e)
         return None
+    if raw is None:
+        return None
+    root = Path(raw).expanduser().resolve()
     if len(_batch_root_cache) > 64:
         _batch_root_cache.clear()
     _batch_root_cache[thread_id] = root

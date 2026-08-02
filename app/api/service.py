@@ -409,19 +409,20 @@ def get_batch_summary(thread_id: str) -> dict[str, Any]:
     return _summarize_snapshot(thread_id, snap, None)
 
 
-def get_batch_upstream_root(thread_id: str) -> str:
-    """该批次 checkpoint state 里记录的 upstream_root；无 state 时回退 settings 当前值。
+def get_batch_upstream_root(thread_id: str) -> str | None:
+    """该批次 checkpoint state 里记录的 upstream_root；state 无此键时返回 None。
 
     供审核页白名单做批次级二级兜底（W1）：改全局路径后，旧批次的单据
     仍应按其创建时（已经过 is_dir 校验）的 root 放行。绝不接受请求参数，
-    唯一来源是 checkpoint state / settings。
+    唯一来源是 checkpoint state。
+    注意：state 无 upstream_root 表示该批次走 .env 缺省——由全局白名单
+    （自动跟随 settings）覆盖，这里绝不回退 settings 当前值，否则调用方
+    会把"当时的 settings"缓存成长期有效的批次 root，改路径后产生陈旧放行。
     """
     graph = get_graph()
     snap = graph.get_state(_config(thread_id))
     root = (snap.values or {}).get("upstream_root")
-    if root:
-        return str(root)
-    return get_settings().upstream_root
+    return str(root) if root else None
 
 
 def list_batches() -> dict[str, Any]:
