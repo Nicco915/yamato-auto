@@ -39,8 +39,12 @@ def run_until_interrupt(
     downstream_file_path: str | None = None,
     upstream_root: str | None = None,
     factory_filter: list[str] | None = None,
+    factory_alias_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """启动流程，执行 Node1-4 直到 Node5 的 interrupt 挂起（或全程无挂起跑完）。
+
+    factory_alias_overrides：批次级「仅本次生效」工厂名对照（W5），
+    非空才写进 initial_state（Node2 匹配的最高优先档，不落盘）。
 
     返回：
       - {"status": "pending_human_review", "review_data": payload}
@@ -57,6 +61,8 @@ def run_until_interrupt(
             initial_state["upstream_root"] = upstream_root
         if factory_filter:
             initial_state["factory_filter"] = factory_filter
+        if factory_alias_overrides:
+            initial_state["factory_alias_overrides"] = factory_alias_overrides
 
         for event in graph.stream(initial_state, _config(thread_id), stream_mode="updates"):
             if "__interrupt__" in event:
@@ -532,6 +538,7 @@ def create_batch(
     downstream_file_path: str | None = None,
     upstream_root: str | None = None,
     factory_filter: list[str] | None = None,
+    factory_alias_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """发起新批次：thread_id 查重 + 路径存在性校验后复用 run_until_interrupt。
 
@@ -541,7 +548,9 @@ def create_batch(
       （Path(p).expanduser() 兼容 Windows 盘符路径），否则 ValueError
       且消息指明哪个路径不存在（路由层转 422）；
     - factory_filter 只处理指定工厂（调试/冒烟/跳过已处理用），透传
-      run_until_interrupt，None=全部工厂。
+      run_until_interrupt，None=全部工厂；
+    - factory_alias_overrides 批次级「仅本次生效」工厂名对照（W5），
+      非空才写入 state（Node2 最高优先匹配档，不落盘）。
     """
     thread_id = (thread_id or "").strip()
     if not thread_id:
@@ -567,7 +576,87 @@ def create_batch(
         raise ValueError(f"上游工厂文件夹路径不存在或不是目录: {upstream}")
 
     return run_until_interrupt(thread_id, str(d_path), str(u_path),
-                               factory_filter=factory_filter)
+                               factory_filter=factory_filter,
+                               factory_alias_overrides=factory_alias_overrides)
+
+
+# ---------------------------------------------------------------------------
+# 工厂名对照预扫（W5）：发起批次前一次性把装箱单工厂分三档，供确认门展示
+# ---------------------------------------------------------------------------
+
+# 「确定命中」分档线：alias/alias_ci/exact 记 100 直接确定；
+# fuzzy 命中须 >= 85 才算确定，否则降级为「低置信推荐」
+_PRESCAN_CERTAIN_SCORE = 85.0
+
+
+def prescan_factory_aliases(
+    downstream_file_path: str | None = None,
+    upstream_root: str | None = None,
+    factory_filter: list[str] | None = None,
+) -> dict[str, Any]:
+    """工厂名对照预扫：解析装箱单工厂集合，逐个匹配上游一级子目录，分三档返回。
+
+    返回：
+      - resolved:   {工厂: {"folder", "score", "method"}} 确定命中
+                    （alias/alias_ci/exact，或 fuzzy 得分 >= 85）；
+      - candidates: {工厂: [{"folder", "score", "signals"}]} 低置信推荐
+                    （fuzzy 40~85 或包含信号），需人工确认；
+      - unmatched:  [工厂, ...] 无任何候选，需人工指定；
+      - warnings:   [str, ...] 非致命问题。
+
+    缺省参数取 settings。装箱单解析失败 / 目录不可读只进 warnings 不抛出；
+    目录不存在时 warnings 且全部工厂进 unmatched。
+    """
+    from app.factory_match import (
+        load_alias_map, match_factory_folder, recommend_candidates)
+    from app.nodes.parse_downstream import parse_requirements
+
+    settings = get_settings()
+    downstream = downstream_file_path or settings.downstream_file_path
+    upstream = upstream_root or settings.upstream_root
+
+    result: dict[str, Any] = {
+        "resolved": {}, "candidates": {}, "unmatched": [], "warnings": []}
+
+    try:
+        requirements, _ = parse_requirements(str(Path(downstream).expanduser()))
+    except Exception as e:  # noqa: BLE001 预扫是辅助设施，解析失败不抛出
+        result["warnings"].append(
+            f"装箱单解析失败，无法预扫工厂对照: {type(e).__name__}: {e}")
+        return result
+
+    factories = list(requirements.keys())
+    if factory_filter:
+        allow = set(factory_filter)
+        factories = [f for f in factories if f in allow]
+
+    u_path = Path(upstream).expanduser()
+    if not u_path.is_dir():
+        result["warnings"].append(f"上游工厂文件夹不存在或不是目录: {upstream}")
+        result["unmatched"] = factories
+        return result
+    try:
+        folders = [d.name for d in u_path.iterdir() if d.is_dir()]
+    except OSError as e:
+        result["warnings"].append(f"上游工厂文件夹不可读: {e}")
+        result["unmatched"] = factories
+        return result
+
+    alias_map = load_alias_map()
+    cutoff = settings.fuzzy_match_score_cutoff
+    for factory in factories:
+        folder, score, method = match_factory_folder(
+            factory, folders, alias_map, cutoff=cutoff)
+        if folder and (method != "fuzzy" or score >= _PRESCAN_CERTAIN_SCORE):
+            result["resolved"][factory] = {
+                "folder": folder, "score": score, "method": method}
+            continue
+        candidates = recommend_candidates(factory, folders, cutoff=cutoff)
+        if candidates:
+            result["candidates"][factory] = candidates
+        else:
+            result["unmatched"].append(factory)
+    return result
 
 
 # ---------------------------------------------------------------------------

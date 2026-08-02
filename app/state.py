@@ -26,6 +26,9 @@ class AgentState(TypedDict, total=False):
     downstream_file_path: str             # 下游装箱单路径
     upstream_root: str                    # 上游工厂文件夹根目录
     factory_filter: Optional[List[str]]   # 只处理指定工厂（调试/冒烟用，None=全部）
+    # 批次级工厂名对照（W5）：预扫确认时用户给出的「仅本次生效」结果，
+    # {装箱单工厂名: 上游文件夹名}，不落盘；Node2 匹配的最高优先档
+    factory_alias_overrides: Optional[Dict[str, str]]
 
     # ----- Node1 产物 -----
     downstream_requirements: Dict[str, List[str]]  # {工厂名: [SKU, ...]}
