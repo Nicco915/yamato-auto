@@ -38,13 +38,16 @@ def handle_message(message: str, session_id: str | None = None, *, phase: int = 
     return result
 
 
-def confirm(session_id: str | None, action: dict | None) -> dict:
+def confirm(session_id: str | None, action: dict | None,
+            on_progress=None) -> dict:
     """确认执行入口：优先用服务端 session 留存的 pending_action。
 
+    on_progress（W4a）：节点级进度回调，透传 execute_confirmed → tool.execute
+    （跑图类工具产生 exec_progress 事件，供 SSE 流式推送）。
     写操作成功后，自动更新 L2 操作记忆（last_thread_id / recent_paths / 操作摘要）。
     """
     session = _sessions.get_session(session_id) if session_id else None
-    result = execute_confirmed(session, action)
+    result = execute_confirmed(session, action, on_progress=on_progress)
 
     # 写操作成功后，自动更新 L2 记忆
     if result.get("status") == "applied" and session_id:

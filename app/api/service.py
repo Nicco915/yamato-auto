@@ -12,6 +12,7 @@ import contextlib
 import json
 import logging
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -34,17 +35,100 @@ def _config(thread_id: str) -> dict:
     return {"configurable": {"thread_id": thread_id}}
 
 
+# ---------------------------------------------------------------------------
+# 节点级进度钩子（W4a）：graph.stream 的 updates 事件 → exec_progress 回调
+# ---------------------------------------------------------------------------
+
+def _make_progress_emitter(
+    on_progress: Callable[[dict], None] | None,
+    seed: dict[str, Any] | None = None,
+) -> Callable[[dict], None]:
+    """构造 stream 事件回调：从 updates 事件提取 node1/2/3/6 节点级进度。
+
+    产出事件至少含 node/factory/done/total/message（type/tool/thread_id
+    由调用方包装补充）。done/total 口径同 _summarize_snapshot：
+    total = 装箱单工厂集 ∩ factory_filter；done = 已写回完成的工厂数
+    （当前处理中的工厂不计入，node2 消息里以 done+1 作序号）。
+    seed 用于 resume/rerun 场景预置跟踪器（resume 不再经过 node1，
+    工厂全集/队列/当前工厂须从挂起现场取）。
+    事件构造与回调整体 try/except：on_progress 抛异常绝不影响跑图。
+    """
+    from app.graph import NODE1, NODE2, NODE3, NODE6
+
+    seed = seed or {}
+    allow = set(seed["factory_filter"]) if seed.get("factory_filter") else None
+    tracker: dict[str, Any] = {"total_set": set(), "pending": set(), "current": None}
+    if seed.get("downstream_requirements"):
+        total_set = set((seed.get("downstream_requirements") or {}).keys())
+        if allow:
+            total_set &= allow
+        tracker["total_set"] = total_set
+    tracker["pending"] = set(seed.get("pending_factories") or [])
+    tracker["current"] = (seed.get("current_factory_data") or {}).get("factory_name")
+
+    def emit(event: dict) -> None:
+        if on_progress is None:
+            return
+        try:
+            for node, value in event.items():
+                if not isinstance(value, dict):
+                    continue
+                # 先更新跟踪器（updates 事件值即节点返回的 state 增量）
+                if "downstream_requirements" in value:
+                    total_set = set((value.get("downstream_requirements") or {}).keys())
+                    if allow:
+                        total_set &= allow
+                    tracker["total_set"] = total_set
+                if "pending_factories" in value:
+                    tracker["pending"] = set(value.get("pending_factories") or [])
+                current = (value.get("current_factory_data") or {}).get("factory_name")
+                if current:
+                    tracker["current"] = current
+
+                total = len(tracker["total_set"])
+                popped = len(tracker["total_set"] - tracker["pending"])
+                factory = tracker["current"]
+                if node == NODE1:
+                    progress = {"node": node, "factory": None, "done": 0,
+                                "total": total,
+                                "message": f"装箱单解析完成，共 {total} 个工厂"}
+                elif node == NODE2 and factory:
+                    # 当前工厂刚出队列、在处理中，不计入 done；序号 = done+1
+                    done = max(popped - 1, 0)
+                    progress = {"node": node, "factory": factory, "done": done,
+                                "total": total,
+                                "message": f"开始处理 {factory}（{done + 1}/{total}）"}
+                elif node == NODE3 and factory:
+                    done = max(popped - 1, 0)
+                    progress = {"node": node, "factory": factory, "done": done,
+                                "total": total, "message": f"{factory} 提取完成"}
+                elif node == NODE6 and factory:
+                    # 写回完成：当前工厂计入 done
+                    progress = {"node": node, "factory": factory, "done": popped,
+                                "total": total, "message": f"{factory} 写回完成"}
+                else:
+                    continue
+                on_progress(progress)
+        except Exception:  # noqa: BLE001 进度是辅助设施，抛异常绝不影响跑图
+            logger.debug("on_progress 回调异常已忽略", exc_info=True)
+
+    return emit
+
+
 def run_until_interrupt(
     thread_id: str,
     downstream_file_path: str | None = None,
     upstream_root: str | None = None,
     factory_filter: list[str] | None = None,
     factory_alias_overrides: dict[str, str] | None = None,
+    on_progress: Callable[[dict], None] | None = None,
 ) -> dict[str, Any]:
     """启动流程，执行 Node1-4 直到 Node5 的 interrupt 挂起（或全程无挂起跑完）。
 
     factory_alias_overrides：批次级「仅本次生效」工厂名对照（W5），
     非空才写进 initial_state（Node2 匹配的最高优先档，不落盘）。
+    on_progress：节点级进度回调（W4a），收到至少含
+    node/factory/done/total/message 的事件 dict；抛异常不影响跑图。
 
     返回：
       - {"status": "pending_human_review", "review_data": payload}
@@ -64,7 +148,9 @@ def run_until_interrupt(
         if factory_alias_overrides:
             initial_state["factory_alias_overrides"] = factory_alias_overrides
 
+        emit = _make_progress_emitter(on_progress, seed=initial_state)
         for event in graph.stream(initial_state, _config(thread_id), stream_mode="updates"):
+            emit(event)
             if "__interrupt__" in event:
                 payload = event["__interrupt__"][0].value
                 return {
@@ -81,10 +167,13 @@ def run_until_interrupt(
         }
 
 
-def resume_order(thread_id: str, resume_data: dict) -> dict[str, Any]:
+def resume_order(thread_id: str, resume_data: dict,
+                 on_progress: Callable[[dict], None] | None = None) -> dict[str, Any]:
     """用人工反馈数据唤醒挂起的图，继续执行 Node6/7（写 Excel + 落库）。
 
     resume_data 结构见 nodes/human_review.py 的 docstring。
+    on_progress：节点级进度回调（W4a），跟踪器以挂起现场为种子
+    （resume 不再经过 node1，工厂全集/队列从 state 预置）。
 
     审计：stream 前 _prepare_audit 抓取原始 payload 做 diff 快照，
     返回前 _write_audit 落 review_audits（失败只警告，绝不阻塞 resume）。
@@ -102,9 +191,11 @@ def resume_order(thread_id: str, resume_data: dict) -> dict[str, Any]:
         prepared = _prepare_audit(thread_id, resume_data)
 
         # 恢复执行，直到下一个 interrupt（多工厂循环时）或 END
+        emit = _make_progress_emitter(on_progress, seed=state.values)
         for event in graph.stream(
             Command(resume=resume_data), _config(thread_id), stream_mode="updates"
         ):
+            emit(event)
             if "__interrupt__" in event:
                 payload = event["__interrupt__"][0].value
                 result = {
@@ -130,6 +221,7 @@ def rerun_with_paths(
     thread_id: str,
     upstream_root: str | None = None,
     downstream_file_path: str | None = None,
+    on_progress: Callable[[dict], None] | None = None,
 ) -> dict[str, Any]:
     """对话改路径后的当前批次重跑：带新路径从 Node1 重新执行到 Node5 挂起。
 
@@ -162,7 +254,9 @@ def rerun_with_paths(
     # L2 日志关联：重跑也是一次完整跑图，绑定批次号（工厂名由 Node2 重绑）
     with logging_context(thread_id=thread_id):
         graph.update_state(cfg, update, as_node=START)
+        emit = _make_progress_emitter(on_progress, seed=snap.values)
         for event in graph.stream(None, cfg, stream_mode="updates"):
+            emit(event)
             if "__interrupt__" in event:
                 return {
                     "status": "pending_human_review",
@@ -663,6 +757,7 @@ def create_batch(
     factory_filter: list[str] | None = None,
     factory_alias_overrides: dict[str, str] | None = None,
     skip_processed: bool = False,
+    on_progress: Callable[[dict], None] | None = None,
 ) -> dict[str, Any]:
     """发起新批次：thread_id 查重 + 路径存在性校验后复用 run_until_interrupt。
 
@@ -724,7 +819,8 @@ def create_batch(
 
     result = run_until_interrupt(thread_id, str(d_path), str(u_path),
                                  factory_filter=effective_filter,
-                                 factory_alias_overrides=factory_alias_overrides)
+                                 factory_alias_overrides=factory_alias_overrides,
+                                 on_progress=on_progress)
     if skipped:
         result["skipped_processed"] = skipped
     return result

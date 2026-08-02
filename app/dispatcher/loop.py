@@ -400,12 +400,15 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
 # ---------------------------------------------------------------------------
 
 def execute_confirmed(session: DispatcherSession | None,
-                      client_action: dict | None) -> dict:
+                      client_action: dict | None,
+                      on_progress: Callable[[dict], None] | None = None) -> dict:
     """人工确认后执行 pending action。
 
     action 来源优先级：session.pending_action（服务端留存，防客户端伪造）
     > client_action（降级通道，必须是 kind=="dispatcher_tool" 信封）。
     执行前再过 TTL / 工具风险等级 / validate_args 三道防线。
+    on_progress（W4a）：节点级进度回调，透传 tool.execute（工具内部包装成
+    exec_progress 事件，跑图类工具 create_batch/rerun/submit_review 生效）。
     """
     action = None
     if session is not None and session.pending_action:
@@ -449,7 +452,7 @@ def execute_confirmed(session: DispatcherSession | None,
         return {"status": "error",
                 "message": f"参数校验未通过：{arg_error}，未执行任何操作"}
 
-    result = tool.execute(args)
+    result = tool.execute(args, on_progress=on_progress)
     logger.info(
         "确认门已执行写工具 | 工具=%s | 参数=%s | 结果=%s",
         name, _log_args_summary(args), _log_result_summary(result))

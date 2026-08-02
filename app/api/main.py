@@ -278,16 +278,84 @@ async def dispatcher_chat_stream(request: DispatcherChatRequest):
     from app import dispatcher
 
     if request.confirm:
-        # 确认执行不流式（瞬间完成），直接返回 JSON
-        result = await asyncio.to_thread(
-            dispatcher.confirm, request.session_id, request.action
-        )
-        if result.get("status") == "error":
-            raise HTTPException(status_code=400, detail=result.get("message"))
+        # 确认执行流式化（W4a）：与非 confirm 分支同构——后台线程跑
+        # dispatcher.confirm，跑图节点进度经 on_progress → asyncio.Queue
+        # 实时推送 exec_progress 事件；结束推送 applied / error（事件名不变，
+        # 前端已有分支）。error 不再走 HTTPException（流已开始无法改状态码，
+        # 且前端按 error 事件渲染）。
+        confirm_queue: asyncio.Queue = asyncio.Queue()
+
+        def on_confirm_progress(event: dict) -> None:
+            """同步回调（在 asyncio.to_thread 线程中调用），把事件放入异步队列。"""
+            try:
+                confirm_queue.put_nowait(event)
+            except asyncio.QueueFull:
+                pass  # 队列满了就丢弃（不应该发生，但防御性处理）
 
         async def confirm_generator():
-            yield f"data: {json.dumps({'type': 'applied', **result}, ensure_ascii=False)}\n\n"
-        return StreamingResponse(confirm_generator(), media_type="text/event-stream")
+            task = asyncio.create_task(
+                asyncio.to_thread(
+                    dispatcher.confirm,
+                    request.session_id,
+                    request.action,
+                    on_progress=on_confirm_progress,
+                )
+            )
+
+            # 逐个推送进度事件（exec_progress 等）
+            while True:
+                try:
+                    done, _ = await asyncio.wait(
+                        [asyncio.create_task(confirm_queue.get()),
+                         task],
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                except Exception:
+                    break
+
+                event = None
+                for d in done:
+                    if d is not task and not d.exception():
+                        event = d.result()
+                    elif d is task:
+                        break
+
+                if event is not None:
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    continue
+
+                if task.done():
+                    break
+
+            # 消费队列中剩余事件（进度回调可能在 task 完成后才到达）
+            while not confirm_queue.empty():
+                try:
+                    event = confirm_queue.get_nowait()
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                except asyncio.QueueEmpty:
+                    break
+
+            # 发送最终结果：applied / error（事件名保持兼容）
+            try:
+                result = task.result()
+            except Exception as e:
+                yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+                return
+
+            if result.get("status") == "error":
+                yield f"data: {json.dumps({'type': 'error', **result}, ensure_ascii=False)}\n\n"
+            else:
+                yield f"data: {json.dumps({'type': 'applied', **result}, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(
+            confirm_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
+            },
+        )
 
     if not request.message:
         raise HTTPException(status_code=400, detail="message 不能为空")

@@ -30,7 +30,7 @@ class Tool:
     risk: str                   # "read" | "write"
     func: Callable | None = None      # 只读工具执行函数：func(args: dict) -> dict
     preview: Callable | None = None   # 写工具：preview(args) -> {"summary", "lines", "warnings"}
-    execute: Callable | None = None   # 写工具：confirm 后执行 execute(args) -> dict，内部二次校验
+    execute: Callable | None = None   # 写工具：confirm 后执行 execute(args, on_progress=None) -> dict，内部二次校验
 
 
 # ---------------------------------------------------------------------------
@@ -48,6 +48,21 @@ def _preview(summary: str, lines: list[str] | None = None,
     （如 create_batch 的 factory_scan，由 loop 转交前端确认卡）。"""
     return {"summary": summary, "lines": lines or [],
             "warnings": warnings or [], **extra}
+
+
+def _wrap_on_progress(tool_name: str, args: dict,
+                      on_progress: Callable[[dict], None] | None):
+    """把 service 的节点级进度事件包装成 exec_progress（W4a）：
+    补 type/tool/thread_id 字段后透传给 loop 层回调。
+    on_progress 为 None 时返回 None（service 侧零开销）。"""
+    if on_progress is None:
+        return None
+    thread_id = args.get("thread_id")
+
+    def emit(event: dict) -> None:
+        on_progress({"type": "exec_progress", "tool": tool_name,
+                     "thread_id": thread_id, **event})
+    return emit
 
 
 # ---------------------------------------------------------------------------
@@ -342,14 +357,16 @@ def _validate_alias_decisions(
     return overrides, to_save, None
 
 
-def _exec_create_batch(args: dict) -> dict:
+def _exec_create_batch(args: dict,
+                       on_progress: Callable[[dict], None] | None = None) -> dict:
     """create_batch 执行：alias_decisions 二次校验 → save=true 落盘永久对照
     → 全部决定转 overrides 透传 service.create_batch（service 再做路径校验）。
     任何校验失败返回 {"error": ...}，绝不建批次。
 
     skip_processed（W4b）：与 factory_filter 互斥，同传时 factory_filter
     优先（skip_processed 忽略并在结果注明）；service.create_batch 内
-    实时重算差集，差集为空返回 skipped_all 不建批次。"""
+    实时重算差集，差集为空返回 skipped_all 不建批次。
+    on_progress（W4a）：节点级进度回调，包装成 exec_progress 透传 service。"""
     try:
         settings = get_settings()
         downstream = args.get("downstream_file_path") or settings.downstream_file_path
@@ -376,6 +393,7 @@ def _exec_create_batch(args: dict) -> dict:
             factory_filter=factory_filter,
             factory_alias_overrides=overrides or None,
             skip_processed=skip_processed,
+            on_progress=_wrap_on_progress("create_batch", args, on_progress),
         )
         if skip_processed and factory_filter:
             result["note"] = ("factory_filter 与 skip_processed 同传，"
@@ -423,13 +441,16 @@ def _preview_rerun(args: dict) -> dict:
         return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
 
 
-def _exec_rerun(args: dict) -> dict:
-    """rerun 执行：service.rerun_with_paths 内部校验挂起状态，异常转 {"error": ...}。"""
+def _exec_rerun(args: dict,
+                on_progress: Callable[[dict], None] | None = None) -> dict:
+    """rerun 执行：service.rerun_with_paths 内部校验挂起状态，异常转 {"error": ...}。
+    on_progress（W4a）：节点级进度回调，包装成 exec_progress 透传 service。"""
     try:
         return service.rerun_with_paths(
             args["thread_id"],
             upstream_root=args.get("upstream_root"),
             downstream_file_path=args.get("downstream_file_path"),
+            on_progress=_wrap_on_progress("rerun", args, on_progress),
         )
     except ValueError as e:
         return {"error": str(e)}
@@ -478,11 +499,15 @@ def _preview_submit_review(args: dict) -> dict:
         return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
 
 
-def _exec_submit_review(args: dict) -> dict:
-    """submit_review 执行：service.resume_order 内部二次校验挂起状态并落审计。"""
+def _exec_submit_review(args: dict,
+                        on_progress: Callable[[dict], None] | None = None) -> dict:
+    """submit_review 执行：service.resume_order 内部二次校验挂起状态并落审计。
+    on_progress（W4a）：节点级进度回调，包装成 exec_progress 透传 service。"""
     try:
         resume_data = {"approved": args["approved"], "items": args["items"]}
-        return service.resume_order(args["thread_id"], resume_data)
+        return service.resume_order(
+            args["thread_id"], resume_data,
+            on_progress=_wrap_on_progress("submit_review", args, on_progress))
     except ValueError as e:
         return {"error": str(e)}
     except Exception as e:  # noqa: BLE001
@@ -509,8 +534,10 @@ def _preview_set_paths(args: dict) -> dict:
         return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
 
 
-def _exec_set_paths(args: dict) -> dict:
-    """set_paths 执行：apply_paths 内含二次校验 + .env 备份 + 可选当前批次重跑。"""
+def _exec_set_paths(args: dict,
+                    on_progress: Callable[[dict], None] | None = None) -> dict:
+    """set_paths 执行：apply_paths 内含二次校验 + .env 备份 + 可选当前批次重跑。
+    on_progress 形参为与 loop 透传对齐保留，本工具不使用（重跑耗时不经此回调）。"""
     try:
         from app import agent_chat
 
@@ -637,8 +664,10 @@ def _preview_curate_kb(args: dict) -> dict:
         return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
 
 
-def _exec_curate_kb(args: dict) -> dict:
-    """curate_kb 执行：LLM 起草 → 写入 kb_extension.json → 灌库 → 清队列。"""
+def _exec_curate_kb(args: dict,
+                    on_progress: Callable[[dict], None] | None = None) -> dict:
+    """curate_kb 执行：LLM 起草 → 写入 kb_extension.json → 灌库 → 清队列。
+    on_progress 形参为与 loop 透传对齐保留，本工具不使用。"""
     try:
         from app.dispatcher import rag
         from app.extraction import llm_client
