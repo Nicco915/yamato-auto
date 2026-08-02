@@ -310,6 +310,11 @@ function handleSSEEvent(event) {
       updateProgress("✗ " + event.tool + "：" + (event.error || "未知错误"), "progress-error");
       break;
 
+    case "exec_progress":
+      // 执行级节点进度（确认执行期间由后端流式透传）
+      updateProgress(event.message, "progress-tool");
+      break;
+
     case "pending_confirmation": {
       // 进度气泡固化为最终回复
       const b = finishProgress(event.message || "");
@@ -403,11 +408,63 @@ function renderConfirmation(data, srcBubble) {
   scrollBottom();
 }
 
+/* ================= 批次进度兜底轮询（confirm 提交后） ================= */
+let batchPollTimer = null;
+
+function stopBatchPoll() {
+  if (batchPollTimer) { clearInterval(batchPollTimer); batchPollTimer = null; }
+}
+
+/* 防御式：action.args 可能不存在（刷新恢复的确认卡不回传 args），此时不轮询。
+   仅取 progress 拼一行，经 onLine 回调更新进度气泡；
+   收到终态（pending_review/completed）或 404（批次被删）时停轮询。 */
+function startBatchPoll(action, onLine) {
+  stopBatchPoll();
+  const tid = action && action.args && action.args.thread_id;
+  if (!tid || typeof onLine !== "function") return;
+  let lastLine = "";
+  batchPollTimer = setInterval(async () => {
+    try {
+      const resp = await fetch("/api/v1/batches/" + encodeURIComponent(tid));
+      if (resp.status === 404) { stopBatchPoll(); return; }
+      if (!resp.ok) return;
+      const data = await resp.json();
+      const st = data.status;
+      if (st === "pending_review" || st === "completed") { stopBatchPoll(); return; }
+      const prog = data.progress;
+      if (!prog || typeof prog !== "object") return;
+      let line = "";
+      if (prog.done != null && prog.total != null) {
+        line = "批次执行中 " + prog.done + "/" + prog.total;
+        if (prog.current_factory) line += " · " + prog.current_factory;
+      }
+      if (line && line !== lastLine) {
+        lastLine = line;
+        onLine(line);
+      }
+    } catch (e) { /* 轮询失败静默，下轮再试 */ }
+  }, 5000);
+}
+
+/* 进度气泡定格（去脉动动画，保留已渲染的进度行） */
+function settleProgressBubble() {
+  if (progressBubble) {
+    progressBubble.classList.remove("progress-bubble");
+    progressBubble = null;
+    progressLines = [];
+  }
+}
+
 /* ================= 确认执行（调度 Agent 确认门） ================= */
 async function confirmApply(action, srcBubble) {
   const body = { confirm: true, action: action, session_id: sessionId };
 
-  const thinking = addAgentText("正在执行…");
+  let thinking = addAgentText("正在执行…");
+  // 兜底轮询：confirm 提交后若 action.args 含 thread_id，5s 拉批次 progress 更新进度气泡一行
+  startBatchPoll(action, (line) => {
+    if (thinking) { thinking.remove(); thinking = null; }
+    updateProgress(line, "progress-tool");
+  });
   try {
     const resp = await fetch("/api/v1/dispatcher/chat/stream", {
       method: "POST",
@@ -437,18 +494,31 @@ async function confirmApply(action, srcBubble) {
         let event;
         try { event = JSON.parse(jsonStr); } catch (e) { continue; }
 
-        if (event.type === "applied") {
-          thinking.remove();
+        if (event.type === "exec_progress") {
+          // 执行级进度：把"正在执行…"换成进度气泡逐行
+          if (thinking) { thinking.remove(); thinking = null; }
+          updateProgress(event.message || "执行中…", "progress-tool");
+        } else if (event.type === "applied") {
+          stopBatchPoll();
+          if (thinking) { thinking.remove(); thinking = null; }
+          settleProgressBubble();
           renderApplied(event, null);
         } else if (event.type === "error") {
-          thinking.remove();
+          stopBatchPoll();
+          if (thinking) { thinking.remove(); thinking = null; }
+          settleProgressBubble();
           addAgentText("执行失败：" + (event.message || "未知错误"));
         }
       }
     }
   } catch (e) {
-    thinking.textContent = "执行失败：" + e.message;
-    thinking.style.color = "#dc2626";
+    stopBatchPoll();
+    if (thinking) {
+      thinking.textContent = "执行失败：" + e.message;
+      thinking.style.color = "#dc2626";
+    } else {
+      addAgentText("执行失败：" + e.message);
+    }
     scrollBottom();
   }
 }
@@ -520,6 +590,7 @@ $("inp").addEventListener("keydown", (e) => {
 
 /* 新会话：换新 session_id（服务器侧旧会话随 TTL 过期），清空界面重来 */
 $("btn-new-session").onclick = () => {
+  stopBatchPoll();
   sessionId = (window.crypto && crypto.randomUUID)
     ? crypto.randomUUID()
     : "sid-" + Date.now() + "-" + Math.random().toString(16).slice(2);
