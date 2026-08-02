@@ -43,9 +43,11 @@ def _err(e: Exception) -> dict:
 
 
 def _preview(summary: str, lines: list[str] | None = None,
-             warnings: list[str] | None = None) -> dict:
-    """写工具 preview 的统一返回结构。"""
-    return {"summary": summary, "lines": lines or [], "warnings": warnings or []}
+             warnings: list[str] | None = None, **extra) -> dict:
+    """写工具 preview 的统一返回结构；**extra 透传结构化附加字段
+    （如 create_batch 的 factory_scan，由 loop 转交前端确认卡）。"""
+    return {"summary": summary, "lines": lines or [],
+            "warnings": warnings or [], **extra}
 
 
 # ---------------------------------------------------------------------------
@@ -157,12 +159,20 @@ def _ask_guide_wrapper(args: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def _preview_create_batch(args: dict) -> dict:
-    """create_batch 预览：展开实际路径（缺省取 settings，与 service 同逻辑）+ 查重预检。"""
+    """create_batch 预览：展开实际路径 + 查重预检 + 工厂名对照预扫（W5 三档）。
+
+    轮1（无 alias_decisions）：预扫结果分「确定命中/低置信推荐/无候选」三档
+    进 lines，结构化结果放 factory_scan 供确认卡渲染；
+    轮2（带 alias_decisions）：展示每条决定 [仅本次]/[永久保存]，
+    永久保存且覆盖既有 alias key 时给覆盖警告。
+    """
     try:
         thread_id = (args.get("thread_id") or "").strip()
         settings = get_settings()
         downstream = args.get("downstream_file_path") or settings.downstream_file_path
         upstream = args.get("upstream_root") or settings.upstream_root
+        factory_filter = args.get("factory_filter")
+        alias_decisions = args.get("alias_decisions") or []
 
         lines = [f"批次 thread_id: {thread_id}"]
         warnings: list[str] = []
@@ -179,25 +189,161 @@ def _preview_create_batch(args: dict) -> dict:
                      + ("" if args.get("downstream_file_path") else "（缺省值）"))
         lines.append(f"上游工厂文件夹: {u_path}"
                      + ("" if args.get("upstream_root") else "（缺省值）"))
+        if factory_filter:
+            lines.append(f"只处理指定工厂: {factory_filter}")
         if not d_path.is_file():
             warnings.append(f"下游装箱单路径不存在或不是文件: {downstream}")
         if not u_path.is_dir():
             warnings.append(f"上游工厂文件夹路径不存在或不是目录: {upstream}")
 
-        return _preview(f"将创建新批次 {thread_id} 并开始提取（Node1 跑到 Node5 挂起）",
-                        lines, warnings)
+        # ---- W5 工厂名对照预扫（纯 CPU 零成本，一次问清）----
+        scan = service.prescan_factory_aliases(
+            str(d_path), str(u_path), factory_filter=factory_filter)
+        resolved = scan.get("resolved") or {}
+        candidates = scan.get("candidates") or {}
+        unmatched = scan.get("unmatched") or []
+        warnings.extend(scan.get("warnings") or [])
+
+        if resolved:
+            lines.append("工厂对照·确定命中（无需确认）:")
+            for factory, hit in resolved.items():
+                lines.append(f"  {factory} -> {hit['folder']}"
+                             f"（{hit['method']}, {hit['score']:.0f}分）")
+        if candidates:
+            lines.append("工厂对照·低置信推荐（需逐个确认）:")
+            for factory, cands in candidates.items():
+                cand_text = " / ".join(
+                    f"{c['folder']}({c['score']:.0f}分)" for c in cands)
+                lines.append(f"  {factory} -> 候选: {cand_text}")
+        if unmatched:
+            lines.append("工厂对照·无候选（需人工指定文件夹）:")
+            for factory in unmatched:
+                lines.append(f"  {factory}")
+
+        # ---- 轮2：用户已给出 alias_decisions，展示决定清单 ----
+        if alias_decisions:
+            from app.factory_match import load_alias_map
+            existing_alias = load_alias_map()
+            lines.append("本次工厂对照决定:")
+            for d in alias_decisions:
+                if not isinstance(d, dict):
+                    continue
+                factory = d.get("factory", "")
+                folder = d.get("folder", "")
+                if d.get("save"):
+                    lines.append(f"  [永久保存] {factory} -> {folder}")
+                    old = existing_alias.get(factory)
+                    if old is not None and old != folder:
+                        warnings.append(
+                            f"覆盖警告：永久对照「{factory}」已存在映射 "
+                            f"-> {old}，确认后将被覆盖为 -> {folder}")
+                else:
+                    lines.append(f"  [仅本次] {factory} -> {folder}")
+
+        summary = f"将创建新批次 {thread_id} 并开始提取（Node1 跑到 Node5 挂起）"
+        if candidates or unmatched:
+            summary += (f"；工厂对照存疑 {len(candidates)} 家、无候选 "
+                        f"{len(unmatched)} 家，请确认后带 alias_decisions 重新发起")
+        return _preview(summary, lines, warnings, factory_scan=scan)
     except Exception as e:  # noqa: BLE001
         return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
 
 
-def _exec_create_batch(args: dict) -> dict:
-    """create_batch 执行：service 内部已做二次校验，异常转 {"error": ...} 不抛出。"""
+def _validate_alias_decisions(
+    alias_decisions: list,
+    downstream: str,
+    upstream: str,
+    factory_filter: list[str] | None,
+) -> tuple[dict[str, str], dict[str, str], str | None]:
+    """alias_decisions 二次校验（execute 侧，防注入/防幻觉参数）。
+
+    校验规则：
+    - factory 必须在装箱单工厂集合内（带 factory_filter 时还需在过滤集内）；
+    - folder 拒绝路径分隔符与「..」，且必须是生效 upstream_root 下
+      现存的一级子目录。
+    返回 (overrides, to_save, 错误信息|None)：overrides 为全部决定的
+    {factory: folder}；to_save 为其中 save=true 的子集。
+    """
+    from app.nodes.parse_downstream import parse_requirements
+
+    overrides: dict[str, str] = {}
+    to_save: dict[str, str] = {}
+
     try:
-        return service.create_batch(
+        requirements, _ = parse_requirements(
+            str(Path(downstream).expanduser()))
+    except Exception as e:  # noqa: BLE001 校验失败不建批次
+        return {}, {}, f"装箱单解析失败，无法校验工厂对照: {type(e).__name__}: {e}"
+    valid_factories = set(requirements.keys())
+
+    u_path = Path(upstream).expanduser()
+    try:
+        valid_folders = {d.name for d in u_path.iterdir() if d.is_dir()}
+    except OSError as e:
+        return {}, {}, f"上游工厂文件夹不可读，无法校验工厂对照: {e}"
+
+    for d in alias_decisions:
+        if not isinstance(d, dict):
+            return {}, {}, f"alias_decisions 元素必须是对象: {d!r}"
+        factory = d.get("factory")
+        folder = d.get("folder")
+        if not factory or not isinstance(factory, str):
+            return {}, {}, f"alias_decisions 缺少有效的 factory 字段: {d!r}"
+        if not folder or not isinstance(folder, str):
+            return {}, {}, f"alias_decisions 缺少有效的 folder 字段: {d!r}"
+        if factory not in valid_factories:
+            return {}, {}, (f"工厂「{factory}」不在装箱单工厂集合内，"
+                            "拒绝写入对照")
+        if factory_filter and factory not in set(factory_filter):
+            return {}, {}, (f"工厂「{factory}」不在 factory_filter 范围内，"
+                            "拒绝写入对照")
+        if "/" in folder or "\\" in folder or folder in (".", "..") \
+                or ".." in Path(folder).parts:
+            return {}, {}, (f"文件夹名「{folder}」含路径分隔符或 ..，"
+                            "拒绝写入对照")
+        if folder not in valid_folders:
+            return {}, {}, (f"文件夹「{folder}」不是上游目录下现存的一级子目录，"
+                            "拒绝写入对照")
+        overrides[factory] = folder
+        if d.get("save"):
+            to_save[factory] = folder
+    return overrides, to_save, None
+
+
+def _exec_create_batch(args: dict) -> dict:
+    """create_batch 执行：alias_decisions 二次校验 → save=true 落盘永久对照
+    → 全部决定转 overrides 透传 service.create_batch（service 再做路径校验）。
+    任何校验失败返回 {"error": ...}，绝不建批次。"""
+    try:
+        settings = get_settings()
+        downstream = args.get("downstream_file_path") or settings.downstream_file_path
+        upstream = args.get("upstream_root") or settings.upstream_root
+        factory_filter = args.get("factory_filter")
+        alias_decisions = args.get("alias_decisions") or []
+
+        overrides: dict[str, str] = {}
+        if alias_decisions:
+            overrides, to_save, err = _validate_alias_decisions(
+                alias_decisions, downstream, upstream, factory_filter)
+            if err:
+                return {"error": err}
+            if to_save:
+                from app.factory_match import save_alias_entries
+                # 永久对照先落盘（.bak 备份 + 原子写），再建批次
+                save_result = save_alias_entries(to_save)
+
+        result = service.create_batch(
             args["thread_id"],
             downstream_file_path=args.get("downstream_file_path"),
             upstream_root=args.get("upstream_root"),
+            factory_filter=factory_filter,
+            factory_alias_overrides=overrides or None,
         )
+        if alias_decisions:
+            result["alias_overrides_applied"] = overrides
+            if to_save:
+                result["alias_saved"] = save_result
+        return result
     except (FileExistsError, ValueError) as e:
         return {"error": str(e)}
     except Exception as e:  # noqa: BLE001
@@ -647,7 +793,10 @@ TOOLS: dict[str, Tool] = {
         name="create_batch",
         description="创建新提取批次并开始跑图（Node1 到 Node5 挂起待审）。"
                     "写操作：须先向操作员展示 preview 并获得确认后才执行。"
-                    "路径缺省时取 .env 配置。",
+                    "路径缺省时取 .env 配置。preview 会自动预扫工厂名对照"
+                    "（确定命中/低置信推荐/无候选三档）；有存疑工厂时先向"
+                    "操作员问清每个工厂用哪个文件夹、是否保存永久对照，"
+                    "再带 alias_decisions 重新调用本工具。",
         parameters={
             "type": "object",
             "properties": {
@@ -662,6 +811,29 @@ TOOLS: dict[str, Tool] = {
                 "upstream_root": {
                     "type": "string",
                     "description": "可选，上游工厂文件夹根目录绝对路径；缺省取配置",
+                },
+                "factory_filter": {
+                    "type": "array",
+                    "description": "可选，只处理指定工厂（装箱单工厂名列表）；"
+                                   "不传=全部工厂",
+                    "items": {"type": "string"},
+                },
+                "alias_decisions": {
+                    "type": "array",
+                    "description": "可选，工厂名对照决定清单（预扫存疑时第二轮"
+                                   "调用携带）。每项：factory=装箱单工厂名、"
+                                   "folder=上游一级文件夹名、save=true 保存永久"
+                                   "对照（追加 alias_map.json，后续批次生效）/"
+                                   "false 仅本次生效（不落盘）",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "factory": {"type": "string"},
+                            "folder": {"type": "string"},
+                            "save": {"type": "boolean"},
+                        },
+                        "required": ["factory", "folder"],
+                    },
                 },
             },
             "required": ["thread_id"],

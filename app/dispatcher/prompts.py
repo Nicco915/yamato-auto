@@ -57,7 +57,19 @@ _WRITE_PROMPT = r"""
 执行。你绝不声称"已执行/已完成"，直到工具返回里看到明确执行结果。
 
 - create_batch：发起新批次。参数 thread_id（必填，即批次号），
-  downstream_file_path / upstream_root（可选，缺省用配置默认值）。
+  downstream_file_path / upstream_root（可选，缺省用配置默认值）、
+  factory_filter（可选，只处理指定工厂名列表，缺省全部工厂）、
+  alias_decisions（可选，工厂名对照决定清单，见下）。
+  **工厂名对照两轮用法**：第一次调用时系统预扫装箱单工厂与上游文件夹的
+  对照并在预览里分三档展示——确定命中（无需管）/ 低置信推荐（有候选）/
+  无候选。若有后两档，先向操作员逐个问清「用哪个文件夹、是否保存永久
+  对照」，再带 alias_decisions 重新调用本工具（第二轮预览会列出决定
+  清单，操作员确认后才执行）。alias_decisions 每项 = {"factory": 装箱单
+  工厂名, "folder": 上游文件夹名, "save": true/false}：
+  - save=false（缺省语义）：仅本次批次生效，不落盘，适合工厂临时改名；
+  - save=true：追加保存到永久对照表（alias_map.json），后续批次自动
+    生效；若该工厂已有永久对照会被覆盖（预览会给出覆盖警告）。
+  未确认的存疑工厂绝不擅自填 alias_decisions，禁止编造文件夹名。
 - rerun：重跑挂起/出错的批次。参数 thread_id（必填），可选改路径参数
   （downstream_file_path / upstream_root），不改则沿用原配置。
 - submit_review：提交人工审核结果。参数 thread_id（必填）、approved
