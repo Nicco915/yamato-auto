@@ -28,6 +28,7 @@ from typing import Callable
 
 from app.dispatcher import prompts, sessions
 from app.dispatcher.sessions import DispatcherSession
+from app.dispatcher.summarize import summarize_applied
 from app.dispatcher.tools import TOOLS, openai_tool_defs, validate_args, visible_tools
 
 logger = logging.getLogger(__name__)
@@ -333,6 +334,9 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
                     "preview_lines": preview["lines"],
                     "warnings": preview.get("warnings", []),
                     "created_at": time.time(),
+                    # W5 透传：工厂名对照预扫结果随信封留存，
+                    # 刷新恢复确认卡（W3 history 端点裁剪回传）时仍完整
+                    "factory_scan": preview.get("factory_scan"),
                 }
                 session.pending_action = action
                 logger.info(
@@ -353,12 +357,15 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
                     on_progress({"type": "pending_confirmation",
                                  "tool": name, "preview": action["preview_lines"],
                                  "message": text, "action": action,
-                                 "warnings": action["warnings"]})
+                                 "warnings": action["warnings"],
+                                 # W5 透传：工厂名对照预扫结果（preview 可能无此键，.get 防御）
+                                 "factory_scan": preview.get("factory_scan")})
                 return {"status": "pending_confirmation",
                         "action": action,
                         "preview": action["preview_lines"],
                         "message": text,
-                        "warnings": action["warnings"]}
+                        "warnings": action["warnings"],
+                        "factory_scan": preview.get("factory_scan")}
 
             # 只读工具：直接执行（func 契约内部不抛异常，错误走 {"error": ...}）
             if on_progress:
@@ -446,15 +453,30 @@ def execute_confirmed(session: DispatcherSession | None,
     logger.info(
         "确认门已执行写工具 | 工具=%s | 参数=%s | 结果=%s",
         name, _log_args_summary(args), _log_result_summary(result))
+
+    # W2：确定性中文摘要（绝不抛异常）；result 含 error → status="error"
+    summary = summarize_applied(name, args, result)
+    failed = isinstance(result, dict) and bool(result.get("error"))
     if session is not None:
+        # record_tool 的 result_summary 保持 JSON 摘要不变（审计用）
         sessions.record_tool(session, tool=name,
                              args_summary=_args_summary(args),
                              result_summary=_result_summary(result),
                              confirmed=True)
         sessions.clear_pending(session)
-        sessions.record_turn(session, "[确认执行]",
-                             f"已确认并执行 {name}：{_result_summary(result)}")
-    return {"status": "applied", "tool": name, "result": result}
+        # 对话历史写中文摘要（不再写 300 字 JSON 进 LLM 上下文），限 500 字符
+        turn_text = f"已确认并执行 {name}：{summary['message']}"
+        if summary["summary_lines"]:
+            turn_text += "\n" + "\n".join(summary["summary_lines"])
+        sessions.record_turn(session, "[确认执行]", turn_text[:500])
+
+    status = "error" if failed else "applied"
+    return {"status": status, "tool": name, "result": result,
+            "message": summary["message"],
+            "summary_lines": summary["summary_lines"],
+            "links": summary["links"],
+            # 补 args：修 L2 记忆 auto_update 拿不到 args 的既有 bug
+            "args": args}
 
 
 __all__ = ["llm_step", "run_dispatch", "execute_confirmed",
