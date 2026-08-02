@@ -79,6 +79,14 @@
   .progress-error { color: #dc2626; font-size: 12px; padding-left: 8px; }
 
   .input-row { display: flex; gap: 10px; align-items: flex-end; }
+  .system-line {
+    align-self: center;
+    color: #9ca3af;
+    font-size: 12px;
+    line-height: 1.6;
+    text-align: center;
+    max-width: 90%;
+  }
   #inp {
     flex: 1;
     resize: none;
@@ -111,7 +119,7 @@
       <button class="btn btn-primary" id="btn-send">发送</button>
     </div>
     <div class="input-hint">
-      Enter 发送，Shift+Enter 换行。Agent 会记住本次会话上下文（可分多轮补充信息，刷新不丢）。
+      Enter 发送，Shift+Enter 换行。刷新/切页自动恢复历史；服务重启后仅保留最近操作摘要。
       <a href="javascript:void 0" id="btn-new-session" style="color:var(--primary)">开始新会话</a>
     </div>
   </div>
@@ -130,6 +138,8 @@ const history = [];   // 对话历史（仅浏览器内存，用于渲染；会�
 let sending = false;
 
 /* L1 会话记忆：session_id 存 localStorage，刷新后 Agent 仍记得本次会话上下文 */
+/* sidRestored 须在生成新 sid 之前取值：本次加载是否带着旧 sid 而来 */
+const sidRestored = !!localStorage.getItem("yamato_chat_sid");
 let sessionId = localStorage.getItem("yamato_chat_sid");
 if (!sessionId) {
   sessionId = (window.crypto && crypto.randomUUID)
@@ -164,6 +174,16 @@ function addAgentText(text, extraClass) {
   b.textContent = text;
   history.push({ role: "agent", text });
   return b;
+}
+
+/* 居中灰色系统行（确认执行标记 / 会话失效降级提示等，不入对话历史） */
+function addSystemLine(text) {
+  const div = document.createElement("div");
+  div.className = "system-line";
+  div.textContent = text;
+  $("msgs").appendChild(div);
+  scrollBottom();
+  return div;
 }
 
 /* ================= 进度气泡（动态更新） ================= */
@@ -530,7 +550,61 @@ async function greet() {
   } catch (e) { /* 开场提示是辅助，失败不阻塞页面 */ }
   addAgentText(fallback);
 }
-greet();
+
+/* 加载对话历史（刷新/切页恢复）：
+   - found && 有历史 → 逐条渲染（[确认执行] 渲染为系统行），恢复活着的确认卡，不调 greet；
+   - found && 空历史 → greet；
+   - !found && 带着旧 sid 而来 → 会话失效降级提示 + greet（L2 记忆的开场摘要仍在）；
+   - !found && 全新会话 → greet；
+   - fetch 失败 → 静默 greet。 */
+async function loadHistory() {
+  let data = null;
+  try {
+    const resp = await fetch(
+      "/api/v1/dispatcher/history?session_id=" + encodeURIComponent(sessionId)
+    );
+    if (resp.ok) data = await resp.json();
+  } catch (e) { data = null; }
+
+  if (data && data.found) {
+    const hist = Array.isArray(data.history) ? data.history : [];
+    if (hist.length) {
+      hist.forEach((m) => {
+        if (!m || typeof m.content !== "string") return;
+        if (m.role === "user") {
+          if (m.content === "[确认执行]") {
+            addSystemLine("✓ 确认执行");
+          } else {
+            addUserMsg(m.content);
+          }
+        } else {
+          addAgentText(m.content);
+        }
+      });
+
+      // 恢复活着的待确认卡：confirm 走服务端留存的 pending_action（无 args 也能确认）
+      const pa = data.pending_action;
+      if (pa && pa.tool) {
+        renderConfirmation({
+          action: { kind: "dispatcher_tool", tool: pa.tool, summary: pa.summary },
+          preview: pa.preview_lines,
+          warnings: pa.warnings,
+          message: pa.summary,
+          factory_scan: pa.factory_scan,
+        });
+      }
+      return;  // 已有历史，不再播开场白
+    }
+    greet();
+    return;
+  }
+
+  if (sidRestored) {
+    addSystemLine("之前的对话记录已失效（服务重启或会话超时），Agent 仍记得你最近的批次操作。");
+  }
+  greet();
+}
+loadHistory();
 $("inp").focus();
 </script>
 </body>
