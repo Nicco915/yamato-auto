@@ -533,12 +533,136 @@ def delete_batch(thread_id: str) -> dict[str, Any]:
         }
 
 
+# ---------------------------------------------------------------------------
+# 重复处理预检（W4b）：sessions 完成态 + 审核落库记录，四档判定工厂是否已处理
+# ---------------------------------------------------------------------------
+
+# 会话完成态（与 extraction/session.py 状态机口径一致）
+_SESSION_DONE_STATUSES = ("complete_auto", "complete_manual")
+# 会话进行态：提过但没提完，不算已处理，也不算"从没碰过"
+_SESSION_PARTIAL_STATUSES = ("collecting", "waiting_pl")
+
+
+def _session_status_light(factory: str) -> tuple[str | None, str | None]:
+    """轻量读 sessions/{factory}.json，只取 (status, updated_at)，不算 coverage。
+
+    文件不存在/损坏返回 (None, None)。
+    """
+    path = SESSIONS_DIR / f"{factory}.json"
+    if not path.is_file():
+        return None, None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 损坏的会话文件按无会话处理
+        return None, None
+    return data.get("status"), data.get("updated_at")
+
+
+def check_processed_factories(
+    downstream_file_path: str | None = None,
+    factory_names: list[str] | None = None,
+) -> dict[str, Any]:
+    """预检装箱单各工厂是否已处理过（W4b 重复处理确认的唯一判定口径）。
+
+    工厂集合：给出 factory_names 时直接用之（不解析文件，调用方已知名单）；
+    缺省时解析装箱单（parse_requirements），解析失败抛 ValueError（路由层
+    转 422）。
+
+    level 四档（processed = level in (audited, session_complete)）：
+      - audited：review_audits 有 approved=true 记录（最强，审核已落库）；
+      - session_complete：sessions/*.json 为 complete_auto/complete_manual；
+      - partial：collecting/waiting_pl（提过没提完，不算已处理）；
+      - none：无任何记录。
+    单工厂查询异常降级 level="none"，不拖垮整表。
+    """
+    if factory_names is not None:
+        names = list(dict.fromkeys(factory_names))  # 保序去重
+    else:
+        from app.nodes.parse_downstream import parse_requirements
+
+        downstream = downstream_file_path or get_settings().downstream_file_path
+        try:
+            requirements, _ = parse_requirements(str(Path(downstream).expanduser()))
+        except Exception as e:  # noqa: BLE001 统一转 ValueError，调用方转 422
+            raise ValueError(
+                f"装箱单解析失败，无法预检重复处理: {type(e).__name__}: {e}"
+            ) from e
+        names = list(requirements.keys())
+
+    # 审核落库记录：一次性查全部工厂的 approved 记录（ts 倒序），逐厂取首条
+    last_audit: dict[str, dict[str, Any]] = {}
+    if names:
+        try:
+            with get_session() as session:
+                rows = session.scalars(
+                    select(ReviewAudit)
+                    .where(ReviewAudit.factory_name.in_(names),
+                           ReviewAudit.approved.is_(True))
+                    .order_by(ReviewAudit.ts.desc())
+                ).all()
+            for r in rows:
+                if r.factory_name in last_audit:
+                    continue
+                last_audit[r.factory_name] = {
+                    "ts": r.ts.isoformat() if r.ts else None,
+                    "thread_id": r.thread_id,
+                    "result_status": r.result_status,
+                }
+        except Exception as e:  # noqa: BLE001 审计查询失败按无审核记录处理
+            logger.warning("⚠️ [预检] review_audits 查询失败，按无审核记录处理：%s: %s",
+                           type(e).__name__, e)
+
+    factories: list[dict[str, Any]] = []
+    processed_count = 0
+    for name in names:
+        try:
+            status, updated_at = _session_status_light(name)
+            audit = last_audit.get(name)
+            if audit is not None:
+                level = "audited"
+            elif status in _SESSION_DONE_STATUSES:
+                level = "session_complete"
+            elif status in _SESSION_PARTIAL_STATUSES:
+                level = "partial"
+            else:
+                level = "none"
+            processed = level in ("audited", "session_complete")
+            if processed:
+                processed_count += 1
+            factories.append({
+                "factory": name,
+                "processed": processed,
+                "session_status": status,
+                "session_updated_at": updated_at,
+                "last_audit": audit,
+                "level": level,
+            })
+        except Exception as e:  # noqa: BLE001 单厂异常降级 none，不拖垮整表
+            logger.warning("⚠️ [预检] 工厂 %s 查询异常，按未处理降级：%s: %s",
+                           name, type(e).__name__, e)
+            factories.append({
+                "factory": name,
+                "processed": False,
+                "session_status": None,
+                "session_updated_at": None,
+                "last_audit": None,
+                "level": "none",
+            })
+
+    return {
+        "factories": factories,
+        "processed_count": processed_count,
+        "total_count": len(factories),
+    }
+
+
 def create_batch(
     thread_id: str,
     downstream_file_path: str | None = None,
     upstream_root: str | None = None,
     factory_filter: list[str] | None = None,
     factory_alias_overrides: dict[str, str] | None = None,
+    skip_processed: bool = False,
 ) -> dict[str, Any]:
     """发起新批次：thread_id 查重 + 路径存在性校验后复用 run_until_interrupt。
 
@@ -550,7 +674,12 @@ def create_batch(
     - factory_filter 只处理指定工厂（调试/冒烟/跳过已处理用），透传
       run_until_interrupt，None=全部工厂；
     - factory_alias_overrides 批次级「仅本次生效」工厂名对照（W5），
-      非空才写入 state（Node2 最高优先匹配档，不落盘）。
+      非空才写入 state（Node2 最高优先匹配档，不落盘）；
+    - skip_processed=True 时先跑 check_processed_factories 预检（W4b），
+      取「未处理工厂」差集作 factory_filter（与显式 factory_filter 互斥，
+      factory_filter 优先）；差集为空时不跑图，直接返回 skipped_all
+      （规避 Node2 空队列假审核包）。每次调用实时重算差集，不沿用任何
+      预览结论。
     """
     thread_id = (thread_id or "").strip()
     if not thread_id:
@@ -575,9 +704,30 @@ def create_batch(
     if not u_path.is_dir():
         raise ValueError(f"上游工厂文件夹路径不存在或不是目录: {upstream}")
 
-    return run_until_interrupt(thread_id, str(d_path), str(u_path),
-                               factory_filter=factory_filter,
-                               factory_alias_overrides=factory_alias_overrides)
+    # W4b：skip_processed 实时重算差集（不沿用预览结论，防 TTL 内竞态）；
+    # 显式 factory_filter 优先（互斥语义）
+    effective_filter = factory_filter
+    skipped: list[str] = []
+    if skip_processed and not factory_filter:
+        precheck = check_processed_factories(str(d_path))
+        skipped = [f["factory"] for f in precheck["factories"] if f["processed"]]
+        remaining = [f["factory"] for f in precheck["factories"]
+                     if not f["processed"]]
+        if not remaining:
+            logger.info("[W4b] 批次 %s 全部工厂均已处理，跳过建图", thread_id)
+            return {
+                "status": "skipped_all",
+                "message": "全部工厂均已处理，无可提取工厂",
+                "processed": skipped,
+            }
+        effective_filter = remaining
+
+    result = run_until_interrupt(thread_id, str(d_path), str(u_path),
+                                 factory_filter=effective_filter,
+                                 factory_alias_overrides=factory_alias_overrides)
+    if skipped:
+        result["skipped_processed"] = skipped
+    return result
 
 
 # ---------------------------------------------------------------------------

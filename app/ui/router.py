@@ -8,6 +8,7 @@
 API（路由极薄，逻辑全在 app.api.service；全部 asyncio.to_thread 防阻塞）：
 - GET  /api/v1/batches              批次列表
 - POST /api/v1/batches              发起批次（409 重名 / 422 路径无效）
+- POST /api/v1/batches/precheck     重复处理预检（422 装箱单解析失败）
 - GET  /api/v1/batches/{thread_id}  批次详情（404 不存在）
 - DELETE /api/v1/batches/{thread_id} 删除过往批次（404 不存在 / 409 进行中）
 - GET  /api/v1/usage                全局 LLM 用量（scope=process_lifetime）
@@ -72,11 +73,27 @@ async def batch_page(thread_id: str) -> HTMLResponse:  # noqa: ARG001
 
 
 class CreateBatchRequest(BaseModel):
-    """发起批次请求：路径缺省时由 service 取 settings 默认值。"""
+    """发起批次请求：路径缺省时由 service 取 settings 默认值。
+
+    factory_filter 只处理指定工厂；skip_processed=true 自动跳过已处理
+    工厂（与 factory_filter 互斥，factory_filter 优先）——W4b。
+    """
 
     thread_id: str
     downstream_file_path: Optional[str] = None
     upstream_root: Optional[str] = None
+    factory_filter: Optional[list[str]] = None
+    skip_processed: bool = False
+
+
+class PrecheckRequest(BaseModel):
+    """重复处理预检请求：路径字段语义与发起批次一致（缺省取配置默认值）。
+
+    factory_names 缺省时解析装箱单取工厂集合；给出时直接用之。
+    """
+
+    downstream_file_path: Optional[str] = None
+    factory_names: Optional[list[str]] = None
 
 
 @router.get("/api/v1/batches")
@@ -87,16 +104,34 @@ async def list_batches():
 
 @router.post("/api/v1/batches")
 async def create_batch(request: CreateBatchRequest):
-    """发起批次：重名 409，路径无效 422，成功后跑到审核点挂起。"""
+    """发起批次：重名 409，路径无效 422，成功后跑到审核点挂起。
+
+    skip_processed 且全部工厂已处理时返回 status=skipped_all（不建批次）。
+    """
     try:
         return await asyncio.to_thread(
             service.create_batch,
             request.thread_id,
             request.downstream_file_path,
             request.upstream_root,
+            factory_filter=request.factory_filter,
+            skip_processed=request.skip_processed,
         )
     except FileExistsError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@router.post("/api/v1/batches/precheck")
+async def batch_precheck(request: PrecheckRequest):
+    """重复处理预检（W4b）：四档判定各工厂是否已处理；装箱单解析失败 422。"""
+    try:
+        return await asyncio.to_thread(
+            service.check_processed_factories,
+            request.downstream_file_path,
+            request.factory_names,
+        )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 

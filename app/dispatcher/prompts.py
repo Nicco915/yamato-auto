@@ -59,6 +59,7 @@ _WRITE_PROMPT = r"""
 - create_batch：发起新批次。参数 thread_id（必填，即批次号），
   downstream_file_path / upstream_root（可选，缺省用配置默认值）、
   factory_filter（可选，只处理指定工厂名列表，缺省全部工厂）、
+  skip_processed（可选，true=自动跳过已处理过的工厂）、
   alias_decisions（可选，工厂名对照决定清单，见下）。
   **工厂名对照两轮用法**：第一次调用时系统预扫装箱单工厂与上游文件夹的
   对照并在预览里分三档展示——确定命中（无需管）/ 低置信推荐（有候选）/
@@ -70,6 +71,11 @@ _WRITE_PROMPT = r"""
   - save=true：追加保存到永久对照表（alias_map.json），后续批次自动
     生效；若该工厂已有永久对照会被覆盖（预览会给出覆盖警告）。
   未确认的存疑工厂绝不擅自填 alias_decisions，禁止编造文件夹名。
+  **重复工厂确认**：预览里出现 [重复] 标记的工厂，表示该工厂已提取
+  完成（session）或已审核落库。此时必须先主动询问操作员「全部重提」
+  还是「跳过已处理工厂」，得到明确答复后再行动：全部重提→直接确认；
+  跳过→带 skip_processed=true 重新调用本工具（与 factory_filter 互斥，
+  同传时 factory_filter 优先）。绝不替操作员默认选择。
 - rerun：重跑挂起/出错的批次。参数 thread_id（必填），可选改路径参数
   （downstream_file_path / upstream_root），不改则沿用原配置。
 - submit_review：提交人工审核结果。参数 thread_id（必填）、approved

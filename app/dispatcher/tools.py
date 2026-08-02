@@ -220,6 +220,38 @@ def _preview_create_batch(args: dict) -> dict:
             for factory in unmatched:
                 lines.append(f"  {factory}")
 
+        # ---- W4b 重复处理预检（sessions 完成态 + 审核落库四档判定）----
+        # 解析失败只进 warning 不阻断预览；重复工厂分行标注 + 汇总警告
+        try:
+            precheck = service.check_processed_factories(
+                str(d_path),
+                factory_names=list(factory_filter) if factory_filter else None)
+        except ValueError as e:
+            warnings.append(str(e))
+        else:
+            repeated = [f for f in precheck["factories"] if f["processed"]]
+            for f in repeated:
+                if f["level"] == "audited":
+                    audit = f.get("last_audit") or {}
+                    ts_text = f"（{audit['ts']}）" if audit.get("ts") else ""
+                    lines.append(
+                        f"[重复] 工厂 {f['factory']} 已于批次 "
+                        f"{audit.get('thread_id')} 审核落库{ts_text}")
+                else:
+                    lines.append(
+                        f"[重复] 工厂 {f['factory']} 已于 "
+                        f"{f.get('session_updated_at') or '未知时间'} "
+                        "提取完成（session）")
+            if repeated:
+                warnings.append(
+                    f"{len(repeated)} 个工厂已处理过，确认将重复提取；"
+                    "如需跳过请带 skip_processed=true 重新发起")
+                if precheck["processed_count"] == precheck["total_count"] \
+                        and precheck["total_count"] > 0:
+                    warnings.append(
+                        "全部工厂均已处理：带 skip_processed=true 将不会创建"
+                        "批次（返回 skipped_all）")
+
         # ---- 轮2：用户已给出 alias_decisions，展示决定清单 ----
         if alias_decisions:
             from app.factory_match import load_alias_map
@@ -313,12 +345,17 @@ def _validate_alias_decisions(
 def _exec_create_batch(args: dict) -> dict:
     """create_batch 执行：alias_decisions 二次校验 → save=true 落盘永久对照
     → 全部决定转 overrides 透传 service.create_batch（service 再做路径校验）。
-    任何校验失败返回 {"error": ...}，绝不建批次。"""
+    任何校验失败返回 {"error": ...}，绝不建批次。
+
+    skip_processed（W4b）：与 factory_filter 互斥，同传时 factory_filter
+    优先（skip_processed 忽略并在结果注明）；service.create_batch 内
+    实时重算差集，差集为空返回 skipped_all 不建批次。"""
     try:
         settings = get_settings()
         downstream = args.get("downstream_file_path") or settings.downstream_file_path
         upstream = args.get("upstream_root") or settings.upstream_root
         factory_filter = args.get("factory_filter")
+        skip_processed = bool(args.get("skip_processed"))
         alias_decisions = args.get("alias_decisions") or []
 
         overrides: dict[str, str] = {}
@@ -338,7 +375,11 @@ def _exec_create_batch(args: dict) -> dict:
             upstream_root=args.get("upstream_root"),
             factory_filter=factory_filter,
             factory_alias_overrides=overrides or None,
+            skip_processed=skip_processed,
         )
+        if skip_processed and factory_filter:
+            result["note"] = ("factory_filter 与 skip_processed 同传，"
+                              "factory_filter 优先，skip_processed 已忽略")
         if alias_decisions:
             result["alias_overrides_applied"] = overrides
             if to_save:
@@ -817,6 +858,14 @@ TOOLS: dict[str, Tool] = {
                     "description": "可选，只处理指定工厂（装箱单工厂名列表）；"
                                    "不传=全部工厂",
                     "items": {"type": "string"},
+                },
+                "skip_processed": {
+                    "type": "boolean",
+                    "description": "可选，true 时自动跳过已处理过的工厂（已提取"
+                                   "完成或已审核落库），只跑未处理工厂；与 "
+                                   "factory_filter 互斥，同传时 factory_filter "
+                                   "优先。全部工厂均已处理时不创建批次，返回 "
+                                   "skipped_all",
                 },
                 "alias_decisions": {
                     "type": "array",
