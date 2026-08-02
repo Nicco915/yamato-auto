@@ -118,6 +118,20 @@
   </div>
 </div>
 
+<!-- 重复工厂确认弹窗（W4b，结构复用 ui.css 的 .modal-mask/.modal） -->
+<div id="precheck-mask" class="modal-mask" onclick="if (event.target === this) closePrecheckModal()">
+  <div class="modal">
+    <h3>检测到 <span id="precheck-count" class="mono"></span> 个工厂已处理过</h3>
+    <p class="del-note del-note-warn">以下工厂此前已提取完成或已审核落库，重复提取将覆盖既有结果：</p>
+    <ul id="precheck-list" class="del-list"></ul>
+    <div class="modal-actions">
+      <button class="btn" onclick="closePrecheckModal()">取消</button>
+      <button class="btn" onclick="precheckSkip()">跳过已处理工厂</button>
+      <button class="btn btn-primary" onclick="precheckRerunAll()">全部重提</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -128,11 +142,11 @@ renderTopbar("dashboard");
 loadDefaults();
 refreshList(true);
 setInterval(autoRefresh, 10000);
-/* Esc 关闭删除弹窗 */
+/* Esc 关闭弹窗 */
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && $("delete-mask").classList.contains("show")) {
-    closeDeleteModal();
-  }
+  if (e.key !== "Escape") return;
+  if ($("delete-mask").classList.contains("show")) closeDeleteModal();
+  if ($("precheck-mask").classList.contains("show")) closePrecheckModal();
 });
 
 /* ================= 默认路径预填 ================= */
@@ -148,7 +162,7 @@ async function loadDefaults() {
   }
 }
 
-/* ================= 发起批次 ================= */
+/* ================= 发起批次（两段式：precheck 预检 → 确认 → 发起） ================= */
 async function createBatch() {
   const threadId = $("f-thread").value.trim();
   const upstreamRoot = $("f-upstream").value.trim();
@@ -160,6 +174,37 @@ async function createBatch() {
   }
   const btn = $("btn-create");
   btn.disabled = true;
+  btn.textContent = "预检中…";
+  let pre;
+  try {
+    pre = await api("/api/v1/batches/precheck", {
+      method: "POST",
+      body: { downstream_file_path: downstreamFile },
+    });
+  } catch (e) {
+    // precheck 422（装箱单解析失败等）直接 toast，不发起
+    if (e.status === 422) {
+      toast(e.message, 5000);
+    } else {
+      toast("预检失败：" + e.message, 4000);
+    }
+    btn.disabled = false;
+    btn.textContent = "发起批次";
+    return;
+  }
+  btn.disabled = false;
+  btn.textContent = "发起批次";
+  if (pre && pre.processed_count > 0) {
+    openPrecheckModal(pre, { threadId, upstreamRoot, downstreamFile });
+    return;
+  }
+  doCreateBatch(threadId, upstreamRoot, downstreamFile, false);
+}
+
+/* 实际发起：skipProcessed=true 时后端自动跳过已处理工厂 */
+async function doCreateBatch(threadId, upstreamRoot, downstreamFile, skipProcessed) {
+  const btn = $("btn-create");
+  btn.disabled = true;
   btn.textContent = "发起中…（LLM 提取可能需要几分钟）";
   try {
     const data = await api("/api/v1/batches", {
@@ -168,13 +213,16 @@ async function createBatch() {
         thread_id: threadId,
         upstream_root: upstreamRoot,
         downstream_file_path: downstreamFile,
+        skip_processed: !!skipProcessed,
       },
     });
     if (data && data.status === "pending_human_review") {
       location.href = "/review?thread_id=" + encodeURIComponent(threadId);
       return; // finally 仍会恢复按钮，但页面随即跳转，无影响
     }
-    if (data && data.status === "completed") {
+    if (data && data.status === "skipped_all") {
+      toast(data.message || "全部工厂均已处理，无可提取工厂", 5000);
+    } else if (data && data.status === "completed") {
       toast("批次已完成（无需人工审核）");
     } else {
       toast("批次已发起，状态：" + ((data && data.status) || "未知"));
@@ -192,6 +240,46 @@ async function createBatch() {
     btn.disabled = false;
     btn.textContent = "发起批次";
   }
+}
+
+/* ================= 重复工厂确认弹窗 ================= */
+let _precheckCtx = null; // { threadId, upstreamRoot, downstreamFile }
+
+function openPrecheckModal(pre, ctx) {
+  _precheckCtx = ctx;
+  $("precheck-count").textContent = String(pre.processed_count);
+  const items = (pre.factories || []).filter((f) => f.processed);
+  $("precheck-list").innerHTML = items
+    .map((f) => {
+      let how;
+      if (f.level === "audited" && f.last_audit) {
+        const when = f.last_audit.ts ? fmtTime(f.last_audit.ts) : "未知时间";
+        how = "已于批次 " + f.last_audit.thread_id + " 审核落库（" + when + "）";
+      } else {
+        const when = f.session_updated_at ? fmtTime(f.session_updated_at) : "未知时间";
+        how = "已于 " + when + " 提取完成（session）";
+      }
+      return "<li><strong>" + esc(f.factory) + "</strong>：" + esc(how) + "</li>";
+    })
+    .join("");
+  $("precheck-mask").classList.add("show");
+}
+
+function closePrecheckModal() {
+  $("precheck-mask").classList.remove("show");
+  _precheckCtx = null;
+}
+
+function precheckRerunAll() {
+  const ctx = _precheckCtx;
+  closePrecheckModal();
+  if (ctx) doCreateBatch(ctx.threadId, ctx.upstreamRoot, ctx.downstreamFile, false);
+}
+
+function precheckSkip() {
+  const ctx = _precheckCtx;
+  closePrecheckModal();
+  if (ctx) doCreateBatch(ctx.threadId, ctx.upstreamRoot, ctx.downstreamFile, true);
 }
 
 /* ================= 批次列表 ================= */
