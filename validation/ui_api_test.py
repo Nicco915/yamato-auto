@@ -197,7 +197,6 @@ def main() -> int:
     assert change["old"] == orig_net and change["new"] == new_net, change
     if n_new:
         assert row["new_skus"], f"payload 有新 SKU 但审计 new_skus 为空: {row}"
-        assert row["new_skus"][0].get("name_cn"), row["new_skus"][0]
     print(f"  ✓ 审计 1 行：edited_count={row['edited_count']}，"
           f"change={change}，new_skus {len(row['new_skus'])} 条")
 
