@@ -14,8 +14,16 @@
 EXTRACTION_MOCK=1 或提取线 import 失败时回落 mock 数据，保证骨架冒烟不依赖
 提取线；文件夹未匹配/提取为空时生成 needs_human_review 占位条目，让人工在
 Node5 补录，不中断流转。
+
+后台预提取（2026-07-28）：service.py 在首次 interrupt 后启动 daemon 线程，
+对剩余工厂逐个预提取并存入 session JSON；本节点发现 session 已有结果时
+直接加载跳过 LLM 调用——实现"审核工厂 A 时提取工厂 B，审核不阻塞提取"。
+保存用原子写入（.tmp → rename），防并发读脏数据。
 """
+import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 
 from app.config import get_settings
@@ -38,6 +46,9 @@ if not get_settings().extraction_mock:
 
 # 与 extraction.agent 一致的垃圾文件过滤
 IGNORE_NAMES = {".DS_Store", "Thumbs.db"}
+
+# 会话缓存目录（与 extraction/session.py 的 SESSIONS_DIR 同路径）
+_SESSIONS_DIR = Path(__file__).resolve().parents[2] / "data" / "sessions"
 
 
 def _mock_items(expected_skus: list[str], source: str) -> list[dict]:
@@ -74,9 +85,29 @@ def _placeholder_items(expected_skus: list[str], reason: str) -> list[dict]:
     } for sku in expected_skus]
 
 
+def _compute_coverage_from_cache(cached: dict, expected_skus: list[str]) -> dict:
+    """从缓存 session 数据重算覆盖率（与 session.coverage() 口径一致）。"""
+    items = cached.get("items") or {}
+    expected = set(expected_skus)
+    have = set(items.keys())
+    if expected:
+        return {
+            "extracted": len(have & expected),
+            "expected": len(expected),
+            "missing": sorted(expected - have),
+            "extra": sorted(have - expected),
+        }
+    return {"extracted": len(have), "expected": None, "missing": [], "extra": []}
+
+
 def _run_factory_session(folder_path: str, factory_name: str,
                          expected_skus: list[str]):
-    """增量模式驱动：单据逐个 process_file，返回跑完的 FactorySession。"""
+    """增量模式驱动：单据逐个 process_file，返回跑完的 FactorySession。
+
+    保存走原子写入（tmp → rename）：后台预提取线程与图内 Node3 可能
+    同时访问同一工厂的 session 文件，原子 rename 保证读方要么看到旧文件
+    要么看到完整新文件，不会读到半截 JSON。
+    """
     session = _session_mod.FactorySession(factory=factory_name)
     session.set_expected_skus(expected_skus)
     root = Path(folder_path)
@@ -87,8 +118,41 @@ def _run_factory_session(folder_path: str, factory_name: str,
     for p in files:
         r = _session_mod.process_file(session, str(p))
         logger.info("[Node3]   [%s] %s：%s", r.action, p.name, r.message)
-    session.save()  # 落盘 app/data/sessions/<工厂名>.json 供审计
+
+    # 原子写入：先写临时文件，再 rename（POSIX 原子操作）
+    _SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    target = _SESSIONS_DIR / f"{factory_name}.json"
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        suffix=".json", prefix=f"{factory_name}.", dir=str(_SESSIONS_DIR))
+    try:
+        os.write(tmp_fd, json.dumps(session.to_dict(), ensure_ascii=False,
+                                     indent=1).encode("utf-8"))
+    finally:
+        os.close(tmp_fd)
+    os.replace(tmp_path, target)  # POSIX 原子 rename
     return session
+
+
+def _try_load_cached_session(factory_name: str) -> dict | None:
+    """尝试从已落盘的 session JSON 加载提取结果。
+
+    返回 None 表示缓存未命中（文件不存在 / JSON 损坏 / 无 items），
+    调用方应走正常提取流程。JSON 损坏时只记 warning 不抛异常——
+    可能是后台预提取正在写入（虽已原子 rename，但极端情况下仍可能）。
+    """
+    path = _SESSIONS_DIR / f"{factory_name}.json"
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("[Node3] 会话缓存 %s JSON 损坏，走正常提取：%s",
+                       factory_name, e)
+        return None
+    items = data.get("items") or {}
+    if not items and not data.get("no_code_items"):
+        return None  # 空会话（只有元数据无提取结果），不算命中
+    return data
 
 
 def extraction_node(state: AgentState) -> dict:
@@ -111,6 +175,30 @@ def extraction_node(state: AgentState) -> dict:
         logger.warning("[Node3] 提取引擎不可用（%s），使用 mock 数据",
                        _session_import_error or 'EXTRACTION_MOCK=1')
         cur["extracted_items"] = _mock_items(expected_skus, "mock")
+        return {"current_factory_data": cur}
+
+    # ---- 缓存短路：后台预提取线程可能已跑完该工厂 ----
+    cached = _try_load_cached_session(factory_name)
+    if cached is not None:
+        items = [dict(d) for d in (cached.get("items") or {}).values()]
+        items += [dict(d) for d in (cached.get("no_code_items") or [])]
+        coverage = _compute_coverage_from_cache(cached, expected_skus)
+        cur["extracted_items"] = items
+        cur["extraction_issues"] = cached.get("issues") or []
+        cur["extraction_coverage"] = coverage
+        n_blocking = sum(1 for i in (cached.get("issues") or [])
+                         if i.get("level") == "blocking")
+        logger.info("[Node3] 工厂「%s」：缓存命中，%d 条 SKU（跳过 LLM 提取），"
+                    "覆盖率 %s/%s，状态 %s",
+                    factory_name, len(items),
+                    coverage.get("extracted"), coverage.get("expected") or "?",
+                    cached.get("status"))
+        if n_blocking:
+            logger.info("[Node3]   反馈 %d 条（blocking %d）",
+                        len(cached.get("issues") or []), n_blocking)
+        if not items:
+            cur["extracted_items"] = _placeholder_items(
+                expected_skus, "no_items_extracted")
         return {"current_factory_data": cur}
 
     try:

@@ -12,6 +12,7 @@ import contextlib
 import json
 import logging
 import sqlite3
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -115,6 +116,94 @@ def _make_progress_emitter(
     return emit
 
 
+# ---------------------------------------------------------------------------
+# 后台预提取（2026-07-28）：审核不阻塞提取
+# ---------------------------------------------------------------------------
+# 图首次 interrupt（工厂 A 挂起等审核）时，后台线程开始对剩余工厂逐个预提取。
+# 每个工厂走：Node2 匹配文件夹 → target_identifier 识别正确单据 → Node3 调 LLM
+# → 结果原子写入 sessions/{工厂}.json。图内 Node3 发现缓存命中时跳过 LLM。
+# 后台线程串行（一次一个工厂），不并发打 API——只一个人用，不值得为并行 LLM
+# 增加复杂度。提取并发只解决"审核时别闲着"的问题。
+#
+# 线程安全：预提取结果经原子 rename（tmp → target）落盘，图内 Node3 读缓存
+# 时要么看到旧文件、要么看到完整新文件，不会读到半截 JSON。最坏情况是缓存
+# 未命中（后台还没跑完），此时图 Node3 走正常提取流程，无数据丢失。
+
+_PRE_EXTRACT_LOCK = threading.Lock()  # 保证同一批次只有一个预提取线程
+_known_running: set[str] = set()      # 进程级已知在跑的批次
+
+
+def _start_pre_extraction(thread_id: str) -> None:
+    """为当前批次启动后台预提取 daemon 线程（幂等：同一批次只跑一个）。"""
+    graph = get_graph()
+    cfg = _config(thread_id)
+    snap = graph.get_state(cfg)
+    values = snap.values or {}
+    pending = list(values.get("pending_factories") or [])
+    if not pending:
+        return
+
+    upstream_root = values.get("upstream_root") or get_settings().upstream_root
+    requirements = values.get("downstream_requirements") or {}
+
+    if thread_id in _known_running:
+        return
+    _known_running.add(thread_id)
+
+    def _pre_extract():
+        try:
+            _pre_extract_factories(pending, upstream_root, requirements)
+        finally:
+            _known_running.discard(thread_id)
+
+    t = threading.Thread(target=_pre_extract, daemon=True,
+                         name=f"pre-extract-{thread_id}")
+    t.start()
+    logger.info("[预提取] 批次 %s：后台线程已启动，%d 个工厂待预提取",
+                thread_id, len(pending))
+
+
+def _pre_extract_factories(
+    factories: list[str],
+    upstream_root: str,
+    requirements: dict[str, list[str]],
+) -> None:
+    """后台线程主体：逐个工厂串行提取，结果存入 session JSON。"""
+    from app.factory_match import load_alias_map, match_factory_folder
+    from app.nodes.extraction_node import _run_factory_session, _try_load_cached_session
+
+    root_path = Path(upstream_root).expanduser()
+    if not root_path.is_dir():
+        logger.warning("[预提取] 上游目录 %s 不存在，跳过", upstream_root)
+        return
+
+    folders = [d.name for d in root_path.iterdir() if d.is_dir()]
+    alias_map = load_alias_map()
+    cutoff = get_settings().fuzzy_match_score_cutoff
+
+    for factory in factories:
+        # 缓存已存在则跳过（可能是前次预提取或旧批次留下的）
+        if _try_load_cached_session(factory) is not None:
+            logger.info("[预提取] 工厂「%s」：缓存已存在，跳过", factory)
+            continue
+
+        # Node2 逻辑：匹配文件夹
+        folder_name, score, method = match_factory_folder(
+            factory, folders, alias_map, cutoff=cutoff)
+        if not folder_name:
+            logger.warning("[预提取] 工厂「%s」：未匹配到文件夹，跳过", factory)
+            continue
+        folder_path = str(root_path / folder_name)
+        expected_skus = requirements.get(factory, [])
+
+        try:
+            _run_factory_session(folder_path, factory, expected_skus)
+            logger.info("[预提取] 工厂「%s」：完成（%s，得分 %.1f）",
+                        factory, method, score)
+        except Exception as e:
+            logger.exception("[预提取] 工厂「%s」：异常 %s，跳过", factory, e)
+
+
 def run_until_interrupt(
     thread_id: str,
     downstream_file_path: str | None = None,
@@ -153,6 +242,9 @@ def run_until_interrupt(
             emit(event)
             if "__interrupt__" in event:
                 payload = event["__interrupt__"][0].value
+                # 首次 interrupt 后启动后台预提取：
+                # 工厂 A 挂起等审核 → 后台线程开始提取工厂 B、C、D…
+                _start_pre_extraction(thread_id)
                 return {
                     "status": "pending_human_review",
                     "thread_id": thread_id,
@@ -198,6 +290,9 @@ def resume_order(thread_id: str, resume_data: dict,
             emit(event)
             if "__interrupt__" in event:
                 payload = event["__interrupt__"][0].value
+                # 每次 interrupt 后继续后台预提取剩余工厂
+                # （工厂 B 审核中 → 后台提取 C、D…）
+                _start_pre_extraction(thread_id)
                 result = {
                     "status": "pending_human_review",
                     "thread_id": thread_id,
@@ -258,6 +353,7 @@ def rerun_with_paths(
         for event in graph.stream(None, cfg, stream_mode="updates"):
             emit(event)
             if "__interrupt__" in event:
+                _start_pre_extraction(thread_id)
                 return {
                     "status": "pending_human_review",
                     "thread_id": thread_id,
