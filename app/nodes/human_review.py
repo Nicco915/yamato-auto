@@ -11,7 +11,9 @@ resume 数据约定：
              新 SKU 必须补齐 name_cn / hs_code / inspection_required） ... ]
 }
 """
+import json
 import logging
+from pathlib import Path
 
 from langgraph.types import interrupt
 
@@ -21,6 +23,23 @@ from app.nodes.compute_align import _safe_div
 from app.state import AgentState
 
 logger = logging.getLogger(__name__)
+
+# 工厂商检默认值配置（从 JSON 加载，未配置的工厂默认 0）
+_FACTORY_INSPECTION_CACHE: dict[str, int] | None = None
+
+def _load_factory_inspection_defaults() -> dict[str, int]:
+    """加载 factory_inspection_defaults.json，缓存到模块级变量。"""
+    global _FACTORY_INSPECTION_CACHE
+    if _FACTORY_INSPECTION_CACHE is not None:
+        return _FACTORY_INSPECTION_CACHE
+    config_path = Path(__file__).parents[1] / "config" / "factory_inspection_defaults.json"
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            _FACTORY_INSPECTION_CACHE = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        logger.warning("[Node5] 加载工厂商检配置失败，使用默认值: %s", e)
+        _FACTORY_INSPECTION_CACHE = {}
+    return _FACTORY_INSPECTION_CACHE
 
 # 新 SKU 需人工补录的合规字段清单（《第三阶段.md》改造点 B）
 NEW_SKU_REQUIRED_FIELDS = ["name_cn", "hs_code", "inspection_required"]
@@ -34,6 +53,10 @@ def human_review(state: AgentState) -> dict:
     cur = dict(state.get("current_factory_data") or {})
 
     # ---- 构建审核负载（第一阶段.md 第 6 节结构）----
+    factory_name = cur.get("factory_name")
+    inspection_defaults = _load_factory_inspection_defaults()
+    default_inspection = inspection_defaults.get(factory_name, 0)
+
     items_payload = []
     for item in cur.get("calculated_items") or []:
         entry = {
@@ -49,8 +72,9 @@ def human_review(state: AgentState) -> dict:
             "unexpected_sku": item.get("unexpected_sku", False),
         }
         if item.get("is_new_sku"):
-            # 新 SKU：前端强制展示空白必填框
+            # 新 SKU：前端展示需补录字段，inspection_required 按工厂配置设默认值
             entry["fields_to_fill"] = NEW_SKU_REQUIRED_FIELDS
+            entry["inspection_required"] = default_inspection
         items_payload.append(entry)
 
     review_payload = {
