@@ -315,10 +315,12 @@ async def dispatcher_chat_stream(request: DispatcherChatRequest):
 
                 event = None
                 for d in done:
-                    if d is not task and not d.exception():
+                    # 优先消费已取出的事件，再判断 task——否则 get() 已从队列
+                    # 取出的事件会随 task 完成被静默丢弃（确定性丢首事件）
+                    if d is task:
+                        continue
+                    if not d.exception():
                         event = d.result()
-                    elif d is task:
-                        break
 
                 if event is not None:
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
@@ -394,13 +396,14 @@ async def dispatcher_chat_stream(request: DispatcherChatRequest):
             except Exception:
                 break
 
-            # 检查是否有进度事件
+            # 检查是否有进度事件（优先消费已取出的事件，再判断 task——
+            # 否则 get() 已从队列取出的事件会随 task 完成被静默丢弃）
             event = None
             for d in done:
-                if d is not task and not d.exception():
+                if d is task:
+                    continue
+                if not d.exception():
                     event = d.result()
-                elif d is task:
-                    break
 
             if event is not None:
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
