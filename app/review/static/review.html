@@ -189,6 +189,12 @@ let searchMatches = [];    // 当前搜索命中的卡片下标
 let selectedIdx = 0;
 let curDoc = null;         // 当前左屏文件路径
 let curPage = 1, pageCount = 1;
+/* 缩放状态 */
+let zoomPerDoc = {};        // { path: zoom_ratio } 单据缩放记忆
+let curZoom = 1;            // 当前缩放比（1=适应宽度）
+let imgNaturalW = null;     // 当前图片 naturalWidth（适应宽度基准）
+let viewW = null;           // 当前 #doc-view 内容区宽度（基准）
+const ZOOM_MIN = 0.3, ZOOM_MAX = 4, ZOOM_STEP = 0.1;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g,
@@ -414,12 +420,17 @@ function renderDocSelect() {
 function onDocSelect(path) { loadDocument(path, 1); }
 
 async function loadDocument(path, page) {
-  if (!path) { $("doc-view").innerHTML = "<span style='color:#9ca3af;margin-top:40px'>该 SKU 无来源文件</span>"; return; }
+  if (!path) { $("doc-view").innerHTML = "<span style='color:#9ca3af;margin-top:40px'>该 SKU 无来源文件</span>"; $("zoom-bar").style.display = "none"; return; }
   curDoc = path; curPage = page;
   $("doc-select").value = path;
   const url = `/api/v1/review/${encodeURIComponent(threadId)}/document?path=${encodeURIComponent(path)}&page=${page}`;
   const suffix = path.split(".").pop().toLowerCase();
   const view = $("doc-view");
+  // 清理旧图片 blob URL（防内存泄漏）
+  const oldImg = view.querySelector("img");
+  if (oldImg && oldImg.src && oldImg.src.startsWith("blob:")) {
+    URL.revokeObjectURL(oldImg.src);
+  }
   try {
     if (["xls", "xlsx", "xlsm", "csv"].includes(suffix)) {
       view.innerHTML = "";
@@ -427,6 +438,7 @@ async function loadDocument(path, page) {
       ifr.src = url;
       view.appendChild(ifr);
       setPager(1);
+      $("zoom-bar").style.display = "none";
     } else {
       const r = await fetch(url);
       if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 120));
@@ -434,6 +446,7 @@ async function loadDocument(path, page) {
       const blob = await r.blob();
       view.innerHTML = "";
       const img = document.createElement("img");
+      img.onload = () => onImgLoaded(img);
       img.src = URL.createObjectURL(blob);
       view.appendChild(img);
       setPager(pageCount);
@@ -441,6 +454,7 @@ async function loadDocument(path, page) {
   } catch (e) {
     view.innerHTML = `<span style="color:#dc2626;margin-top:40px">单据加载失败：${esc(e.message)}</span>`;
     setPager(1);
+    $("zoom-bar").style.display = "none";
   }
 }
 
@@ -453,6 +467,102 @@ function gotoPage(p) {
   if (!curDoc || p < 1 || p > pageCount) return;
   loadDocument(curDoc, p);
 }
+
+/* ================= 缩放引擎 ================= */
+function isZoomable() {
+  if (!curDoc) return false;
+  const suffix = curDoc.split(".").pop().toLowerCase();
+  return !["xls", "xlsx", "xlsm", "csv"].includes(suffix);
+}
+
+function getImg() { return $("doc-view").querySelector("img"); }
+
+/* 应用缩放并更新 UI */
+function applyZoom(z, anchorX) {
+  const img = getImg();
+  if (!img || !isZoomable()) { $("zoom-bar").style.display = "none"; return; }
+  curZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z));
+  if (curDoc) zoomPerDoc[curDoc] = curZoom;
+  const view = $("doc-view");
+  const w = curZoom * viewW;
+  img.style.width = w + "px";
+  img.style.maxWidth = "none";
+  // 锚点补偿：保持光标指向的内容不跳
+  if (typeof anchorX === "number") {
+    view.scrollLeft = anchorX * curZoom - (anchorX - view.scrollLeft);
+  }
+  $("zoom-pct").textContent = Math.round(curZoom * 100) + "%";
+  $("zoom-bar").style.display = "flex";
+}
+
+/* 适应宽度（zoom=1） */
+function zoomFit() {
+  if (!isZoomable()) return;
+  const img = getImg();
+  if (!img) return;
+  viewW = $("doc-view").clientWidth;
+  curZoom = 1;
+  img.style.width = "";
+  img.style.maxWidth = "100%";
+  img.style.removeProperty("width");
+  img.style.removeProperty("maxWidth");
+  if (curDoc) zoomPerDoc[curDoc] = 1;
+  $("zoom-pct").textContent = "适应";
+  $("zoom-bar").style.display = "flex";
+}
+
+function zoomIn() {
+  if (!isZoomable()) return;
+  const img = getImg(); if (!img) return;
+  const view = $("doc-view");
+  const cx = view.scrollLeft + view.clientWidth / 2;
+  const anchor = viewW ? cx / curZoom : cx;
+  applyZoom(Math.round((curZoom + ZOOM_STEP) / ZOOM_STEP) * ZOOM_STEP, anchor);
+}
+
+function zoomOut() {
+  if (!isZoomable()) return;
+  const img = getImg(); if (!img) return;
+  const view = $("doc-view");
+  const cx = view.scrollLeft + view.clientWidth / 2;
+  const anchor = viewW ? cx / curZoom : cx;
+  applyZoom(Math.round((curZoom - ZOOM_STEP) / ZOOM_STEP) * ZOOM_STEP, anchor);
+}
+
+/* 图片加载后初始化缩放基准 */
+function onImgLoaded(img) {
+  imgNaturalW = img.naturalWidth;
+  viewW = $("doc-view").clientWidth;
+  const saved = curDoc ? zoomPerDoc[curDoc] : null;
+  if (saved && saved !== 1) {
+    // 恢复该单据上次的缩放
+    applyZoom(saved);
+  } else {
+    zoomFit();
+  }
+}
+
+/* 窗口大小变化时重新计算适应宽度基准 */
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (isZoomable() && curZoom === 1) {
+      zoomFit();
+    }
+  }, 200);
+});
+
+/* Ctrl+滚轮 / 触摸板捏合 → 锚点缩放 */
+$("doc-view").addEventListener("wheel", (e) => {
+  if (!e.ctrlKey && !e.metaKey) return;  // 无修饰键=普通滚动，不拦截
+  if (!isZoomable()) return;
+  e.preventDefault();
+  const rect = $("doc-view").getBoundingClientRect();
+  const anchorX = e.clientX - rect.left + $("doc-view").scrollLeft;
+  const delta = -e.deltaY * 0.005;
+  applyZoom(curZoom + delta, anchorX);
+}, { passive: false });
 
 /* 点击卡片：左屏跳到该 SKU 的 source_file */
 function selectCard(idx) {
