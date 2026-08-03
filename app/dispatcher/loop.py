@@ -17,6 +17,12 @@
    session.pending_action 后循环立即终止，等 execute_confirmed 走人工确认通道。
    一次一确认：一条消息最多产出一个 pending action，同轮其余写调用直接忽略。
    confirm 防线：执行前再过一次 validate_args，且 action 有 ACTION_TTL_SEC 超时。
+
+3. Triage 分诊提示（triage_hint）：上游分诊层已确认的意图与参数以
+   {"target_tool": ..., "args": {...}} 传入，仅作为提示注入 system prompt——
+   工具调用仍由 LLM 发出，validate_args 与确认门原样生效。写工具 preview
+   返回 blocked=True 时表示业务硬校验失败（如工厂名不在对照表），直接转
+   clarify 回复，不让 LLM 圆场。
 """
 from __future__ import annotations
 
@@ -231,7 +237,8 @@ def _tool_message(call: dict, content: str) -> dict:
 
 def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
                  session_id: str | None = None,
-                 on_progress: Callable[[dict], None] | None = None) -> dict:
+                 on_progress: Callable[[dict], None] | None = None,
+                 triage_hint: dict | None = None) -> dict:
     """调度主循环：LLM 步进 → 工具执行/拦截 → 回喂，直到最终回复或确认门。
 
     返回三种形态之一：
@@ -241,6 +248,8 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
     - 超 MAX_ROUNDS 的兜底 {"status": "ok", "message": 拆分提示}
 
     session_id 提供时，加载 L2 操作记忆（跨会话持久化）并注入 system prompt。
+    triage_hint 为分诊层已确认的意图与参数，仅作提示注入 system prompt；
+    工具调用仍由 LLM 发出，validate_args 与确认门原样生效。
     """
     # 构建 system prompt（基础 + L2 记忆上下文）
     sys_prompt = prompts.system_prompt(phase)
@@ -253,6 +262,17 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
                 sys_prompt += f"\n\n【最近操作上下文】\n{l2_context}"
         except Exception:  # noqa: BLE001 L2 记忆加载失败不阻塞主流程
             pass
+
+    # 分诊提示：Triage 层已确认的意图与参数注入 system prompt（仅提示，
+    # 工具调用仍由 LLM 发出，validate_args 与确认门原样生效）
+    if triage_hint:
+        _hint_args = json.dumps(triage_hint.get("args") or {},
+                                ensure_ascii=False, default=str)
+        sys_prompt += (
+            f"\n\n【分诊已确认】本轮意图：调用 {triage_hint.get('target_tool')}；"
+            f"已确认参数：{_hint_args}。"
+            "\n请直接据此构造工具调用，不要重复追问这些参数；"
+            "其余缺失参数按工具文档规则处理。")
 
     messages = ([{"role": "system", "content": sys_prompt}]
                 + list(session.history)
@@ -334,6 +354,21 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
                     messages.append(_tool_message(
                         call, f"工具 {name} 预览生成失败：{exc}。"))
                     continue
+                if isinstance(preview, dict) and preview.get("blocked"):
+                    # 业务硬校验失败（如工厂名不在对照表）：不让 LLM 圆场，
+                    # 直接转 clarify 回复，由上层清空槽位状态
+                    clarify_text = "操作无法发起：" + "；".join(
+                        str(w) for w in (preview.get("warnings")
+                                         or [preview.get("summary", "")]))
+                    sessions.record_turn(session, message, clarify_text)
+                    if on_progress:
+                        on_progress({"type": "final", "message": clarify_text})
+                    logger.info("预览被业务硬校验拦截，转 clarify | 工具=%s | 原因=%s",
+                                name, clarify_text[:_LOG_SUMMARY_CAP])
+                    debug_log.log_event("preview_blocked", session_id=session_id,
+                                        tool=name, reason=clarify_text)
+                    return {"status": "ok", "message": clarify_text,
+                            "clarify": True}
                 action = {
                     "kind": "dispatcher_tool",
                     "tool": name,
