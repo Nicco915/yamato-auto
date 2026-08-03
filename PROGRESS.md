@@ -780,6 +780,80 @@ confirm_rejected`，均带 session_id+时间戳；敏感参数键脱敏；
   脱敏/propagate=False/不可序列化容错/超长截断）
 - `dispatcher_read_test.py` / `dispatcher_write_test.py`：8/8 + 8/8 回归全绿
 
+## 6.15 调度 Agent Triage 分诊重构（2026-08-03，分支 feat/dispatcher-triage，8 commit）
+
+**问题**：原架构所有消息（闲聊/QA/反问/操作）直接进 loop 的 tool-calling
+循环，主 prompt 同时承担意图判断、缺参反问、工具构造三类职责；多轮参数
+收集没有结构化槽位；QA 类问题要绕一圈假工具调用。
+
+**方案**：Triage 分诊 → 路由 → Executor 执行三层架构：
+
+### 6.15.1 Triage 分诊层（triage.py 新建，commit a6aa58d + 66a81d3 + 6c46c8c）
+
+- `triage.py`：`TriageResult` Pydantic 契约（intent=qa/action/clarify +
+  target_tool + extracted_args + reply_message + confidence）；
+  `run_triage` 任何失败返回 **None 降级旧循环**（mock 空剧本 /
+  `DISPATCHER_TRIAGE=off` / LLM 两次校验失败），绝不抛异常；
+  `_TRIAGE_MOCK_SCRIPT` 是确定性测试口；`DISPATCHER_TRIAGE_MODEL`
+  可换便宜模型抵消新增延迟
+- `prompts.py` `_TRIAGE_PROMPT`：只做意图分类 + 粗粒度槽位提取
+  （白名单 thread_id/factory_filter/factory/approved/paths/status_filter，
+  **刻意排除** items/alias_decisions/skip_processed——这些由 executor
+  多轮协商产生）；`triage_prompt()` 动态注入工具清单（visible_tools
+  防漂移）+ L2 记忆 + 最近 6 条历史
+- `sessions.py`：L1 新增 `current_slots`/`current_target_tool` +
+  `set_slots`/`clear_slots`，支撑多轮参数收集
+
+### 6.15.2 入口路由编排 + loop 改造（commit 87f9d0c + 76961f0 + dfbfacd）
+
+- `__init__.py` 三分支路由：qa 直调 `guide.ask_guide` 不进 loop；
+  clarify 反问 + 槽位落 session 多轮补齐（target_tool=None 且有槽位 =
+  用户中止）；action 且 confidence>0.8 带 `triage_hint` 进 loop；
+  低置信走旧循环。confirm 终态清槽位
+- `loop.py`：`run_dispatch(..., triage_hint=None)`——hint 仅注入
+  system prompt 提示，LLM 仍自己发 tool_call，确认门/validate_args
+  原样生效；preview 返回 `blocked=True` 时转 clarify（status 保持 "ok"
+  护前端契约）
+- `tools.py`：`_preview_create_batch` 轮2 前置 `_validate_alias_decisions`，
+  坏工厂名/坏文件夹在确认卡出现前拦截（blocked=True）；execute 侧
+  校验保留作防御纵深
+
+### 6.15.3 SSE 丢事件竞态修复（commit 0cee14a，既有 bug 暴露）
+
+回归发现 exec_stream 确定性丢 node1 事件。根因：`api/main.py` 两个流式
+生成器在 `asyncio.wait` 同时返回 queue.get() 与 task 时，遍历 done 集合
+先遇 task 即 break，get() 已从队列取出的事件被静默丢弃（mock 跑图极快
+时大概率丢首事件）。基线 8 跑 3 败证实**先于重构存在**，重构时序变化
+使其暴露。修复：优先消费已取出的事件，再判断任务完成。
+
+### 测试
+
+- `dispatcher_triage_test.py`（新增，9 用例）：qa 直路由 / clarify 缺参 /
+  两轮槽位合并 / 工具切换 / 用户中止 / 置信度 0.8 边界 / blocked 转
+  clarify / 开关关闭 / mock 空剧本降级
+- 8 个旧测试文件**零改动全绿**（mock 空 triage 剧本即走旧路是兼容关键）
+
+## 6.16 Executor prompt 瘦身（2026-08-03，3 commit）
+
+**方案**：双 prompt 并存 + hint 门控——不直接改瘦 `system_prompt()`
+（降级路径依赖它的全量意图判断能力，「Triage 失败时不劣于重构前」
+是健壮性底线）。
+
+- `prompts.py`（be57112）：`executor_prompt(phase)` =
+  `_EXECUTOR_ROLE`（新角色「意图已由分诊层确认，你只负责翻译工具调用
+  + 讲清结果」）+ `_EXECUTOR_READ_PROMPT`（删「操作指导 vs 数据查询」
+  判别段）+ `_WRITE_PROMPT`/`_RULES_PROMPT` **原样复用**（alias_decisions
+  等规则保持单一事实来源，无双份漂移）
+- `loop.py`（4fd4a75）：有 hint 用 `executor_prompt`，无 hint/低置信
+  用 `system_prompt`（行为与重构前逐字一致）
+
+### 测试
+
+- `dispatcher_executor_prompt_test.py`（新增，5 用例）：prompt 内容断言 /
+  spy 门控计数（有 hint 走 executor、无 hint 与低置信走 system）/
+  executor prompt 下工具链路连通性
+- 全量回归 10 个测试文件全绿
+
 ## 7. 关键设计决策记录
 
 0. **路径集中配置 + agent 对话可改**（2026-07-28 用户授权）：`app/.env`「业务路径」节
@@ -795,6 +869,11 @@ confirm_rejected`，均带 session_id+时间戳；敏感参数键脱敏；
 3. **同步先行**：FastAPI 同步接口 + `asyncio.to_thread`，Celery 接缝在 `service.py` 顶部注释
 4. **写回不碰原件**：Node6 写入 `app/output/` 副本
 5. **resume 请求体以代码为准**：`{"approved": bool, "items": [...]}`（设计文档的 modified_items 已过时）
+6. **Triage 分诊降级优先**（2026-08-03，见 6.15/6.16）：调度 Agent 分诊层
+   任何失败返回 None 降级旧 tool-calling 循环，系统不劣于重构前；
+   prompt 双轨（executor_prompt / system_prompt）按 triage_hint 门控，
+   降级路径行为与重构前逐字一致；写工具 preview 可用 blocked=True
+   把业务硬校验失败转成 clarify 回复，不让 LLM 圆场
 6. **生产三层路径策略**（2026-07-28 用户定，审计确认骨架线已符合）：
    - 层1·根目录进配置：`settings.upstream_root`（env `UPSTREAM_ROOT` 可覆盖，
      请求体可按批次再覆盖），Node2 路由与审核界面白名单共用同一棵树
