@@ -7,13 +7,16 @@
 
 与 agent_chat 的关系：模式复制自 app/agent_chat.py 的 _ChatSession/
 _get_session/_record_turn（TTL 惰性清理 + 总量淘汰最旧），但**独立存储**
-——调度会话要额外承载两件 agent_chat 没有的东西：
+——调度会话要额外承载三件 agent_chat 没有的东西：
 - pending_action：写操作（create_batch/rerun/submit_review/set_paths）的
   待确认 action 信封。铁律是 LLM 只发起、系统生成预览、人工确认后才执行；
   信封必须由服务端持有，confirm 端点优先用它而不是客户端回传的参数，
   防止 LLM/前端在确认间隙篡改内容；
 - tool_history：工具调用审计流水（含确认结果），供界面回放"Agent 做过
-  什么、操作员批没批"，也是排查"它为什么说已执行"类事故的依据。
+  什么、操作员批没批"，也是排查"它为什么说已执行"类事故的依据；
+- current_slots / current_target_tool：Triage 分诊层的多轮参数收集
+  槽位——操作员分多轮才把写工具参数说全时，已提取参数暂存于此，
+  凑齐进 loop 生成 pending_action、或用户中止/换话题时清空。
 
 存储为进程内 dict：重启即丢（可接受，pending 状态本就短命），需要跨重启
 持久时再迁 app/db。锁只保护 dict 读写；session 本体在锁外被修改（含 LLM
@@ -35,7 +38,8 @@ _TOOL_HISTORY_MAX = 50        # 工具审计流水上限（超出裁最旧）
 class DispatcherSession:
     """单会话状态：对话历史 + 待确认写操作信封 + 工具调用审计流水。"""
 
-    __slots__ = ("history", "pending_action", "tool_history", "updated_at")
+    __slots__ = ("history", "pending_action", "tool_history", "updated_at",
+                 "current_slots", "current_target_tool")
 
     def __init__(self) -> None:
         # 发给 LLM 的精简历史：{"role": "user"/"assistant", "content": str}
@@ -46,6 +50,9 @@ class DispatcherSession:
         # {"ts", "tool", "args_summary", "result_summary", "confirmed"}
         self.tool_history: list[dict] = []
         self.updated_at: float = time.time()
+        # Triage 多轮参数收集槽位：未凑齐的工具参数 + 对应目标工具名
+        self.current_slots: dict = {}
+        self.current_target_tool: str | None = None
 
 
 _SESSIONS: dict[str, DispatcherSession] = {}
@@ -123,3 +130,16 @@ def record_tool(session: DispatcherSession, tool: str, args_summary: str,
 def clear_pending(session: DispatcherSession) -> None:
     """清空待确认写操作信封（confirm 执行后 / reject 后 / 新写操作覆盖前调用）。"""
     session.pending_action = None
+
+
+def set_slots(session: DispatcherSession, target_tool: str | None,
+              slots: dict) -> None:
+    """写入槽位状态（Triage 多轮参数收集用，凑齐进 loop 后由调用方清空）。"""
+    session.current_target_tool = target_tool
+    session.current_slots = dict(slots or {})
+
+
+def clear_slots(session: DispatcherSession) -> None:
+    """清空槽位状态（pending_action 创建 / confirm 终态 / qa 换话题 / 用户中止时调用）。"""
+    session.current_slots = {}
+    session.current_target_tool = None
