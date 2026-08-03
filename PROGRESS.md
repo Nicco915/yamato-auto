@@ -1,6 +1,6 @@
 # 供应链单证自动化 — 项目进度总览
 
-> 最后更新：2026-08-01（全链路日志体系上线，见 6.11 节）
+> 最后更新：2026-08-03（后台预提取：审核不阻塞识别，见 6.12 节）
 > 设计文档：`../agent设计/`（第一/二/三阶段、api接口以及异步机制、人工审核界面设计、提取agent背景prompt）
 
 ## 1. 项目目标
@@ -38,6 +38,7 @@
 | 批次删除 | ✅ 完成 | DELETE /api/v1/batches/{id}（running 禁删 409），审计保留 + batch_deleted 留痕，工作台确认弹窗，测试 16 步全绿（见第 6.5 节） |
 | 调度 Agent SSE 流式 | ✅ 完成 | on_progress 回调穿透 loop→handle_message→SSE 端点，chat.html 流式消费 + 实时工具进度气泡；原 /chat 端点保留并存；未补专测（见第 6.10 节） |
 | 全链路日志体系 | ✅ 完成 | 三 handler 中央配置 + 批次/工厂关联 + LLM 调用可观测 + 路由决策留痕，7 测试套全绿（见第 6.11 节） |
+| 后台预提取：审核不阻塞识别 | ✅ 完成 | 图首次 interrupt 后 daemon 线程逐个预提取剩余工厂，Node3 缓存命中短路跳过 LLM（见第 6.12 节） |
 
 ## 4. 提取引擎（app/extraction/）
 
@@ -622,6 +623,53 @@ Agent（6.3 节）的 `set_paths` 作为调度 Agent 的一个工具整合进来
 **已知边界**：多 worker（--workers N）写同一 app.log 非多进程安全（当前单 worker）；
 root DEBUG 下三方库 DEBUG 全进 app.log，嫌吵可对特定 logger 提级；HTTP 请求行
 不带批次号（中间件在 bind 之前，靠节点/service 日志回放已够）。
+
+## 6.12 后台预提取：审核不阻塞识别（2026-08-03 完成）
+
+**问题**：当前执行流程是单线程工厂循环——工厂 A 提取完进 Node5 interrupt 挂起
+等人工审核时，整个图冻结，工厂 B 的 Node3 提取（LLM 调用，通常 1-2 分钟）被阻塞。
+操作员审核 43 SKU 的工厂可能需要 30 分钟，这段时间机器完全空闲。
+
+**方案**（用户讨论拍板）：提取并行化，审核仍串行。后台线程串行（一次一个工厂），
+不并发打 API——只一个人用，不值得为并行 LLM 增加复杂度。核心目标：**审核 A 时，
+后台提取 B；审核 B 时，后台提取 C**。
+
+**时间线**（10 个工厂）：
+```
+图线程:    N1→N2(A)→N3(A,提取)→N4(A)→N5(A,⏸️审核中)···→N6(A,写)→N2(B)→N3(B,缓存命中)→N4(B)→N5(B,⏸️)
+后台线程:          启动→N2(B)+识别(B)→N3(B,提取)→存session→N2(C)+识别(C)→N3(C,提取)→存session→···
+```
+
+**实现**（service.py + extraction_node.py，+186 行，2 个文件）：
+
+- **service.py 预提取调度**：
+  - `_start_pre_extraction(thread_id)`：首次 interrupt 后从 state snapshot 取
+    `pending_factories`，启动 daemon 线程；幂等——同一批次最多一个线程（`_known_running` set）；
+  - `_pre_extract_factories()`：后台线程主体，逐个工厂串行：Node2 匹配文件夹 →
+    `_run_factory_session` 提取 → 原子写入 session JSON；异常 try/except 包死，
+    单工厂失败不阻塞其余；
+  - 调用点：`run_until_interrupt`（首次 interrupt）、`resume_order`（每次 interrupt）、
+    `rerun_with_paths`（重跑后的 interrupt），三处统一。
+
+- **extraction_node.py 缓存短路**：
+  - `_try_load_cached_session(factory_name)`：检查 `app/data/sessions/{工厂}.json`
+    是否存在且有 items；JSON 损坏时只记 warning 不抛异常，回退正常提取；
+  - `extraction_node` 开头加缓存检查：命中 → 从 session 加载 items/coverage/issues，
+    跳过 LLM 调用，日志标「缓存命中」；
+  - `_compute_coverage_from_cache()`：从缓存数据重算覆盖率（与 `session.coverage()` 口径一致）；
+  - `_run_factory_session` 保存改为原子写入（`tempfile.mkstemp` → `os.replace`），
+    防后台线程与图 Node3 并发读写同一 session 文件出现脏读。
+
+**线程安全**：原子 rename 保证读方要么看到旧文件、要么看到完整新文件，不会读到
+半截 JSON。最坏情况（后台还没跑完，图 Node3 已到）缓存未命中，走正常提取流程，
+无数据丢失。同一进程内并发 LLM 调用由后台线程串行保证（一次一个工厂），写 Excel
+仍在图循环内串行（Node6 不动），天然无竞态。
+
+**前端不动**：审核页仍是按 thread_id 逐个工厂来，操作员无感知——只是审核完 A 后
+切到 B 时，B 的提取已经完成（缓存命中），不用再等 LLM。
+
+**实测**：预提取冒烟——缓存命中/未命中/JSON 损坏/空 items/no_code_items 全场景 +
+幂等 + 异常兜底 + 覆盖率重算 + 全量回归（chat_paths_test/ui_api_test）全绿。
 
 ## 7. 关键设计决策记录
 
