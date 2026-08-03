@@ -263,19 +263,21 @@ function renderCards() {
     card.id = "card-" + idx;
     card.onclick = (e) => { if (e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") selectCard(idx); };
 
-    const newSkuFields = item.is_new_sku ? `
+    // 三字段编辑区：所有 SKU 都可编辑；老 SKU 预填主库值（留空回退主库值），
+    // 留空弱警告仅对新 SKU 显示（新 SKU 无主库值可回退）
+    const metaFields = `
       <div class="grid" style="margin-top:6px">
         <label>中文品名
           <input data-idx="${idx}" data-field="name_cn" value="${esc(item.name_cn || "")}" oninput="onMetaEdit(this)">
-          <span class="field-hint" id="hint-name_cn-${idx}"></span>
+          ${item.is_new_sku ? `<span class="field-hint" id="hint-name_cn-${idx}"></span>` : ""}
         </label>
         <label>HS 编码
           <input data-idx="${idx}" data-field="hs_code" value="${esc(item.hs_code || "")}" oninput="onMetaEdit(this)"></label>
         <label>商检（填 1=需要 / 0=不需要）
           <input data-idx="${idx}" data-field="inspection_required" value="${esc(item.inspection_required ?? "")}" oninput="onMetaEdit(this)">
-          <span class="field-hint" id="hint-inspection-${idx}"></span>
+          ${item.is_new_sku ? `<span class="field-hint" id="hint-inspection-${idx}"></span>` : ""}
         </label>
-      </div>` : "";
+      </div>`;
 
     card.innerHTML = `
       <div class="card-head">
@@ -297,7 +299,7 @@ function renderCards() {
       <div class="cmp" id="cmp-${idx}"></div>
       ${(item.db_record && item.db_record.unit_net_weight != null) ?
         `<div class="dbinfo">历史库单件净重: ${esc(item.db_record.unit_net_weight)} ${item.db_record.name_cn ? "｜" + esc(item.db_record.name_cn) : ""}</div>` : ""}
-      ${newSkuFields}`;
+      ${metaFields}`;
     box.appendChild(card);
     renderCalc(idx);
   });
@@ -623,6 +625,17 @@ function buildDiffSummary() {
           changes.push({ sku: it.sku, field: label, oldV: ov, newV: nv });
         }
       });
+      // 老 SKU 的 meta 字段（中文品名/HS 编码/商检）改动也进差异表，
+      // 与 origItems 顶层预填值对照；新 SKU 补录走下方 newSkus 专区
+      if (!it.is_new_sku) {
+        const orig = origItems[idx] || {};
+        metaFields.forEach(([f, label]) => {
+          const ov = orig[f] ?? null, nv = it[f] ?? null;
+          if (String(ov ?? "") !== String(nv ?? "")) {
+            changes.push({ sku: it.sku, field: label, oldV: ov, newV: nv });
+          }
+        });
+      }
     }
     if (it.is_new_sku) {
       const filled = metaFields.filter(([f]) =>
@@ -639,7 +652,7 @@ function buildDiffSummary() {
 function renderDiffModal(s) {
   let html = "";
   if (s.changes.length) {
-    html += `<h4>数值改动（${s.changes.length} 处）</h4>` +
+    html += `<h4>字段改动（${s.changes.length} 处）</h4>` +
       `<table class="diff-table"><tr><th>SKU</th><th>字段</th><th>旧值</th><th>新值</th></tr>`;
     s.changes.forEach((c) => {
       html += `<tr><td>${esc(c.sku)}</td><td>${esc(c.field)}</td>` +

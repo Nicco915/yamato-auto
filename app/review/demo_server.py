@@ -16,6 +16,7 @@ UPSTREAM_ROOT 指向本机工厂文件夹（例如 UPSTREAM_ROOT=D:/yamato/96/�
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -77,7 +78,12 @@ MOCK_PAYLOADS: list[dict[str, Any]] = [
                 "status": "Normal",
                 "is_human_edited": False,
                 "is_new_sku": False,
-                "db_record": {"unit_net_weight": 5.0, "name_cn": "示例既存商品"},
+                "db_record": {"unit_net_weight": 5.0, "name_cn": "示例既存商品",
+                              "hs_code": "9404909000", "inspection_required": 1},
+                # 老 SKU：Node5 已把主库三字段提升到顶层，作前端编辑框初值
+                "name_cn": "示例既存商品",
+                "hs_code": "9404909000",
+                "inspection_required": 1,
             },
             {
                 "sku": "ITEM-200",
@@ -97,7 +103,12 @@ MOCK_PAYLOADS: list[dict[str, Any]] = [
                 "status": "Warning",
                 "is_human_edited": False,
                 "is_new_sku": False,
-                "db_record": {"unit_net_weight": 9.5, "weight_diff_ratio": 0.0355},
+                "db_record": {"unit_net_weight": 9.5, "weight_diff_ratio": 0.0355,
+                              "name_cn": "示例老品·差异预警", "hs_code": "6109100021",
+                              "inspection_required": 0},
+                "name_cn": "示例老品·差异预警",
+                "hs_code": "6109100021",
+                "inspection_required": 0,
             },
             {
                 "sku": "ITEM-NEW-9",
@@ -149,7 +160,11 @@ MOCK_PAYLOADS: list[dict[str, Any]] = [
                 "status": "Normal",
                 "is_human_edited": False,
                 "is_new_sku": False,
-                "db_record": {},
+                "db_record": {"name_cn": "达安示例商品", "hs_code": "4202920000",
+                              "inspection_required": 1},
+                "name_cn": "达安示例商品",
+                "hs_code": "4202920000",
+                "inspection_required": 1,
             },
         ],
     },
@@ -219,4 +234,6 @@ def create_demo_app() -> FastAPI:
 app = create_demo_app()
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8001, log_level="info")
+    # DEMO_PORT 覆盖默认端口（生产占用 8000/8001 时验证用 8399+）
+    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("DEMO_PORT", "8001")),
+                log_level="info")
