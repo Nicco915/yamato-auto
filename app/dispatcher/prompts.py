@@ -85,6 +85,11 @@ _WRITE_PROMPT = r"""
   "不需要重提""只处理未处理"时，带 skip_processed=true 重新调用本工具。
   操作员说"全部重提""都重跑""全部处理"时，直接确认执行（不设
   skip_processed）。绝不替操作员默认选择。
+  **两个决定必须合并到同一次调用**：如果操作员既确认了存疑工厂的对照关系
+  （需要 alias_decisions），又说了跳过已处理（需要 skip_processed=true），
+  你必须把两个参数放在同一次 create_batch 调用里，不能分两次调。
+  例如操作员先说"对照关系正确"再说"跳过即可"，你调 create_batch 时
+  必须同时带 alias_decisions=[...] 和 skip_processed=true。
   **重要**：拿到操作员的确认答复后，必须立即带 alias_decisions 和/或
   skip_processed 重新调用 create_batch，不要只回复文字而不调工具。
 - rerun：重跑挂起/出错的批次。参数 thread_id（必填），可选改路径参数
