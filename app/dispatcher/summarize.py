@@ -129,11 +129,19 @@ def _sum_submit_review(args: dict, result: dict) -> dict:
                       if tid else [])}
 
 
+# 环境变量名 → 人可读中文标签，避免向用户暴露内部变量名
+ENV_LABELS: dict[str, str] = {
+    "UPSTREAM_ROOT": "上游工厂文件夹",
+    "DOWNSTREAM_FILE_PATH": "下游装箱表",
+    "GT_SOURCE": "GT 基准文件",
+}
+
+
 def _sum_set_paths(result: dict) -> dict:
     """set_paths：.env 已持久化 + 运行时生效 + 可选的当前批次重跑。"""
     applied = result.get("applied") or {}
     count = len(applied)
-    lines = [f"{k} → {v}" for k, v in applied.items()]
+    lines = [f"{ENV_LABELS.get(k, k)} → {v}" for k, v in applied.items()]
     message = f"已修改 {count} 项路径配置，写入 .env 持久生效并即时应用。"
     for w in result.get("warnings") or []:
         lines.append(f"注意：{w}")

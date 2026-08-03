@@ -328,7 +328,7 @@ def preview_changes(paths: dict, env_path: Path | None = None) -> list[str]:
         env_key, _, label = ALLOWED_PATHS[key]
         old = current.get(env_key) or "（未设置）"
         marker = "不变" if old == new else "修改"
-        lines.append(f"[{marker}] {label} {env_key}:\n    {old}\n -> {new}")
+        lines.append(f"[{marker}] {label}:\n    {old}\n -> {new}")
     return lines
 
 

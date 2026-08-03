@@ -223,12 +223,12 @@ def _preview_create_batch(args: dict) -> dict:
             lines.append("工厂对照·确定命中（无需确认）:")
             for factory, hit in resolved.items():
                 lines.append(f"  {factory} -> {hit['folder']}"
-                             f"（{hit['method']}, {hit['score']:.0f}分）")
+                             f"（置信度{hit['score']:.0f}%）")
         if candidates:
             lines.append("工厂对照·低置信推荐（需逐个确认）:")
             for factory, cands in candidates.items():
                 cand_text = " / ".join(
-                    f"{c['folder']}({c['score']:.0f}分)" for c in cands)
+                    f"{c['folder']}(置信度{c['score']:.0f}%)" for c in cands)
                 lines.append(f"  {factory} -> 候选: {cand_text}")
         if unmatched:
             lines.append("工厂对照·无候选（需人工指定文件夹）:")
@@ -256,16 +256,15 @@ def _preview_create_batch(args: dict) -> dict:
                     lines.append(
                         f"[重复] 工厂 {f['factory']} 已于 "
                         f"{f.get('session_updated_at') or '未知时间'} "
-                        "提取完成（session）")
+                        "提取完成")
             if repeated:
                 warnings.append(
                     f"{len(repeated)} 个工厂已处理过，确认将重复提取；"
-                    "如需跳过请带 skip_processed=true 重新发起")
+                    "如需跳过已处理工厂，请告知")
                 if precheck["processed_count"] == precheck["total_count"] \
                         and precheck["total_count"] > 0:
                     warnings.append(
-                        "全部工厂均已处理：带 skip_processed=true 将不会创建"
-                        "批次（返回 skipped_all）")
+                        "全部工厂均已处理：跳过已处理工厂后将不会创建新批次")
 
         # ---- 轮2：用户已给出 alias_decisions，展示决定清单 ----
         if alias_decisions:
@@ -287,10 +286,10 @@ def _preview_create_batch(args: dict) -> dict:
                 else:
                     lines.append(f"  [仅本次] {factory} -> {folder}")
 
-        summary = f"将创建新批次 {thread_id} 并开始提取（Node1 跑到 Node5 挂起）"
+        summary = f"将创建新批次 {thread_id} 并开始提取"
         if candidates or unmatched:
             summary += (f"；工厂对照存疑 {len(candidates)} 家、无候选 "
-                        f"{len(unmatched)} 家，请确认后带 alias_decisions 重新发起")
+                        f"{len(unmatched)} 家，请确认存疑工厂的对照关系后再发起")
         return _preview(summary, lines, warnings, factory_scan=scan)
     except Exception as e:  # noqa: BLE001
         return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
@@ -420,7 +419,8 @@ def _preview_rerun(args: dict) -> dict:
 
         values = state.get("values") or {}
         next_nodes = state.get("next_nodes") or []
-        lines = [f"批次 {thread_id} 当前下一节点: {next_nodes or '（无，已完成）'}"]
+        status_text = "待继续处理" if next_nodes else "已完成"
+        lines = [f"批次 {thread_id} 当前状态: {status_text}"]
         warnings: list[str] = []
         if not next_nodes:
             warnings.append("该批次未处于挂起状态：仅挂起批次可重跑，确认后执行会报错")
@@ -435,7 +435,7 @@ def _preview_rerun(args: dict) -> dict:
             else:
                 lines.append(f"[不变] {label}: {old}")
 
-        return _preview(f"将带新路径从 Node1 重跑批次 {thread_id}（回到 Node5 挂起）",
+        return _preview(f"将带新路径重新运行批次 {thread_id} 的提取流程",
                         lines, warnings)
     except Exception as e:  # noqa: BLE001
         return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
@@ -456,6 +456,18 @@ def _exec_rerun(args: dict,
         return {"error": str(e)}
     except Exception as e:  # noqa: BLE001
         return _err(e)
+
+
+# 内部字段名 → 用户可读中文名映射
+_FIELD_LABEL: dict[str, str] = {
+    "total_quantity": "总件数",
+    "total_net_weight": "总净重",
+    "total_gross_weight": "总毛重",
+    "hs_code": "HS编码",
+    "inspection_required": "是否需要商检",
+    "name_cn": "中文品名",
+    "name_en": "英文品名",
+}
 
 
 def _preview_submit_review(args: dict) -> dict:
@@ -483,11 +495,16 @@ def _preview_submit_review(args: dict) -> dict:
         if not changes and not new_skus:
             lines.append("无字段改动、无新 SKU 补录（按原提取结果提交）")
         for c in changes:
-            lines.append(f"[改动] SKU {c.get('sku')} 字段 {c.get('field')}: "
+            raw_field = c.get("field", "")
+            field_label = _FIELD_LABEL.get(raw_field, raw_field)
+            lines.append(f"[改动] SKU {c.get('sku')} 字段 {field_label}: "
                          f"{c.get('old')} -> {c.get('new')}")
         for s in new_skus:
-            lines.append(f"[新SKU] {s.get('sku')}: 中文品名={s.get('name_cn')}, "
-                         f"HS编码={s.get('hs_code')}, 商检={s.get('inspection_required')}")
+            inspection = "是" if s.get("inspection_required") else "否"
+            lines.append(f"[新SKU] {s.get('sku')}: "
+                         f"中文品名={s.get('name_cn')}, "
+                         f"HS编码={s.get('hs_code')}, "
+                         f"需要商检={inspection}")
 
         warnings: list[str] = []
         if not approved:
