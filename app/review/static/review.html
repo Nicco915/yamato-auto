@@ -106,7 +106,7 @@
   #btn-diff-ok { background: #2563eb; color: #fff; }
   #btn-diff-cancel { background: #e5e7eb; color: #374151; }
   .dbinfo { margin-top: 4px; font-size: 11px; color: #6b7280; }
-  .required-note { color: #dc2626; font-size: 11px; }
+  .field-hint { display: block; font-size: 11px; color: #d97706; margin-top: 2px; min-height: 14px; }
   #done-view { display: none; margin: 60px auto; text-align: center; }
   #done-view h2 { color: #15803d; }
   #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
@@ -265,12 +265,16 @@ function renderCards() {
 
     const newSkuFields = item.is_new_sku ? `
       <div class="grid" style="margin-top:6px">
-        <label>中文品名 <span class="required-note">*必填</span>
-          <input data-idx="${idx}" data-field="name_cn" value="${esc(item.name_cn || "")}" oninput="onMetaEdit(this)"></label>
-        <label>HS 编码 <span class="required-note">*必填</span>
+        <label>中文品名
+          <input data-idx="${idx}" data-field="name_cn" value="${esc(item.name_cn || "")}" oninput="onMetaEdit(this)">
+          <span class="field-hint" id="hint-name_cn-${idx}"></span>
+        </label>
+        <label>HS 编码
           <input data-idx="${idx}" data-field="hs_code" value="${esc(item.hs_code || "")}" oninput="onMetaEdit(this)"></label>
-        <label>商检状态 <span class="required-note">*必填</span>
-          <input data-idx="${idx}" data-field="inspection_required" value="${esc(item.inspection_required ?? "")}" oninput="onMetaEdit(this)"></label>
+        <label>商检（填 1=需要 / 0=不需要）
+          <input data-idx="${idx}" data-field="inspection_required" value="${esc(item.inspection_required ?? "")}" oninput="onMetaEdit(this)">
+          <span class="field-hint" id="hint-inspection-${idx}"></span>
+        </label>
       </div>` : "";
 
     card.innerHTML = `
@@ -392,18 +396,25 @@ function markCardModified(idx) {
   }
 }
 
-/* 新 SKU 必填校验：未填齐禁提交 */
+/* 弱警告：新 SKU 字段留空时显示提示，不阻断提交 */
 function refreshSubmitState() {
-  let ok = true;
   for (const it of items) {
-    if (it.is_new_sku) {
-      if (!it.name_cn || !it.hs_code || (it.inspection_required === undefined || it.inspection_required === "")) ok = false;
+    if (!it.is_new_sku) continue;
+    const idx = items.indexOf(it);
+    // name_cn 留空提示
+    const hintName = $("hint-name_cn-" + idx);
+    if (hintName) {
+      hintName.textContent = (!it.name_cn) ? "⚠ 下游单据将缺少中文品名" : "";
     }
-    const ed = it.extracted_data || {};
-    if (ed.total_quantity == null || isNaN(parseFloat(ed.total_quantity))) { /* 允许 null 原样回传 */ }
+    // inspection_required 留空提示
+    const hintInsp = $("hint-inspection-" + idx);
+    if (hintInsp) {
+      const v = it.inspection_required;
+      hintInsp.textContent = (v === undefined || v === "" || v === null) ? "⚠ 未指定，默认无需商检" : "";
+    }
   }
-  $("btn-submit").disabled = !ok;
-  $("btn-submit").title = ok ? "" : "存在新 SKU 必填项未填写";
+  $("btn-submit").disabled = false;
+  $("btn-submit").title = "";
 }
 
 /* ================= 左屏查看器 ================= */
