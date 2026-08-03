@@ -249,10 +249,14 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
 
     session_id 提供时，加载 L2 操作记忆（跨会话持久化）并注入 system prompt。
     triage_hint 为分诊层已确认的意图与参数，仅作提示注入 system prompt；
+    有 hint 时 system prompt 切换为 prompts.executor_prompt（执行器角色）。
     工具调用仍由 LLM 发出，validate_args 与确认门原样生效。
     """
     # 构建 system prompt（基础 + L2 记忆上下文）
-    sys_prompt = prompts.system_prompt(phase)
+    # 带 hint（分诊成功）：用执行器角色化 prompt（意图已确认，无需意图判断
+    # 与 qa 判别）；无 hint（降级路径）：用全量 prompt（行为与重构前一致）
+    sys_prompt = (prompts.executor_prompt(phase) if triage_hint
+                  else prompts.system_prompt(phase))
     if session_id:
         from app.dispatcher.memory import OperationMemory
         try:
