@@ -11,9 +11,13 @@
 import contextlib
 import json
 import logging
+import os
+import re
 import sqlite3
+import tempfile
 import threading
 from collections.abc import Callable
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -133,6 +137,98 @@ _PRE_EXTRACT_LOCK = threading.Lock()  # 保证同一批次只有一个预提取�
 _known_running: set[str] = set()      # 进程级已知在跑的批次
 
 
+# ---------------------------------------------------------------------------
+# 预提取进度落盘（2026-08-03）：对话页批次实时进度条的数据源
+# ---------------------------------------------------------------------------
+# 后台预提取线程每次状态变化即原子重写进度 JSON（tmp → rename，与 session
+# 原子写模式一致），UI 批次端点原样带出给对话页轮询渲染——纯确定性数据，
+# 不过 LLM。进度是辅助设施：写文件失败只记日志，绝不影响预提取本身。
+
+# thread_id 是用户可输入的批次号，拼文件名前过滤路径分隔符等危险字符
+# （防目录穿越）：只保留字母数字、中日韩字符、-_.，其余替换为 _
+_PROGRESS_TAG_UNSAFE = re.compile(
+    r"[^0-9A-Za-z一-鿿぀-ヿ가-힯._-]")
+
+
+def _preextract_progress_path(thread_id: str) -> Path:
+    """预提取进度文件路径：SESSIONS_DIR/_preextract_progress_{安全tag}.json。"""
+    tag = _PROGRESS_TAG_UNSAFE.sub("_", thread_id)
+    # 收缩连续下划线，并移除残留的 ..（防 .. 穿越到父目录）
+    while ".." in tag:
+        tag = tag.replace("..", "_")
+    while "__" in tag:
+        tag = tag.replace("__", "_")
+    return SESSIONS_DIR / f"_preextract_progress_{tag}.json"
+
+
+class _PreExtractProgress:
+    """预提取进度落盘器：线程内维护状态，每次变化原子重写 JSON。
+
+    文件结构：
+      {"thread_id": ..., "updated_at": ISO时间,
+       "factories": [{"factory": ..., "status": "pending|running|cached|done|failed",
+                      "error": str|null, "ts": ISO时间}, ...]}
+    """
+
+    def __init__(self, thread_id: str, factories: list[str]) -> None:
+        self._path = _preextract_progress_path(thread_id)
+        self._state: dict[str, Any] = {
+            "thread_id": thread_id,
+            "updated_at": self._now(),
+            "factories": [
+                {"factory": f, "status": "pending", "error": None, "ts": None}
+                for f in factories
+            ],
+        }
+        self._by_name = {f["factory"]: f for f in self._state["factories"]}
+        self._flush()
+
+    @staticmethod
+    def _now() -> str:
+        return datetime.now().astimezone().isoformat(timespec="seconds")
+
+    def update(self, factory: str, status: str, error: str | None = None) -> None:
+        """状态流转：pending → running → cached/done/failed；每次变化即重写。"""
+        entry = self._by_name.get(factory)
+        if entry is None:
+            return
+        entry["status"] = status
+        entry["error"] = error
+        entry["ts"] = self._now()
+        self._flush()
+
+    def _flush(self) -> None:
+        """原子重写进度文件（tmp → rename）；失败只记日志，绝不抛出。"""
+        try:
+            self._state["updated_at"] = self._now()
+            SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+            tmp_fd, tmp_path = tempfile.mkstemp(
+                suffix=".tmp", prefix=self._path.stem + ".", dir=str(SESSIONS_DIR))
+            try:
+                os.write(tmp_fd, json.dumps(self._state, ensure_ascii=False,
+                                            indent=1).encode("utf-8"))
+            finally:
+                os.close(tmp_fd)
+            os.replace(tmp_path, self._path)  # POSIX 原子 rename
+        except OSError as e:
+            logger.warning("[预提取] 进度文件写入失败（不影响预提取）：%s: %s",
+                           type(e).__name__, e)
+
+
+def load_pre_extraction_progress(thread_id: str) -> dict[str, Any] | None:
+    """读预提取进度文件（批次端点用）：不存在/损坏返回 None（静默，绝不 500）。"""
+    path = _preextract_progress_path(thread_id)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 损坏的进度文件按无进度处理
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("factories"), list):
+        return None
+    return data
+
+
 def _start_pre_extraction(thread_id: str) -> None:
     """为当前批次启动后台预提取 daemon 线程（幂等：同一批次只跑一个）。"""
     graph = get_graph()
@@ -152,7 +248,8 @@ def _start_pre_extraction(thread_id: str) -> None:
 
     def _pre_extract():
         try:
-            _pre_extract_factories(pending, upstream_root, requirements)
+            _pre_extract_factories(pending, upstream_root, requirements,
+                                   thread_id=thread_id)
         finally:
             _known_running.discard(thread_id)
 
@@ -167,8 +264,14 @@ def _pre_extract_factories(
     factories: list[str],
     upstream_root: str,
     requirements: dict[str, list[str]],
+    thread_id: str | None = None,
 ) -> None:
-    """后台线程主体：逐个工厂串行提取，结果存入 session JSON。"""
+    """后台线程主体：逐个工厂串行提取，结果存入 session JSON。
+
+    thread_id 给出时同步落盘预提取进度（对话页批次进度条数据源）：
+    启动全部 pending → 每个工厂 running → 缓存跳过 cached / 成功 done /
+    异常 failed（error 记异常类型+摘要，截 200 字符）。
+    """
     from app.factory_match import load_alias_map, match_factory_folder
     from app.nodes.extraction_node import _run_factory_session, _try_load_cached_session
 
@@ -180,11 +283,14 @@ def _pre_extract_factories(
     folders = [d.name for d in root_path.iterdir() if d.is_dir()]
     alias_map = load_alias_map()
     cutoff = get_settings().fuzzy_match_score_cutoff
+    progress = _PreExtractProgress(thread_id, factories) if thread_id else None
 
     for factory in factories:
         # 缓存已存在则跳过（可能是前次预提取或旧批次留下的）
         if _try_load_cached_session(factory) is not None:
             logger.info("[预提取] 工厂「%s」：缓存已存在，跳过", factory)
+            if progress:
+                progress.update(factory, "cached")
             continue
 
         # Node2 逻辑：匹配文件夹
@@ -192,16 +298,25 @@ def _pre_extract_factories(
             factory, folders, alias_map, cutoff=cutoff)
         if not folder_name:
             logger.warning("[预提取] 工厂「%s」：未匹配到文件夹，跳过", factory)
+            if progress:
+                progress.update(factory, "failed", "未匹配到工厂文件夹")
             continue
         folder_path = str(root_path / folder_name)
         expected_skus = requirements.get(factory, [])
 
+        if progress:
+            progress.update(factory, "running")
         try:
             _run_factory_session(folder_path, factory, expected_skus)
             logger.info("[预提取] 工厂「%s」：完成（%s，得分 %.1f）",
                         factory, method, score)
+            if progress:
+                progress.update(factory, "done")
         except Exception as e:
             logger.exception("[预提取] 工厂「%s」：异常 %s，跳过", factory, e)
+            if progress:
+                progress.update(factory, "failed",
+                                f"{type(e).__name__}: {e}"[:200])
 
 
 def run_until_interrupt(

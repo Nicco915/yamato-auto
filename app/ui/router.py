@@ -138,11 +138,20 @@ async def batch_precheck(request: PrecheckRequest):
 
 @router.get("/api/v1/batches/{thread_id}")
 async def batch_detail(thread_id: str):
-    """批次详情：状态/进度 + factories[] + audit[] + usage。"""
+    """批次详情：状态/进度 + factories[] + audit[] + usage。
+
+    预提取进度文件存在且可解析时附带 pre_extraction 键（对话页进度条
+    数据源）；不存在/损坏时静默不带该键，绝不让端点 500。
+    """
     try:
-        return await asyncio.to_thread(service.get_batch_detail, thread_id)
+        detail = await asyncio.to_thread(service.get_batch_detail, thread_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
+    progress = await asyncio.to_thread(
+        service.load_pre_extraction_progress, thread_id)
+    if progress is not None:
+        detail["pre_extraction"] = progress
+    return detail
 
 
 @router.delete("/api/v1/batches/{thread_id}")
