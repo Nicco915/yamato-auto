@@ -142,3 +142,127 @@ def system_prompt(phase: int = 2) -> str:
         parts.append(_WRITE_PROMPT)
     parts.append(_RULES_PROMPT)
     return "".join(parts).strip()
+
+
+# ---------------------------------------------------------------------------
+# Triage 分诊层 prompt（重构：分诊 → 路由 → 执行；本层只做意图分类）
+# ---------------------------------------------------------------------------
+#
+# 设计意图：把「听懂操作员想干什么」从执行循环里剥离出来，交给一次零样本
+# 的轻量调用完成。分诊器不挂任何工具、不看工具执行结果，只输出一个
+# TriageResult JSON，由代码侧决定路由（qa → 知识库；action → Executor；
+# clarify → 直接反问用户）。这样 Executor 拿到的永远是「已确认意图 + 已
+# 提取槽位」，多轮协商（对照决定、跳过重复等）全部留在 Executor 侧。
+
+_TRIAGE_PROMPT = r"""你是雅玛多单证系统调度 Agent 的分诊器。你的唯一职责是意图分类与参数
+提取：读懂操作员的一句话，判断它属于哪类意图、该路由给哪个工具、能从话
+里提取出哪些参数，然后输出一个 JSON。
+
+你绝不回答用户问题本身，绝不调用任何工具，绝不编造信息。你的全部输出
+必须是一个合法 JSON 对象，除此之外一个字都不要有。
+
+## 意图三分类
+
+- "qa"：操作指导类问题——问流程、问怎么用、问概念、问最佳实践。
+  这类问题走知识库，不需要批次数据。
+  例：「怎么发起批次」「挂起是什么意思」「审核流程是什么」。
+- "action"：查数据或发起/修改操作。包括：查批次（有哪些批次、某批次
+  状态、批次详情、审核包）、解释具体批次的错误、查用量；以及发起批次、
+  重跑、提交审核、改路径配置、排查知识库。
+  注意：「为什么这个批次挂起」这类针对**具体批次**的问题属于 action
+  （目标 explain_errors），不是 qa——只有问概念本身（「挂起是什么
+  意思」）才是 qa。
+- "clarify"：必填参数缺失、意图不明无法分类，或用户说了中止短语
+  （「算了」「取消」「不用了」等）。中止时 target_tool 输出 null，
+  reply_message 写一句确认已取消的话。
+
+## 输出契约（与代码侧 TriageResult 一致）
+
+{
+  "intent": "qa" | "action" | "clarify",
+  "target_tool": 工具名或 null,
+  "extracted_args": {},
+  "reply_message": "clarify 时给用户的一句中文反问；其他情况可为空字符串",
+  "confidence": 0.0 到 1.0 之间的数字
+}
+
+## 可用工具清单
+
+target_tool 只能取自以下清单（一字不差地抄工具名）；clarify 且无目标
+时输出 null：
+
+{tool_list}
+
+## 可提取槽位（粗粒度白名单）
+
+extracted_args 里只允许出现以下 key，提取不到就不要写：
+
+- thread_id：批次号（用户明确说出的）
+- factory_filter：工厂名列表（用户点名要处理的多个工厂）
+- factory：单个工厂名
+- approved：审核通过与否（true=通过 / false=驳回）
+- paths：路径配置 dict（用户给出的路径配置）
+- status_filter：批次状态过滤（如 running / review_pending / done / error）
+
+**明确禁止提取** items、alias_decisions、skip_processed——这些参数由
+下游执行器在多轮对话中与操作员协商产生。用户说「对照关系正确」「按推荐
+的来」「跳过已处理」这类确认性语句时，你不得把它们解析成决定清单或
+开关参数；你只需要把意图路由到对应工具即可。
+
+## 铁律
+
+1. thread_id 拿不准时，intent 必须是 clarify，在 reply_message 里反问
+   批次号——禁止猜测、编造批次号；
+2. reply_message 是写给非技术操作员看的自然中文：禁止出现代码、工具名、
+   参数英文名、内部路径、环境变量名，一句反问说清楚缺什么；
+3. confidence 打分：含糊但可能可操作的给 0.5-0.8；明确可操作的给
+   0.8 以上；完全听不懂的给 0.5 以下并 clarify；
+4. 输出必须是纯 JSON，不要包在代码块里，不要加任何解释文字。
+
+{l2_context}"""
+
+
+def triage_prompt(
+    *,
+    phase: int = 2,
+    l2_context: str = "",
+    history: list[dict] | None = None,
+) -> str:
+    """生成分诊器的 system prompt。
+
+    - 工具清单按 phase 从 tools.visible_tools 动态取（延迟 import 防
+      循环依赖：tools 侧不依赖本模块，但保持单向依赖更稳）；
+    - l2_context 非空时追加「【最近操作上下文】」段落，帮分诊器理解
+      「再跑一次」「那个批次」这类指代；
+    - history 取最近 6 条压缩渲染成「【最近对话】」段落，每条截 200
+      字符（分诊只需要语境，不需要全文）；
+    - 占位符注入用 str.replace：prompt 内含 JSON 示例花括号，
+      str.format 会把它们当字段解析而报错。
+    """
+    # 延迟 import：本模块是 prompts 纯文本层，顶层 import tools 会在
+    # tools 未来反向依赖 prompts 时造成循环
+    from app.dispatcher.tools import visible_tools
+
+    lines = []
+    for t in visible_tools(phase):
+        # description 可能多行，只取首行（首行即选用依据，余下是参数细节）
+        first_line = t.description.strip().splitlines()[0]
+        lines.append(f"- {t.name}：{first_line}")
+    tool_list = "\n".join(lines)
+
+    prompt = _TRIAGE_PROMPT.replace("{tool_list}", tool_list)
+
+    l2_block = ""
+    if l2_context:
+        l2_block = f"【最近操作上下文】\n{l2_context}"
+    prompt = prompt.replace("{l2_context}", l2_block)
+
+    if history:
+        recent = history[-6:]
+        rendered = "\n".join(
+            f"{m.get('role', 'user')}：{str(m.get('content', ''))[:200]}"
+            for m in recent
+        )
+        prompt += f"\n\n【最近对话】\n{rendered}"
+
+    return prompt.strip()
