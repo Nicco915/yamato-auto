@@ -564,6 +564,28 @@ $("doc-view").addEventListener("wheel", (e) => {
   applyZoom(curZoom + delta, anchorX);
 }, { passive: false });
 
+/* Safari 捏合手势兼容（gesturestart/gesturechange/gestureend） */
+let gestureStartZoom = 1;
+$("doc-view").addEventListener("gesturestart", (e) => {
+  if (!isZoomable()) return;
+  e.preventDefault();
+  gestureStartZoom = curZoom;
+});
+$("doc-view").addEventListener("gesturechange", (e) => {
+  if (!isZoomable()) return;
+  e.preventDefault();
+  const view = $("doc-view");
+  const rect = view.getBoundingClientRect();
+  // 双指中心点作为锚点
+  const cx = (e.clientX || (rect.left + rect.width / 2)) - rect.left + view.scrollLeft;
+  const anchor = viewW ? cx / curZoom : cx;
+  applyZoom(gestureStartZoom * e.scale, anchor);
+});
+$("doc-view").addEventListener("gestureend", (e) => {
+  if (!isZoomable()) return;
+  e.preventDefault();
+});
+
 /* 点击卡片：左屏跳到该 SKU 的 source_file */
 function selectCard(idx) {
   selectedIdx = idx;
