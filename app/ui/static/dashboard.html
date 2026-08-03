@@ -109,11 +109,9 @@
       <li><strong>将删除：</strong>状态机现场（不可恢复）</li>
       <li><strong>将保留：</strong>审计记录、工厂会话、主数据、输出文件</li>
     </ul>
-    <p class="del-confirm-label">请输入完整批次号 <strong id="del-hint-id" class="mono"></strong> 以确认：</p>
-    <input id="del-confirm-input" type="text" autocomplete="off" placeholder="输入完整批次号" oninput="onDelConfirmInput()">
     <div class="modal-actions">
       <button class="btn" onclick="closeDeleteModal()">取消</button>
-      <button id="del-confirm-btn" class="btn btn-danger" disabled onclick="confirmDelete()">确认删除</button>
+      <button id="del-confirm-btn" class="btn btn-danger" onclick="confirmDelete()">确认删除</button>
     </div>
   </div>
 </div>
@@ -380,7 +378,6 @@ function openDeleteModal(threadId, status) {
   _delTarget = { id: String(threadId), status: String(status || "") };
   // textContent 赋值，天然防 XSS，无需 esc
   $("del-title").textContent = "删除批次 " + _delTarget.id + "？";
-  $("del-hint-id").textContent = _delTarget.id;
   const note = $("del-status-note");
   if (_delTarget.status === "pending_review") {
     note.textContent = "⚠ 该批次挂起待审，删除后无法恢复审核现场";
@@ -392,24 +389,15 @@ function openDeleteModal(threadId, status) {
     note.textContent = "状态未知";
     note.className = "del-note del-note-muted";
   }
-  const input = $("del-confirm-input");
-  input.value = "";
   const btn = $("del-confirm-btn");
-  btn.disabled = true;
+  btn.disabled = false;
   btn.textContent = "确认删除";
   $("delete-mask").classList.add("show");
-  setTimeout(() => input.focus(), 0);
 }
 
 function closeDeleteModal() {
   $("delete-mask").classList.remove("show");
   _delTarget = null;
-}
-
-/* 输入值与批次号完全一致才启用确认按钮（粘贴同样触发 input 事件） */
-function onDelConfirmInput() {
-  if (!_delTarget) return;
-  $("del-confirm-btn").disabled = $("del-confirm-input").value !== _delTarget.id;
 }
 
 async function confirmDelete() {
