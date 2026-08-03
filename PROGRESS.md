@@ -734,6 +734,52 @@ preview_lines，前端已单独渲染确认卡）。LLM 后续轮次可基于上
 - 烟测试：跳过（生产 batch 占用 checkpoint db，不可并行）
 - 合并：三分支零冲突合入 main，一次手动修复（`msg_text` 变量名）
 
+## 6.14 调度 Agent 提示词迭代 + 模型切换 + 专用调试日志（2026-08-03）
+
+### 6.14.1 create_batch 提示词两轮增强（commit 536a0db / df2652f）
+
+**问题**：操作员回答"对照关系正确/跳过已处理"后，LLM 只回文字不带参数重新
+调用 create_batch，或只带 alias_decisions 不带 skip_processed。
+
+**方案**（prompts.py `_WRITE_PROMPT` create_batch 段落）：
+- 确认语→参数映射示例：操作员说"对照关系正确/按推荐的来"→ 取上一轮预览
+  每个 [存疑] 工厂候选第一个构造 alias_decisions（含具体 JSON 示例）；
+  明确说"永久保存"才 save=true
+- "两个决定必须合并到同一次调用"段落：alias_decisions + skip_processed=true
+  必须放同一次 create_batch 调用
+- 铁律 #1 补充：操作员给了明确答复后必须立即行动，不反复确认同一件事
+
+### 6.14.2 调度 Agent 模型切换 qwen3.8-max（.env，不入库）
+
+`.env`：TEXT_MODEL=qwen3.7-plus → **qwen3.8-max**（指令跟随更强）；
+VISION_MODEL 保持 qwen3.7-plus。
+**注意**：TEXT_MODEL 为共享配置——excel/doc/pdf_text 提取通道与调度 Agent
+同走 TEXT_MODEL，非调度独占；如需真隔离须加 DISPATCHER_MODEL 配置项。
+换模型后实测：alias_decisions 已能正确提取合并，skip_processed 仍偶发遗漏。
+
+### 6.14.3 调度 Agent 专用调试日志（commit e583380）
+
+**需求**：排障需要回放"模型到底看到什么 prompt、返回什么、工具参数带了什么"，
+且不打控制台、不污染全局日志。
+
+**方案**：`app/dispatcher/debug_log.py`——独立 logger（propagate=False，
+不进控制台/app.log/error.log），滚动文件 `app/data/logs/dispatcher.log`
+（20MB×5），JSONL 一行一事件：
+`user_message / llm_request(完整 messages，100k 截断) / llm_response
+(工具调用全参数) / tool_result / confirm_gate / confirm_execute /
+confirm_rejected`，均带 session_id+时间戳；敏感参数键脱敏；
+序列化绝不抛异常。loop.py 七处插桩；execute_confirmed 增加 session_id
+参数（__init__.py confirm 透传）。
+
+**排查用法**：`grep <session_id> app/data/logs/dispatcher.log` 回放
+该会话每次 LLM 调用的输入输出，可直接看到模型是否带了 skip_processed。
+
+### 测试
+
+- `dispatcher_debug_log_test.py`（新增）：26 项断言全绿（全链路事件落盘/
+  脱敏/propagate=False/不可序列化容错/超长截断）
+- `dispatcher_read_test.py` / `dispatcher_write_test.py`：8/8 + 8/8 回归全绿
+
 ## 7. 关键设计决策记录
 
 0. **路径集中配置 + agent 对话可改**（2026-07-28 用户授权）：`app/.env`「业务路径」节
