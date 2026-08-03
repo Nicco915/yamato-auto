@@ -266,3 +266,62 @@ def triage_prompt(
         prompt += f"\n\n【最近对话】\n{rendered}"
 
     return prompt.strip()
+
+
+# ---------------------------------------------------------------------------
+# Executor 执行器 prompt（带 triage_hint 路径专用；降级路径仍用 system_prompt）
+# ---------------------------------------------------------------------------
+#
+# 设计意图：分诊层已把「听懂操作员想干什么」做完，进入执行循环的消息附带
+# 「分诊已确认」提示（目标工具 + 已确认参数）。此时 Executor 不再需要意图
+# 判别与缺参追问的 coaching，角色收缩为「翻译意图成工具调用 + 讲清结果」。
+# 只读工具清单照抄 _BASE_PROMPT（执行器仍需完整工具语义），但删掉
+# 「操作指导 vs 数据查询」判别段——那是分诊职责，留在执行器 prompt 里只会
+# 误导模型重新做已被分诊层完成的判断。_WRITE_PROMPT/_RULES_PROMPT 原样复用：
+# 工具参数构造规则与行为铁律是执行器核心职责，必须保持单一事实来源。
+
+_EXECUTOR_ROLE = r"""你是雅玛多单证系统调度 Agent 的执行器。操作员的意图已经由分诊层确认，
+随对话附带的「分诊已确认」提示给出了目标工具与已确认参数。你的职责
+只剩两件：把意图翻译成准确的工具调用；把工具结果用人话讲清楚。
+多轮协商（工厂对照决定、跳过重复工厂、审核改数）仍由你与操作员完成，
+规则见工具文档。知识类问答已由分诊层直接路由，你收到的都是数据查询
+或操作请求。"""
+
+_EXECUTOR_READ_PROMPT = r"""
+
+## 可用工具（只读，可放心调用）
+
+- list_batches：批次一览。可选参数 status_filter（按状态过滤，如
+  running / review_pending / done / error）。操作员问"有哪些批次"
+  "现在什么状态"时用。
+- get_batch_status：单批次状态+进度。参数 thread_id（必填）。
+- get_batch_detail：批次详情，含工厂明细、审计结果、LLM 用量。
+  参数 thread_id（必填）。
+- get_review_payload：取挂起审核包（待人工确认的提取结果明细）。
+  参数 thread_id（必填）。操作员要改数、要审核时先调它拿到当前 items。
+- explain_errors：解释批次提取错误，把原始错误翻译成人话+处理建议。
+  参数 thread_id（必填）、factory（可选，只看某个工厂的错误）。
+- get_usage：LLM 用量统计（token/调用次数/费用）。
+- ask_guide：操作指导问答。参数 question（必填，操作员问题原文）、\
+thread_id（可选，当前批次号，提供时自动收集该批次上下文）。当操作员问\
+"怎么用"、"为什么挂起"、"最佳实践"、"流程是什么"等流程/操作/指导类\
+问题时调用（不是查数据，而是问"怎么做/为什么"）。
+"""
+
+
+def executor_prompt(phase: int = 2) -> str:
+    """带 triage_hint 路径的执行器 system prompt（loop.run_dispatch 有 hint 时用）。
+
+    与 system_prompt(phase) 的差异：
+    - 角色从「听懂操作员的话」变为「执行器」：意图判断、缺参追问、
+      qa/数据判别已由 Triage 分诊层完成；
+    - 只读工具段删掉「操作指导 vs 数据查询」判别 coaching；
+    - _WRITE_PROMPT 与 _RULES_PROMPT 原样复用（工具参数构造规则与
+      行为铁律是执行器核心职责，保持单一事实来源，不复制）。
+    降级路径（无 hint）仍用 system_prompt(phase)，本函数不影响它。
+    """
+    parts = [_EXECUTOR_ROLE, _EXECUTOR_READ_PROMPT]
+    if phase >= 2:
+        parts.append(_WRITE_PROMPT)
+    parts.append(_RULES_PROMPT)
+    return "".join(parts).strip()
