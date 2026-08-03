@@ -155,8 +155,17 @@ def main() -> int:
     assert payload.get("weight_diff_warn_ratio") == 0.05, \
         f"weight_diff_warn_ratio 异常: {payload.get('weight_diff_warn_ratio')}"
     n_new = sum(1 for i in payload["items"] if i.get("is_new_sku"))
+    # 三字段结构断言：新 SKU 带 fields_to_fill + 顶层商检默认值；
+    # 老 SKU 三字段提升到顶层（值为主库值，第 17 步播种后断言具体值）
+    for i in payload["items"]:
+        if i.get("is_new_sku"):
+            assert i.get("fields_to_fill") == ["name_cn", "hs_code", "inspection_required"], i
+            assert "inspection_required" in i, f"新 SKU 缺顶层商检默认值: {i}"
+        else:
+            for f in ("name_cn", "hs_code", "inspection_required"):
+                assert f in i, f"老 SKU payload 缺顶层字段 {f}: {i}"
     print(f"  ✓ items {len(payload['items'])} 条（新 SKU {n_new}），"
-          f"weight_diff_warn_ratio=0.05")
+          f"weight_diff_warn_ratio=0.05，三字段结构断言通过")
 
     # ---- 8. resume：改第一项总净重 +50，新 SKU 补录合规字段 ----
     print("\n===== 8. POST /api/v1/orders/{thread_id}/resume =====")
@@ -272,6 +281,66 @@ def main() -> int:
     r = client.get(f"/api/v1/batches/{THREAD_ID}")
     assert r.status_code == 404, f"删除后详情期望 404，实际 {r.status_code}: {r.text}"
     print(f"  ✓ 详情 404: {r.json()['detail']}")
+
+    # ---- 17. 老 SKU 三字段提升：播种主库后新批次 payload 顶层带主库值 ----
+    print("\n===== 17. 老 SKU payload 顶层三字段（播种主库 + UI-TEST-2）=====")
+    # 首批次 resume(approved) 时 Node6 已把首工厂全部 mock SKU 落主库，
+    # 这里对前 2 个 SKU upsert 覆盖为可识别的播种值（mock 提取确定性，
+    # 新批次同工厂同 SKU）
+    seed = [(i["sku"], n) for n, i in enumerate(payload["items"][:2], start=1)]
+    conn = sqlite3.connect(master_db)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT OR IGNORE INTO factories (factory_name, created_at) "
+            "VALUES (?, datetime('now'))", (first_factory,))
+        fid = cur.execute(
+            "SELECT factory_id FROM factories WHERE factory_name = ?",
+            (first_factory,)).fetchone()[0]
+        for sku, n in seed:
+            cur.execute(
+                "INSERT INTO factory_skus (factory_id, sku_code, name_cn, hs_code, "
+                "inspection_required, unit_net_weight, unit_gross_weight, updated_at) "
+                "VALUES (?,?,?,?,?,?,?,datetime('now')) "
+                "ON CONFLICT(factory_id, sku_code) DO UPDATE SET "
+                "name_cn=excluded.name_cn, hs_code=excluded.hs_code, "
+                "inspection_required=excluded.inspection_required",
+                (fid, sku, f"主库品名-{n}", f"940490900{n}", n % 2, 5.0, 5.3))
+        conn.commit()
+    finally:
+        conn.close()
+
+    r = client.post("/api/v1/batches", json={
+        "thread_id": "UI-TEST-2",
+        "downstream_file_path": str(tmp_downstream),
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "pending_human_review", r.json()
+    r = client.get("/api/v1/review/UI-TEST-2/payload")
+    assert r.status_code == 200, r.text
+    p2 = r.json()
+    assert p2["factory_name"] == first_factory, \
+        f"第二批次首工厂应与首批次一致: {p2['factory_name']} != {first_factory}"
+    # 首工厂 SKU 首批次已全部落主库 → 第二批次应全部命中为老 SKU，
+    # 且三字段提升到顶层（未播种的为首批次 resume 补录值）
+    assert all(not i.get("is_new_sku") for i in p2["items"]), \
+        f"第二批次仍有新 SKU: {[i['sku'] for i in p2['items'] if i.get('is_new_sku')]}"
+    for i in p2["items"]:
+        for f in ("name_cn", "hs_code", "inspection_required"):
+            assert f in i, f"老 SKU payload 缺顶层字段 {f}: {i}"
+        assert "fields_to_fill" not in i, f"老 SKU 不应有 fields_to_fill: {i}"
+    for sku, n in seed:
+        it = next(i for i in p2["items"] if i["sku"] == sku)
+        assert it.get("name_cn") == f"主库品名-{n}", it
+        assert it.get("hs_code") == f"940490900{n}", it
+        assert it.get("inspection_required") == bool(n % 2), it
+    print(f"  ✓ 全部 {len(p2['items'])} 个老 SKU 顶层带三字段，"
+          f"其中 {len(seed)} 个播种值精确命中")
+
+    # 清理：删除 UI-TEST-2，不留挂起批次
+    r = client.delete("/api/v1/batches/UI-TEST-2")
+    assert r.status_code == 200, f"清理 UI-TEST-2 失败: {r.status_code} {r.text}"
+    print("  ✓ UI-TEST-2 已删除清理")
 
     print("\nui_api_test: PASS")
     return 0

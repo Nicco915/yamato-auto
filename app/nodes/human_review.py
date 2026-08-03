@@ -75,6 +75,13 @@ def human_review(state: AgentState) -> dict:
             # 新 SKU：前端展示需补录字段，inspection_required 按工厂配置设默认值
             entry["fields_to_fill"] = NEW_SKU_REQUIRED_FIELDS
             entry["inspection_required"] = default_inspection
+        else:
+            # 老 SKU：主库三字段提升到顶层，作为前端编辑框初值（本批次可改；
+            # 留空提交时 Node6 写入回退 db_record 主库值，见 writer.py）
+            db = entry["db_record"]
+            entry["name_cn"] = db.get("name_cn")
+            entry["hs_code"] = db.get("hs_code")
+            entry["inspection_required"] = db.get("inspection_required")
         items_payload.append(entry)
 
     review_payload = {
