@@ -120,6 +120,23 @@
     transition: width 0.4s ease;
   }
 
+  /* 批次进度气泡：预识别失败红条 / 预识别完成弱化行 */
+  .batch-pre-failed {
+    background: #fef2f2;
+    color: #dc2626;
+    border-left: 3px solid #dc2626;
+    border-radius: 4px;
+    padding: 4px 8px;
+    margin-top: 4px;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .batch-pre-done {
+    color: #9ca3af;
+    font-size: 12px;
+    margin-top: 4px;
+  }
+
   .input-row { display: flex; gap: 10px; align-items: flex-end; }
   .system-line {
     align-self: center;
@@ -556,42 +573,142 @@ function renderConfirmation(data, srcBubble) {
   scrollBottom();
 }
 
-/* ================= 批次进度兜底轮询（confirm 提交后） ================= */
+/* ================= 批次进度轮询（确定性进度条，不过 LLM） ================= */
+/* 轮询拥有独立进度气泡（batchBubble），与 SSE 进度气泡互不干扰：
+   confirm 提交后开始轮询，页面加载时若上次批次仍在跑也会自动启动；
+   只有 completed / 404（批次被删）才停——pending_review 照常轮询。 */
 let batchPollTimer = null;
+let batchBubble = null;      // 轮询专用进度气泡 DOM
 
-function stopBatchPoll() {
+/* removeBubble=true 时连气泡一起撤下（批次被删/换新会话） */
+function stopBatchPoll(removeBubble) {
   if (batchPollTimer) { clearInterval(batchPollTimer); batchPollTimer = null; }
+  if (removeBubble) {
+    if (batchBubble && batchBubble.isConnected) batchBubble.remove();
+    batchBubble = null;
+  }
+}
+
+/* 定格批次气泡：去脉动动画与旋转指示器，保留已渲染的进度行 */
+function settleBatchBubble() {
+  if (batchBubble && batchBubble.isConnected) {
+    batchBubble.classList.remove("progress-bubble");
+    const row = batchBubble.querySelector(".progress-status-row");
+    if (row) row.remove();
+  }
+  batchBubble = null;
+}
+
+function ensureBatchBubble() {
+  if (batchBubble && batchBubble.isConnected) return batchBubble;
+  batchBubble = addBubble("agent");
+  batchBubble.classList.add("progress-bubble");
+  return batchBubble;
+}
+
+/* 纯前端确定性文案渲染：主进度行 + 预识别行（running/failed/完成摘要）+ 进度条 */
+function renderBatchProgress(data, active) {
+  const b = ensureBatchBubble();
+  const st = data.status;
+  const prog = (data.progress && typeof data.progress === "object") ? data.progress : {};
+  const done = prog.done, total = prog.total;
+  const countSuffix = (done != null && total != null) ? "（" + done + "/" + total + "）" : "";
+  let html = "";
+  const line = (text, cls) => { html += '<div class="' + cls + '">' + escHtml(text) + '</div>'; };
+
+  if (prog.current_factory) {
+    if (st === "pending_review") {
+      line(prog.current_factory + " 等待审核" + countSuffix, "progress-tool");
+    } else {
+      line(prog.current_factory + " 处理中…" + countSuffix, "progress-tool");
+    }
+  } else if (done != null && total != null) {
+    line("批次执行中 " + done + "/" + total, "progress-tool");
+  }
+
+  const pre = data.pre_extraction;
+  if (pre && Array.isArray(pre.factories) && pre.factories.length) {
+    let doneCount = 0, anyRunning = false, anyOther = false;
+    pre.factories.forEach((f) => {
+      if (!f || typeof f !== "object") return;
+      if (f.status === "running") {
+        anyRunning = true;
+        line(f.factory + " 预识别中…", "progress-think");
+      } else if (f.status === "failed") {
+        line("⚠ " + f.factory + " 预识别失败：" + (f.error || "未知错误")
+             + "（正式处理到该工厂时会重试）", "batch-pre-failed");
+      } else if (f.status === "done" || f.status === "cached") {
+        doneCount++;
+      } else {
+        anyOther = true;  // pending 等中间态不渲染
+      }
+    });
+    // 全部 done/cached 且无 running：弱化摘要行
+    if (!anyRunning && !anyOther && doneCount > 0) {
+      line("后台预识别已完成 " + doneCount + " 个", "batch-pre-done");
+    }
+  }
+
+  if (done != null && total != null && total > 0) {
+    const pct = Math.min(100, Math.round(done / total * 100));
+    html += '<div class="progress-bar-track"><div class="progress-bar-fill" style="width:'
+         + pct + '%"></div></div>';
+  }
+  if (active) {
+    html += '<div class="progress-status-row"><span class="progress-spinner"></span>批次进行中…</div>';
+  }
+  b.innerHTML = html;
+  scrollBottom();
 }
 
 /* 防御式：action.args 可能不存在（刷新恢复的确认卡不回传 args），此时不轮询。
-   仅取 progress 拼一行，经 onLine 回调更新进度气泡；
-   收到终态（pending_review/completed）或 404（批次被删）时停轮询。 */
-function startBatchPoll(action, onLine) {
-  stopBatchPoll();
+   onFirstTick 在首轮成功拿到批次数据时回调一次（confirm 流程用它撤下"正在执行…"）。 */
+function startBatchPoll(action, onFirstTick) {
   const tid = action && action.args && action.args.thread_id;
-  if (!tid || typeof onLine !== "function") return;
-  let lastLine = "";
-  batchPollTimer = setInterval(async () => {
+  if (!tid) return;  // 无批次号的动作不动现有进度条
+  stopBatchPoll(true);
+  let firstTick = true;
+  const tick = async () => {
     try {
       const resp = await fetch("/api/v1/batches/" + encodeURIComponent(tid));
-      if (resp.status === 404) { stopBatchPoll(); return; }
+      if (resp.status === 404) { stopBatchPoll(true); return; }  // 批次被删：撤下进度条
       if (!resp.ok) return;
       const data = await resp.json();
-      const st = data.status;
-      if (st === "pending_review" || st === "completed") { stopBatchPoll(); return; }
-      const prog = data.progress;
-      if (!prog || typeof prog !== "object") return;
-      let line = "";
-      if (prog.done != null && prog.total != null) {
-        line = "批次执行中 " + prog.done + "/" + prog.total;
-        if (prog.current_factory) line += " · " + prog.current_factory;
+      if (firstTick) {
+        firstTick = false;
+        if (typeof onFirstTick === "function") onFirstTick();
       }
-      if (line && line !== lastLine) {
-        lastLine = line;
-        onLine(line, prog);
+      if (data.status === "completed") {
+        renderBatchProgress(data, false);
+        settleBatchBubble();
+        stopBatchPoll();
+        return;
       }
+      renderBatchProgress(data, true);
     } catch (e) { /* 轮询失败静默，下轮再试 */ }
-  }, 5000);
+  };
+  tick();  // 立即渲染一帧，不等首个 5s
+  batchPollTimer = setInterval(tick, 5000);
+}
+
+/* 页面加载恢复：上次操作的批次仍在 running/pending_review 时自动启动进度轮询 */
+async function resumeBatchPolling() {
+  try {
+    const resp = await fetch(
+      "/api/v1/dispatcher/last_operation?session_id=" + encodeURIComponent(sessionId)
+    );
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const tid = data && data.thread_id;
+    if (!tid) return;
+    // 先查一次状态：仅 running/pending_review 才挂进度条（已完成/被删不打扰）
+    const r = await fetch("/api/v1/batches/" + encodeURIComponent(tid));
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.status === "running" || d.status === "pending_review") {
+      startBatchPoll({ args: { thread_id: tid } });
+    }
+  } catch (e) { /* 进度恢复是辅助功能，失败静默 */ }
 }
 
 /* 进度气泡定格（去脉动动画与旋转指示器，保留已渲染的进度行与最终进度条） */
@@ -611,10 +728,10 @@ async function confirmApply(action, srcBubble) {
   const body = { confirm: true, action: action, session_id: sessionId };
 
   let thinking = addAgentText("正在执行…");
-  // 兜底轮询：confirm 提交后若 action.args 含 thread_id，5s 拉批次 progress 更新进度气泡一行
-  startBatchPoll(action, (line, prog) => {
+  // 批次进度轮询：confirm 提交后若 action.args 含 thread_id，5s 拉批次进度
+  // 渲染独立进度气泡（首轮拿到数据即撤下"正在执行…"）
+  startBatchPoll(action, () => {
     if (thinking) { thinking.remove(); thinking = null; }
-    updateProgress(line, "progress-tool", prog && prog.done, prog && prog.total);
   });
   try {
     const resp = await fetch("/api/v1/dispatcher/chat/stream", {
@@ -650,12 +767,13 @@ async function confirmApply(action, srcBubble) {
           if (thinking) { thinking.remove(); thinking = null; }
           updateProgress(event.message || "执行中…", "progress-tool", event.done, event.total);
         } else if (event.type === "applied") {
-          stopBatchPoll();
+          // 批次进入待审/执行中：不停轮询，进度条继续跟到 completed
           if (thinking) { thinking.remove(); thinking = null; }
           settleProgressBubble();
           renderApplied(event, null);
         } else if (event.type === "error") {
           stopBatchPoll();
+          settleBatchBubble();
           if (thinking) { thinking.remove(); thinking = null; }
           settleProgressBubble();
           addAgentText("执行失败：" + (event.message || "未知错误"));
@@ -664,6 +782,7 @@ async function confirmApply(action, srcBubble) {
     }
   } catch (e) {
     stopBatchPoll();
+    settleBatchBubble();
     settleProgressBubble();  // 流中断时定格进度气泡，去旋转指示器
     if (thinking) {
       thinking.textContent = "执行失败：" + e.message;
@@ -742,7 +861,7 @@ $("inp").addEventListener("keydown", (e) => {
 
 /* 新会话：换新 session_id（服务器侧旧会话随 TTL 过期），清空界面重来 */
 $("btn-new-session").onclick = () => {
-  stopBatchPoll();
+  stopBatchPoll(true);
   sessionId = (window.crypto && crypto.randomUUID)
     ? crypto.randomUUID()
     : "sid-" + Date.now() + "-" + Math.random().toString(16).slice(2);
@@ -828,6 +947,7 @@ async function loadHistory() {
   greet();
 }
 loadHistory();
+resumeBatchPolling();  // 上次批次仍在跑时自动恢复进度条轮询
 $("inp").focus();
 </script>
 </body>
