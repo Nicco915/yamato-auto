@@ -671,6 +671,69 @@ root DEBUG 下三方库 DEBUG 全进 app.log，嫌吵可对特定 logger 提级�
 **实测**：预提取冒烟——缓存命中/未命中/JSON 损坏/空 items/no_code_items 全场景 +
 幂等 + 异常兜底 + 覆盖率重算 + 全量回归（chat_paths_test/ui_api_test）全绿。
 
+## 6.13 审核页 + 调度对话页体验增强（2026-08-03 完成，三 sub-agent 并行实施）
+
+### 6.13.1 审核页 Excel 原格式显示（Q1）
+
+**问题**：左屏 Excel 文件走 markdown→HTML 快照，合并单元格/颜色/列宽全丢，且不支持缩放。
+
+**方案**：soffice 转 PDF→PNG 管线复用（`pipeline.py` 新增 `convert_excel_to_pdf`：
+优先 SinglePageSheets 参数（LO 7.2+，每 sheet 一整页），失败回退普通 PDF 转换）。
+PNG 渲染沿用现有 `_render_pdf_cached` 缓存模式（键=(path, mtime)），
+PDF 缓存按源文件 hash 存 `data/cache/excel_pdf/`（mtime 判鲜）。
+soffice 缺失/转换失败/渲染异常一律回退 HTML 快照，绝不 500。
+
+**前端**：xls/xlsx/xlsm 从 iframe 分支挪到图片分支，`isZoomable()` 仅排除 csv，
+缩放引擎（Ctrl+滚轮/捏合/工具栏）零改动生效。
+
+**文件**：`app/extraction/pipeline.py`（+62）、`app/review/router.py`（+93/-5）、
+`app/review/static/review.html`（+17/-1）。
+
+### 6.13.2 审核页全 SKU 中文品名/HS/商检可编辑（Q2）
+
+**问题**：审核页只有新 SKU 才能编辑 name_cn/hs_code/inspection_required，
+老 SKU 的只读显示，操作员无法修正主库错误。
+
+**方案**：Node5 payload 对老 SKU 把 db_record 三字段提升到 item 顶层作前端编辑框初值；
+review.html 三字段编辑区放开到所有卡片（老 SKU 预填主库值，留空弱警告仅对新 SKU）；
+提交差异弹窗覆盖 meta 字段改动（中文品名/HS/商检与数值改动同进 changes 表）。
+老 SKU 三字段不改主库（留空回退 db_record 值），仅本批次生效。
+
+**文件**：`app/nodes/human_review.py`（+7）、`app/review/static/review.html`（+20/-5）、
+`app/review/demo_server.py`（+22/-3）、`validation/ui_api_test.py`（+70/-1）。
+
+### 6.13.3 调度对话页实时进度条（Q3）
+
+**问题**：批次执行中，对话页只能看到"批次执行中"一行，不知道哪个工厂在识别、
+哪个已提取完、哪个失败了。
+
+**方案**：预提取线程每次状态变化原子写进度 JSON（`SESSIONS_DIR/_preextract_progress_{tid}.json`，
+tmp→rename 原子写）。工厂状态：pending→running→cached/done/failed，
+失败时记 error 摘要（截 200 字符）。批次端点附带 `pre_extraction` 键。
+chat.html 进度条常驻渲染：主流程行（待审核/处理中）+ 预识别行（running/失败红条/完成摘要）。
+轮询不因 pending_review 停机（只有 completed/404 才停），页面加载时自动检测上次批次并恢复轮询。
+
+**文件**：`app/api/service.py`（+119/-1）、`app/ui/router.py`（+13/-1）、
+`app/ui/static/chat.html`（+143/-31）、`validation/preextract_progress_test.py`（新文件，219 行）。
+
+### 6.13.4 调度 Agent 确认门上下文增强（合入后追加）
+
+**问题**：写工具被确认门拦截后，preview_lines（工厂对照详情等）只送前端确认卡，
+不写入对话历史。用户追问"哪些存疑"时 LLM 无上下文，只能重复确认提示。
+
+**方案**：`loop.py` 确认门分支：`record_turn` 写入对话历史的文本从仅 summary
+改为 summary + preview_lines 拼接。前端 on_progress 保持原 msg_text（不含
+preview_lines，前端已单独渲染确认卡）。LLM 后续轮次可基于上下文直接回答追问。
+
+**文件**：`app/dispatcher/loop.py`（+12/-4）。
+
+### 测试
+
+- `ui_api_test.py`：PASS（含新增老 SKU 三字段断言）
+- `preextract_progress_test.py`：PASS（状态流转/原子写/危险 id 过滤/端点 4 项）
+- 烟测试：跳过（生产 batch 占用 checkpoint db，不可并行）
+- 合并：三分支零冲突合入 main，一次手动修复（`msg_text` 变量名）
+
 ## 7. 关键设计决策记录
 
 0. **路径集中配置 + agent 对话可改**（2026-07-28 用户授权）：`app/.env`「业务路径」节

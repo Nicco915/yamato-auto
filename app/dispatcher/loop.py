@@ -347,23 +347,32 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
                                      args_summary=_args_summary(args),
                                      result_summary="待人工确认",
                                      confirmed=None)
-                text = action["summary"] + "\n请确认是否执行（确认后生效）。"
+                # 前端确认卡消息（不含 preview_lines，前端已单独渲染）
+                msg_text = action["summary"] + "\n请确认是否执行（确认后生效）。"
                 # 一次一确认：同轮其余调用（含写工具）全部忽略，须确认后再发起
                 ignored = len(step["tool_calls"]) - step["tool_calls"].index(call) - 1
                 if ignored:
-                    text += f"\n（本轮其余 {ignored} 个工具调用已忽略，确认后请重新发起。）"
-                sessions.record_turn(session, message, text)
+                    msg_text += f"\n（本轮其余 {ignored} 个工具调用已忽略，确认后请重新发起。）"
+                # 对话历史写入预览详情（LLM 后续轮次能回答追问，如"哪些存疑"）
+                history_text = msg_text
+                if action["preview_lines"]:
+                    history_text = (action["summary"] + "\n"
+                                    + "\n".join(action["preview_lines"]) + "\n"
+                                    + "请确认是否执行（确认后生效）。"
+                                    + (f"\n（本轮其余 {ignored} 个工具调用已忽略，确认后请重新发起。）"
+                                       if ignored else ""))
+                sessions.record_turn(session, message, history_text)
                 if on_progress:
                     on_progress({"type": "pending_confirmation",
                                  "tool": name, "preview": action["preview_lines"],
-                                 "message": text, "action": action,
+                                 "message": msg_text, "action": action,
                                  "warnings": action["warnings"],
                                  # W5 透传：工厂名对照预扫结果（preview 可能无此键，.get 防御）
                                  "factory_scan": preview.get("factory_scan")})
                 return {"status": "pending_confirmation",
                         "action": action,
                         "preview": action["preview_lines"],
-                        "message": text,
+                        "message": msg_text,
                         "warnings": action["warnings"],
                         "factory_scan": preview.get("factory_scan")}
 
