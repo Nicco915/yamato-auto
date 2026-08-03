@@ -26,7 +26,7 @@ import os
 import time
 from typing import Callable
 
-from app.dispatcher import prompts, sessions
+from app.dispatcher import debug_log, prompts, sessions
 from app.dispatcher.sessions import DispatcherSession
 from app.dispatcher.summarize import summarize_applied
 from app.dispatcher.tools import TOOLS, openai_tool_defs, validate_args, visible_tools
@@ -257,11 +257,19 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
     messages = ([{"role": "system", "content": sys_prompt}]
                 + list(session.history)
                 + [{"role": "user", "content": message}])
+    debug_log.log_event("user_message", session_id=session_id, phase=phase,
+                        message=message)
 
     for _round in range(MAX_ROUNDS):
         if on_progress:
             on_progress({"type": "llm_thinking", "round": _round + 1})
+        # 调试日志：模型实际看到的完整 prompt + 返回（含工具调用全参数）
+        _mode = "mock" if os.environ.get("DISPATCHER_MOCK") == "1" else _step_mode()
+        debug_log.log_llm_request(session_id=session_id, round_no=_round + 1,
+                                  mode=_mode, messages=messages)
         step = llm_step(messages, phase=phase)
+        debug_log.log_llm_response(session_id=session_id, round_no=_round + 1,
+                                   step=step)
 
         # 无工具调用：最终回复，记一轮对话后返回
         if not step["tool_calls"]:
@@ -343,6 +351,9 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
                     "确认门拦截写工具 | 工具=%s | 参数=%s | 预览摘要=%s",
                     name, _log_args_summary(args),
                     str(preview["summary"])[:_LOG_SUMMARY_CAP])
+                debug_log.log_confirm_gate(session_id=session_id, name=name,
+                                           args=args,
+                                           summary=str(preview["summary"]))
                 sessions.record_tool(session, tool=name,
                                      args_summary=_args_summary(args),
                                      result_summary="待人工确认",
@@ -382,6 +393,8 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
                              "args_summary": _args_summary(args)})
             logger.info("工具调用 | 工具=%s | 参数=%s", name, _log_args_summary(args))
             result = tool.func(args)
+            debug_log.log_tool_result(session_id=session_id, name=name,
+                                      args=args, result=result)
             if isinstance(result, dict) and result.get("error"):
                 logger.warning(
                     "工具错误：执行返回错误 | 工具=%s | 错误=%s",
@@ -410,7 +423,8 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
 
 def execute_confirmed(session: DispatcherSession | None,
                       client_action: dict | None,
-                      on_progress: Callable[[dict], None] | None = None) -> dict:
+                      on_progress: Callable[[dict], None] | None = None,
+                      session_id: str | None = None) -> dict:
     """人工确认后执行 pending action。
 
     action 来源优先级：session.pending_action（服务端留存，防客户端伪造）
@@ -426,11 +440,15 @@ def execute_confirmed(session: DispatcherSession | None,
         if not isinstance(client_action, dict) \
                 or client_action.get("kind") != "dispatcher_tool":
             logger.warning("确认门拒绝执行 | 原因=无效的确认请求（action 非 dispatcher_tool 信封）")
+            debug_log.log_event("confirm_rejected", session_id=session_id,
+                                reason="无效的确认请求（action 非 dispatcher_tool 信封）")
             return {"status": "error",
                     "message": "无效的确认请求：action 必须是 dispatcher_tool 信封"}
         action = client_action
     if action is None:
         logger.info("确认门拒绝执行 | 原因=没有待确认的操作")
+        debug_log.log_event("confirm_rejected", session_id=session_id,
+                            reason="没有待确认的操作")
         return {"status": "error", "message": "没有待确认的操作"}
 
     # TTL 防线：陈旧 action 不允许执行（防「上午的预览下午误确认」）
@@ -438,6 +456,9 @@ def execute_confirmed(session: DispatcherSession | None,
         logger.warning(
             "确认门拒绝执行 | 工具=%s | 原因=TTL 过期（超过 %d 秒，须重新发起）",
             action.get("tool"), ACTION_TTL_SEC)
+        debug_log.log_event("confirm_rejected", session_id=session_id,
+                            tool=action.get("tool"),
+                            reason=f"TTL 过期（超过 {ACTION_TTL_SEC} 秒）")
         if session is not None:
             sessions.clear_pending(session)
         return {"status": "expired", "message": "该操作已超时，请重新发起"}
@@ -448,6 +469,8 @@ def execute_confirmed(session: DispatcherSession | None,
     if tool is None or tool.risk != "write" or tool.execute is None:
         logger.warning(
             "确认门拒绝执行 | 工具=%s | 原因=不是已注册的写工具", name)
+        debug_log.log_event("confirm_rejected", session_id=session_id,
+                            tool=name, reason="不是已注册的写工具")
         if session is not None:
             sessions.clear_pending(session)
         return {"status": "error",
@@ -458,6 +481,8 @@ def execute_confirmed(session: DispatcherSession | None,
     if arg_error:
         logger.info(
             "确认门拒绝执行 | 工具=%s | 原因=参数校验未通过：%s", name, arg_error)
+        debug_log.log_event("confirm_rejected", session_id=session_id,
+                            tool=name, reason=f"参数校验未通过：{arg_error}")
         return {"status": "error",
                 "message": f"参数校验未通过：{arg_error}，未执行任何操作"}
 
@@ -465,6 +490,10 @@ def execute_confirmed(session: DispatcherSession | None,
     logger.info(
         "确认门已执行写工具 | 工具=%s | 参数=%s | 结果=%s",
         name, _log_args_summary(args), _log_result_summary(result))
+    debug_log.log_confirm_execute(
+        session_id=session_id, name=name, args=args, result=result,
+        status=("error" if isinstance(result, dict) and result.get("error")
+                else "applied"))
 
     # W2：确定性中文摘要（绝不抛异常）；result 含 error → status="error"
     summary = summarize_applied(name, args, result)

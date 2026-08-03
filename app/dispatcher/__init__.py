@@ -47,7 +47,8 @@ def confirm(session_id: str | None, action: dict | None,
     写操作成功后，自动更新 L2 操作记忆（last_thread_id / recent_paths / 操作摘要）。
     """
     session = _sessions.get_session(session_id) if session_id else None
-    result = execute_confirmed(session, action, on_progress=on_progress)
+    result = execute_confirmed(session, action, on_progress=on_progress,
+                               session_id=session_id)
 
     # 写操作成功后，自动更新 L2 记忆
     if result.get("status") == "applied" and session_id:
