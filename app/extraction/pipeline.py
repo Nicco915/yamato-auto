@@ -151,6 +151,68 @@ def _convert_doc_to_pdf(doc_path: str, out_dir: str) -> str | None:
     return None
 
 
+def convert_excel_to_pdf(excel_path: str, out_dir: str) -> str | None:
+    """用 soffice 把 xls/xlsx/xlsm 转成 PDF（审核页原格式显示用），失败返回 None。
+
+    与 _convert_doc_to_pdf 同一套约定：独立临时 user profile、不依赖 stdout、
+    check=True + 输出文件存在性判定、subprocess 超时 180s、Windows 兼容
+    （shell=False + pathlib）。
+
+    优先尝试 SinglePageSheets 过滤参数（LibreOffice 7.2+）：每个 sheet 渲染成
+    一整页（页面尺寸自适应表格内容，不跨页截断），最适合审核对照；老版本
+    LibreOffice 不认识该参数导致转换失败/未产出时，回退普通 pdf 转换
+    （按打印设置分页）。soffice 不可用或两次尝试均失败返回 None，由上层
+    回退 HTML 快照。
+    """
+    soffice = _find_soffice()
+    if not soffice:
+        logger.info("[excel转PDF] 未检测到 LibreOffice(soffice)，跳过 PDF 转换：%s",
+                    excel_path)
+        return None
+    profile_dir = Path(out_dir) / "lo_user_profile"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    expect = Path(out_dir) / (Path(excel_path).stem + ".pdf")
+    # 依次尝试：单页 sheet（7.2+）→ 普通分页 PDF
+    filters = [
+        'pdf:calc_pdf_Export:{"SinglePageSheets":{"type":"boolean","value":"true"}}',
+        "pdf",
+    ]
+    for i, pdf_filter in enumerate(filters):
+        if i > 0:
+            logger.info("[excel转PDF] SinglePageSheets 不可用，回退普通分页转换：%s",
+                        excel_path)
+            if expect.exists():
+                expect.unlink()  # 清掉上一次失败可能留下的残件
+        try:
+            subprocess.run(
+                [
+                    soffice,
+                    f"-env:UserInstallation={profile_dir.resolve().as_uri()}",
+                    "--headless",
+                    "--convert-to", pdf_filter,
+                    "--outdir", out_dir,
+                    excel_path,
+                ],
+                check=True,
+                capture_output=True,
+                timeout=180,
+            )
+        except subprocess.CalledProcessError as e:
+            # stderr 仅用于排障，尽力解码（Windows 上可能是 GBK）
+            stderr = (e.stderr or b"").decode("utf-8", errors="replace").strip()
+            logger.warning("[excel转PDF] soffice 转换失败（退出码 %s，过滤器 %s）%s：%s",
+                           e.returncode, pdf_filter, excel_path, stderr[:300])
+            continue
+        except Exception:  # noqa: BLE001 - 超时/权限等，记录后回退
+            logger.exception("[excel转PDF] soffice 调用异常 %s", excel_path)
+            return None  # 超时/权限类异常重试无意义，直接交上层回退
+        if expect.exists():
+            return str(expect)
+        logger.warning("[excel转PDF] soffice 执行成功但未产出 PDF（过滤器 %s）：%s",
+                       pdf_filter, excel_path)
+    return None
+
+
 def _iter_files(folder_path: str) -> list[Path]:
     """递归收集工厂文件夹下的文件（跳过隐藏文件与系统文件）。"""
     root = Path(folder_path)

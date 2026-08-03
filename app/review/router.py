@@ -4,9 +4,11 @@
 - GET  /review                                    审核单页（原生 HTML/JS）
 - GET  /api/v1/review/{thread_id}/payload         当前挂起的审核 payload
 - GET  /api/v1/review/{thread_id}/document        原始单据查看（左屏数据源）
-        ?path=<绝对路径>&page=<N, 仅 PDF>
+        ?path=<绝对路径>&page=<N, PDF/Excel>
         PDF   → image/png（响应头 X-Page-Count 给出总页数，整份渲染带缓存）
-        Excel → text/html 快照（excel_to_markdown → HTML 表格，带缓存）
+        Excel → xls/xlsx/xlsm 经 soffice 转 PDF 后同样走 PNG 管线（原格式还原，
+                支持翻页/缩放；soffice 不可用或转换失败回退 HTML 快照）；
+                csv 无格式可还原，固定走 HTML 快照
         图片  → 原样流式返回
 
 安全：path 经 resolve() 后必须落在白名单根目录内（默认 settings.upstream_root），
@@ -18,9 +20,12 @@
 """
 from __future__ import annotations
 
+import hashlib
 import html
 import logging
 import mimetypes
+import shutil
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -31,6 +36,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from app.config import get_settings
 from app.extraction.excel_channel import excel_to_markdown
+from app.extraction.pipeline import convert_excel_to_pdf
 from app.extraction.vision_channel import render_pdf_pages
 
 logger = logging.getLogger(__name__)
@@ -42,6 +48,8 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png"}
 PDF_SUFFIXES = {".pdf"}
 EXCEL_SUFFIXES = {".xlsx", ".xlsm", ".xls", ".csv"}
+# 走 soffice→PDF→PNG 管线的 Excel 格式；csv 无格式可还原，固定 HTML 快照
+EXCEL_VIA_PDF_SUFFIXES = {".xlsx", ".xlsm", ".xls"}
 
 # 图片扩展名 -> MIME 硬编码映射：Windows 精简系统上 mimetypes 依赖注册表
 # 可能返回 None，常见图片类型优先查此表，mimetypes 仅作兜底
@@ -223,6 +231,67 @@ def _render_excel_cached(p: Path) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Excel 原格式管线：soffice 转 PDF → render_pdf_pages → PNG（与 PDF 分支同构）
+# ---------------------------------------------------------------------------
+
+# Excel 渲染 PNG 缓存（键 = (源路径, mtime)，与 _pdf_cache 同模式）
+_excel_png_cache: dict[tuple[str, float], list[bytes]] = {}
+
+
+def _excel_pdf_cache_dir() -> Path:
+    """Excel→PDF 转换结果缓存目录（数据目录下 cache/excel_pdf/）。"""
+    d = get_settings().checkpoint_db_abs.parent / "cache" / "excel_pdf"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _excel_to_pdf_cached(p: Path) -> Path | None:
+    """Excel→PDF（文件名 = 源路径 hash，避免特殊字符/重名冲突）。
+
+    新鲜度判定：PDF mtime >= 源文件 mtime 即视为最新（源文件变更后重转），
+    跨进程重启也有效；转换在缓存目录下的临时工作区进行（含独立 soffice
+    profile），成功后 move 为 hash 命名，失败清理现场返回 None。
+    """
+    cache_dir = _excel_pdf_cache_dir()
+    digest = hashlib.sha256(str(p).encode("utf-8")).hexdigest()[:16]
+    pdf = cache_dir / f"{digest}.pdf"
+    if pdf.exists() and pdf.stat().st_mtime >= p.stat().st_mtime:
+        return pdf
+    work = Path(tempfile.mkdtemp(prefix="conv_", dir=cache_dir))
+    try:
+        produced = convert_excel_to_pdf(str(p), str(work))
+        if produced is None:
+            return None
+        shutil.move(produced, pdf)
+        return pdf
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _render_excel_pages_cached(p: Path) -> list[bytes] | None:
+    """Excel→PDF→PNG 整份渲染（带缓存）；soffice 不可用/转换失败返回 None。
+
+    返回 None 时由路由回退 _render_excel_cached 的 HTML 快照，
+    绝不让单据查看因 LibreOffice 缺失而 500。
+    """
+    key = (str(p), p.stat().st_mtime)
+    if key not in _excel_png_cache:
+        pdf = _excel_to_pdf_cached(p)
+        if pdf is None:
+            return None
+        try:
+            pages = render_pdf_pages(str(pdf))
+        except Exception:  # noqa: BLE001 - 转换出的 PDF 异常同样回退 HTML
+            logger.warning("[excel渲染] PDF 渲染 PNG 失败，回退 HTML 快照：%s",
+                           p, exc_info=True)
+            return None
+        if len(_excel_png_cache) > 20:
+            _excel_png_cache.clear()
+        _excel_png_cache[key] = pages
+    return _excel_png_cache[key]
+
+
+# ---------------------------------------------------------------------------
 # 数据源后端（生产=LangGraph checkpoint；演示=mock）
 # ---------------------------------------------------------------------------
 
@@ -307,7 +376,30 @@ async def get_document(
                 },
             )
 
-        if suffix in EXCEL_SUFFIXES:
+        if suffix in EXCEL_VIA_PDF_SUFFIXES:
+            # 原格式路径：soffice→PDF→PNG，与 PDF 分支同构（翻页/缩放全复用）；
+            # soffice 缺失或转换失败回退 HTML 快照，绝不让查看 500
+            pages = _render_excel_pages_cached(p)
+            if pages is not None:
+                if page > len(pages):
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"页码超出范围（共 {len(pages)} 页）")
+                return Response(
+                    content=pages[page - 1],
+                    media_type="image/png",
+                    headers={
+                        "X-Page-Count": str(len(pages)),
+                        "Cache-Control": "private, max-age=300",
+                    },
+                )
+            logger.warning("[excel渲染] 走 HTML 快照回退：%s", p)
+            return HTMLResponse(
+                content=_render_excel_cached(p),
+                headers={"X-Page-Count": "1"},
+            )
+
+        if suffix in EXCEL_SUFFIXES:  # .csv：无格式可还原，固定 HTML 快照
             return HTMLResponse(
                 content=_render_excel_cached(p),
                 headers={"X-Page-Count": "1"},

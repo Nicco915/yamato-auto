@@ -443,7 +443,8 @@ async function loadDocument(path, page) {
     URL.revokeObjectURL(oldImg.src);
   }
   try {
-    if (["xls", "xlsx", "xlsm", "csv"].includes(suffix)) {
+    if (suffix === "csv") {
+      // csv 无格式可还原，后端固定返回 HTML 快照
       view.innerHTML = "";
       const ifr = document.createElement("iframe");
       ifr.src = url;
@@ -453,6 +454,17 @@ async function loadDocument(path, page) {
     } else {
       const r = await fetch(url);
       if (!r.ok) throw new Error("HTTP " + r.status + " " + (await r.text()).slice(0, 120));
+      // soffice 缺失/转换失败时后端对 xls/xlsx/xlsm 回退 HTML 快照，按 iframe 展示
+      if ((r.headers.get("Content-Type") || "").includes("text/html")) {
+        const htmlText = await r.text();
+        view.innerHTML = "";
+        const ifr = document.createElement("iframe");
+        ifr.srcdoc = htmlText;
+        view.appendChild(ifr);
+        setPager(1);
+        $("zoom-bar").style.display = "none";
+        return;
+      }
       pageCount = parseInt(r.headers.get("X-Page-Count") || "1", 10);
       const blob = await r.blob();
       view.innerHTML = "";
@@ -483,7 +495,8 @@ function gotoPage(p) {
 function isZoomable() {
   if (!curDoc) return false;
   const suffix = curDoc.split(".").pop().toLowerCase();
-  return !["xls", "xlsx", "xlsm", "csv"].includes(suffix);
+  // xls/xlsx/xlsm 已走 PNG 管线可缩放；仅 csv（HTML 快照 iframe）不可缩放
+  return suffix !== "csv";
 }
 
 function getImg() { return $("doc-view").querySelector("img"); }
