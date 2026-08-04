@@ -119,6 +119,15 @@ def thinking_enabled() -> bool:
     return os.environ.get("LLM_ENABLE_THINKING", "1").strip() != "0"
 
 
+def extraction_thinking_enabled() -> bool:
+    """提取文本通道是否开启思考模式（EXTRACTION_ENABLE_THINKING，默认 "0" 关闭）。
+
+    提取是照抄任务，无需思考；默认关闭可避免大 JSON 输出被思考拖慢超时。
+    调度 Agent 的思考模式仍由全局 LLM_ENABLE_THINKING 控制（默认开启）。
+    """
+    return os.environ.get("EXTRACTION_ENABLE_THINKING", "0").strip() == "1"
+
+
 class MissingAPIKeyError(RuntimeError):
     """API key 缺失时的清晰报错。"""
 
@@ -345,14 +354,17 @@ def _create_with_retry(kwargs: dict, model: str, kind: str,
 
 
 def _base_kwargs(messages: list[dict], model: str, temperature: float,
-                 max_tokens: int) -> dict:
+                 max_tokens: int, thinking: bool | None = None) -> dict:
     kwargs: dict = {
         "model": model,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
-    if not thinking_enabled():
+    if thinking is None:
+        # 未显式指定时维持现状：读全局 LLM_ENABLE_THINKING（默认开）
+        thinking = thinking_enabled()
+    if not thinking:
         # 关闭思考模式：reasoning_tokens 归零，响应大幅提速
         kwargs["extra_body"] = {"enable_thinking": False}
     return kwargs
@@ -417,7 +429,10 @@ def extraction_chat_completion(
     s = get_settings()
     use_model = s["extraction_text_model"]
 
-    kwargs = _base_kwargs(messages, use_model, temperature, max_tokens)
+    # 提取默认关闭思考（EXTRACTION_ENABLE_THINKING 默认 "0"）：
+    # 照抄任务无需思考，避免思考模式拖慢大 JSON 输出导致超时。
+    kwargs = _base_kwargs(messages, use_model, temperature, max_tokens,
+                          thinking=extraction_thinking_enabled())
     if json_mode:
         # 与 chat_completion 相同：不支持 response_format 的模型由
         # _create_with_retry 摘掉该参数降级重试。
