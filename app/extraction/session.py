@@ -187,6 +187,15 @@ def _merge(session: FactorySession, new_items: list[ExtractedItem], from_file: s
 # 主入口：逐文件处理
 # ---------------------------------------------------------------------------
 
+def _rollback_target(session: FactorySession, file_path: str, replaced: list[dict]) -> None:
+    """目标提取失败/为空时回滚 targets 登记：移除刚登记的目标，恢复被取代的旧目标。"""
+    session.targets = [t for t in session.targets if t["path"] != file_path]
+    session.targets.extend(replaced)
+    session._log("warning", "TARGET_ROLLBACK",
+                 f"目标提取失败已回滚登记：{Path(file_path).name}，后备文件不再被判覆盖",
+                 file=file_path)
+
+
 def process_file(session: FactorySession, file_path: str) -> ProcessResult:
     """单据到达一个处理一个。返回增量报告（覆盖率/缺失/反馈）。"""
     file_path = str(file_path)
@@ -291,6 +300,7 @@ def process_file(session: FactorySession, file_path: str) -> ProcessResult:
     except Exception as e:  # noqa: BLE001
         session._log("warning", "CHANNEL_ERROR", f"通道处理失败：{type(e).__name__}: {str(e)[:200]}",
                      file=file_path)
+        _rollback_target(session, file_path, replaced)
         session._refresh_status()
         return ProcessResult(file=file_path, action="channel_error",
                              message=f"通道处理失败：{e}", coverage=session.coverage(), status=session.status)
@@ -302,6 +312,7 @@ def process_file(session: FactorySession, file_path: str) -> ProcessResult:
     if not res.items:
         session._log("blocking", "TARGET_EMPTY",
                      "目标文件提取结果为空——可能误识别或文件异常，需人工确认。", file=file_path)
+        _rollback_target(session, file_path, replaced)
 
     new_skus, updated = _merge(session, res.items, file_path)
     session._refresh_status()
