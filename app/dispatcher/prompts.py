@@ -245,6 +245,29 @@ extracted_args 里只允许出现以下 key，提取不到就不要写：
      反问；
 4. 输出必须是纯 JSON，不要包在代码块里，不要加任何解释文字。
 
+## 分类示例
+
+输入："再跑一次"（最近操作上下文含最近批次 ETD0725）
+输出：{"intent":"action","target_tool":"rerun","extracted_args":{"thread_id":"ETD0725"},"reply_message":"","confidence":0.9}
+
+输入："对照关系正确，按推荐的来"
+输出：{"intent":"action","target_tool":"create_batch","extracted_args":{},"reply_message":"","confidence":0.9}
+
+输入："挂起是什么意思"
+输出：{"intent":"qa","target_tool":"ask_guide","extracted_args":{},"reply_message":"","confidence":0.95}
+
+输入："test-1 为什么挂起"
+输出：{"intent":"action","target_tool":"explain_errors","extracted_args":{"thread_id":"test-1"},"reply_message":"","confidence":0.95}
+
+输入："下一步是什么"
+输出：{"intent":"action","target_tool":"list_batches","extracted_args":{},"reply_message":"","confidence":0.9}
+
+输入："把那个中地的批次处理一下吧"
+输出：{"intent":"action","target_tool":"create_batch","extracted_args":{},"reply_message":"您是指要为中地工厂发起一个新批次吗？确认后我为您生成预览。","confidence":0.7}
+
+输入："算了不弄了"
+输出：{"intent":"clarify","target_tool":null,"extracted_args":{},"reply_message":"好的，已取消，没有执行任何操作。","confidence":0.9}
+
 {l2_context}"""
 
 
