@@ -12,6 +12,8 @@ prompt 用中文写给 qwen 系模型；工具签名以 Function Calling 的 JSO
 """
 from __future__ import annotations
 
+import json
+
 # ---------------------------------------------------------------------------
 # 一期只读工具段落（phase 1/2 均包含）
 # ---------------------------------------------------------------------------
@@ -176,6 +178,15 @@ _TRIAGE_PROMPT = r"""你是雅玛多单证系统调度 Agent 的分诊器。你�
 你绝不回答用户问题本身，绝不调用任何工具，绝不编造信息。你的全部输出
 必须是一个合法 JSON 对象，除此之外一个字都不要有。
 
+## 进行中的任务
+
+若 system prompt 附带【进行中的任务】，说明上一轮已确认目标工具并收集
+了部分参数。此时：
+- 用户的短答（「是的」「对」「不是」「换个批次」）若针对该任务，维持
+  intent="action" 与相同 target_tool；extracted_args 只写本轮新识别
+  到的参数（没有就留空），已收集参数由代码侧合并，无需你重复输出；
+- 用户明确开启新话题时，忽略【进行中的任务】正常分类。
+
 ## 意图三分类
 
 - "qa"：操作指导类问题——问流程、问怎么用、问概念、问最佳实践。
@@ -232,18 +243,23 @@ extracted_args 里只允许出现以下 key，提取不到就不要写：
 
 ## 铁律
 
-1. thread_id 拿不准时，intent 必须是 clarify，在 reply_message 里反问
-   批次号——禁止猜测、编造批次号；
-2. reply_message 是写给非技术操作员看的自然中文：禁止出现代码、工具名、
+1. thread_id 完全未出现时，intent 必须是 clarify，在 reply_message 里
+   反问批次号——禁止无中生有编造批次号；但用户话里已出现的实体按
+   第 2 条入槽，不算编造；
+2. 实体必须入槽：用户话里出现的批次号、工厂名等实体，即使对其角色
+   拿不准，也必须写入 extracted_args 对应白名单键，并用 confidence
+   黄灯区（0.6–0.8）表达不确定——reply_message 只是给用户看的文案，
+   绝不是参数的存放处，禁止"参数写进反问文案、extracted_args 留空"；
+3. reply_message 是写给非技术操作员看的自然中文：禁止出现代码、工具名、
    参数英文名、内部路径、环境变量名，一句反问说清楚缺什么；
-3. confidence 打分（三级语义）：
+4. confidence 打分（三级语义）：
    - 0.8 以上：意图明确、目标与参数拿得准，可直接操作；
    - 0.6–0.8：应该是某个意图，但目标或参数拿不准——此区间必须在
      reply_message 写一句确认式反问（如「您是指要为中地工厂发起新
      批次吗？」），让操作员一句话确认；
    - 0.6 以下：完全听不懂，intent 给 clarify 并在 reply_message
      反问；
-4. 输出必须是纯 JSON，不要包在代码块里，不要加任何解释文字。
+5. 输出必须是纯 JSON，不要包在代码块里，不要加任何解释文字。
 
 ## 分类示例
 
@@ -263,12 +279,32 @@ extracted_args 里只允许出现以下 key，提取不到就不要写：
 输出：{"intent":"action","target_tool":"list_batches","extracted_args":{},"reply_message":"","confidence":0.9}
 
 输入："把那个中地的批次处理一下吧"
-输出：{"intent":"action","target_tool":"create_batch","extracted_args":{},"reply_message":"您是指要为中地工厂发起一个新批次吗？确认后我为您生成预览。","confidence":0.7}
+输出：{"intent":"action","target_tool":"create_batch","extracted_args":{"factory":"中地"},"reply_message":"您是指要为中地工厂发起一个新批次吗？确认后我为您生成预览。","confidence":0.7}
+
+输入："开始新批次test"
+输出：{"intent":"action","target_tool":"create_batch","extracted_args":{"thread_id":"test"},"reply_message":"您是要创建批次 test 吗？确认后我为您生成预览。","confidence":0.75}
+
+输入："是的"（【进行中的任务】含 create_batch，已收集参数 {"thread_id":"test"}）
+输出：{"intent":"action","target_tool":"create_batch","extracted_args":{},"reply_message":"","confidence":0.9}
 
 输入："算了不弄了"
 输出：{"intent":"clarify","target_tool":null,"extracted_args":{},"reply_message":"好的，已取消，没有执行任何操作。","confidence":0.9}
 
+{slots_context}
 {l2_context}"""
+
+
+# 工具中文名映射：有意从 app/dispatcher/__init__.py 的 _TOOL_CN 复制
+# 而非 import——__init__ 反向依赖本模块的渲染函数，import 会成循环依赖；
+# 两处映射内容保持一致，新增工具时两边都要补。未收录的工具名兜底用原名。
+_TOOL_CN = {
+    "create_batch": "发起新批次",
+    "rerun": "整批重跑",
+    "retry_factory": "重试当前工厂",
+    "submit_review": "提交审核",
+    "set_paths": "修改路径配置",
+    "curate_kb": "排查知识库",
+}
 
 
 def triage_prompt(
@@ -276,6 +312,7 @@ def triage_prompt(
     phase: int = 2,
     l2_context: str = "",
     history: list[dict] | None = None,
+    slots_context: dict | None = None,
 ) -> str:
     """生成分诊器的 system prompt。
 
@@ -283,6 +320,10 @@ def triage_prompt(
       循环依赖：tools 侧不依赖本模块，但保持单向依赖更稳）；
     - l2_context 非空时追加「【最近操作上下文】」段落，帮分诊器理解
       「再跑一次」「那个批次」这类指代；
+    - slots_context 非空且含 target_tool 时渲染「【进行中的任务】」段落
+      （形如 {"target_tool": str, "slots": dict}，目标操作转中文名，slots
+      按 ensure_ascii=False 的 JSON 展示），告知分诊器上一轮已确认目标
+      并收集了部分参数；为空或缺 target_tool 时该段落整体不出现；
     - history 取最近 6 条压缩渲染成「【最近对话】」段落，每条截 200
       字符（分诊只需要语境，不需要全文）；
     - 占位符注入用 str.replace：prompt 内含 JSON 示例花括号，
@@ -300,6 +341,16 @@ def triage_prompt(
     tool_list = "\n".join(lines)
 
     prompt = _TRIAGE_PROMPT.replace("{tool_list}", tool_list)
+
+    slots_block = ""
+    if slots_context and slots_context.get("target_tool"):
+        target_tool = slots_context["target_tool"]
+        tool_cn = _TOOL_CN.get(target_tool, target_tool)
+        slots_json = json.dumps(slots_context.get("slots", {}),
+                                ensure_ascii=False)
+        slots_block = (f"【进行中的任务】\n目标操作：{tool_cn}\n"
+                       f"已收集参数：{slots_json}")
+    prompt = prompt.replace("{slots_context}", slots_block)
 
     l2_block = ""
     if l2_context:
