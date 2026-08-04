@@ -320,6 +320,7 @@ def _validate_alias_decisions(
     返回 (overrides, to_save, 错误信息|None)：overrides 为全部决定的
     {factory: folder}；to_save 为其中 save=true 的子集。
     """
+    from app.factory_match import validate_subfolder
     from app.nodes.parse_downstream import parse_requirements
 
     overrides: dict[str, str] = {}
@@ -331,12 +332,6 @@ def _validate_alias_decisions(
     except Exception as e:  # noqa: BLE001 校验失败不建批次
         return {}, {}, f"装箱单解析失败，无法校验工厂对照: {type(e).__name__}: {e}"
     valid_factories = set(requirements.keys())
-
-    u_path = Path(upstream).expanduser()
-    try:
-        valid_folders = {d.name for d in u_path.iterdir() if d.is_dir()}
-    except OSError as e:
-        return {}, {}, f"上游工厂文件夹不可读，无法校验工厂对照: {e}"
 
     for d in alias_decisions:
         if not isinstance(d, dict):
@@ -353,13 +348,12 @@ def _validate_alias_decisions(
         if factory_filter and factory not in set(factory_filter):
             return {}, {}, (f"工厂「{factory}」不在 factory_filter 范围内，"
                             "拒绝写入对照")
-        if "/" in folder or "\\" in folder or folder in (".", "..") \
-                or ".." in Path(folder).parts:
-            return {}, {}, (f"文件夹名「{folder}」含路径分隔符或 ..，"
-                            "拒绝写入对照")
-        if folder not in valid_folders:
-            return {}, {}, (f"文件夹「{folder}」不是上游目录下现存的一级子目录，"
-                            "拒绝写入对照")
+        # folder 防注入校验与运行中 retry_factory 对照注入同源
+        # （factory_match.validate_subfolder：拒绝分隔符/../非现存目录）
+        try:
+            validate_subfolder(upstream, folder)
+        except ValueError as e:
+            return {}, {}, f"{e}，拒绝写入对照"
         overrides[factory] = folder
         if d.get("save"):
             to_save[factory] = folder
@@ -483,7 +477,8 @@ def _exec_rerun(args: dict,
 
 
 def _preview_retry_factory(args: dict) -> dict:
-    """retry_factory 预览：取当前挂起 payload，展示将重试的工厂与 SKU 数。"""
+    """retry_factory 预览：取当前挂起 payload，展示将重试的工厂与 SKU 数；
+    带 folder/save 时追加对照注入说明与永久对照覆盖警告。"""
     try:
         thread_id = args["thread_id"]
         payload = service.get_review_payload(thread_id)
@@ -497,10 +492,24 @@ def _preview_retry_factory(args: dict) -> dict:
         items = payload.get("items") or []
         lines = [f"批次 {thread_id} 当前挂起工厂: {factory}"
                  f"（{len(items)} 个 SKU）"]
+        warnings: list[str] = []
+
+        # 对照注入（W6b）：操作员告知的对应文件夹，预览展示注入内容
+        folder = args.get("folder")
+        if folder:
+            lines.append(f"对照注入: {factory} -> {folder}")
+            if bool(args.get("save")):
+                lines.append("将永久保存对照到 alias_map.json")
+                from app.factory_match import load_alias_map
+                existing = load_alias_map().get(factory)
+                if existing and existing != folder:
+                    warnings.append(
+                        f"现有永久对照 {factory}->{existing} 将被覆盖")
+
         return _preview(
             f"将重新提取批次 {thread_id} 当前挂起工厂「{factory}」的识别数据，"
             "已审核工厂不受影响",
-            lines, [])
+            lines, warnings)
     except Exception as e:  # noqa: BLE001
         return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
 
@@ -509,10 +518,13 @@ def _exec_retry_factory(args: dict,
                         on_progress: Callable[[dict], None] | None = None
                         ) -> dict:
     """retry_factory 执行：service.retry_factory_extraction 内部校验挂起状态，
-    异常转 {"error": ...}。on_progress（W4a）包装成 exec_progress 透传。"""
+    异常转 {"error": ...}。folder/save（W6b 对照注入）原样透传。
+    on_progress（W4a）包装成 exec_progress 透传。"""
     try:
         return service.retry_factory_extraction(
             args["thread_id"],
+            folder=args.get("folder"),
+            save=bool(args.get("save")),
             on_progress=_wrap_on_progress("retry_factory", args, on_progress),
         )
     except ValueError as e:
@@ -1037,6 +1049,19 @@ TOOLS: dict[str, Tool] = {
             "type": "object",
             "properties": {
                 "thread_id": _THREAD_ID_PROP,
+                "folder": {
+                    "type": "string",
+                    "description": "可选，操作员告知的对应上游文件夹名"
+                                   "（upstream_root 下一级子目录名，不是完整路径）。"
+                                   "用于工厂未匹配到文件夹（no_folder_matched）时"
+                                   "注入对照重新提取",
+                },
+                "save": {
+                    "type": "boolean",
+                    "description": "可选，默认 false。true=把 工厂→folder 对照"
+                                   "永久保存到 alias_map.json（后续批次自动生效）；"
+                                   "false=仅本次批次生效",
+                },
             },
             "required": ["thread_id"],
         },

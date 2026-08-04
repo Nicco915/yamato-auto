@@ -5,6 +5,8 @@ Node2（folder_router）与批次预扫（service/tools）共用本模块：
   alias 大小写不敏感 → 规范化精确 → rapidfuzz 模糊匹配；
 - recommend_candidates：预扫「低置信推荐」档的候选生成，
   rapidfuzz top-N + 包含强信号（如 天津市依依衛生用品 ⊃ 依依）保底 70 分；
+- validate_subfolder：上游根目录下一级子目录名的防注入校验，
+  发起批次 alias_decisions 与运行中 retry_factory 对照注入共用（同源）；
 - load/save_alias_entries：alias_map.json 的读写，损坏容错、原子写、
   写前 .bak 备份、模块级锁串行。
 """
@@ -167,6 +169,37 @@ def recommend_candidates(
             out.append(e)
     out.sort(key=lambda x: x["score"], reverse=True)
     return out[:top_n]
+
+
+def validate_subfolder(upstream_root: str | Path, folder: str) -> Path:
+    """校验 folder 是 upstream_root 下现存的一级子目录名（防注入同源）。
+
+    发起批次 alias_decisions 校验（dispatcher/tools._validate_alias_decisions）
+    与运行中 retry_factory 对照注入（service.retry_factory_extraction）共用
+    本函数，保证两处判定口径一致。
+
+    拒绝规则（任一命中即 ValueError，中文消息）：
+    - 空串/纯空白；
+    - 含「..」路径穿越片段；
+    - 含路径分隔符（/ 或 \\）或为绝对路径（folder 只能是目录名，
+      不能是完整路径）；
+    - 解析后不是现存目录。
+    通过时返回 resolve 后的 Path。
+    """
+    if not folder or not folder.strip():
+        raise ValueError("文件夹名不能为空")
+    folder = folder.strip()
+    if Path(folder).is_absolute():
+        raise ValueError(f"文件夹名「{folder}」是绝对路径，请只填一级子目录名")
+    if folder in (".", "..") or ".." in Path(folder).parts:
+        raise ValueError(f"文件夹名「{folder}」含 .. 路径穿越，拒绝接受")
+    if "/" in folder or "\\" in folder:
+        raise ValueError(f"文件夹名「{folder}」含路径分隔符，请只填一级子目录名")
+    p = Path(upstream_root).expanduser() / folder
+    if not p.is_dir():
+        raise ValueError(
+            f"文件夹「{folder}」不是上游目录下现存的一级子目录，拒绝接受")
+    return p.resolve()
 
 
 def save_alias_entries(

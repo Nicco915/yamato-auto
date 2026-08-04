@@ -500,6 +500,8 @@ def rerun_with_paths(
 
 def retry_factory_extraction(
     thread_id: str,
+    folder: str | None = None,
+    save: bool = False,
     on_progress: Callable[[dict], None] | None = None,
 ) -> dict[str, Any]:
     """单厂重试：只重跑当前挂起工厂的 Node3→Node5，已审核工厂不受影响。
@@ -507,6 +509,16 @@ def retry_factory_extraction(
     机制同 rerun_with_paths（langgraph 1.2.9 坑）：update_state(as_node=NODE2)
     作废 Node5 interrupt 现场，invoke 从 Node3 继续。Node2 仅作锚点不会重跑，
     current_factory_data 仍在 state 中供 Node3 使用。
+
+    对照注入（W6b）：
+    - folder 非 None 时，先经 factory_match.validate_subfolder 校验
+      （upstream_root 下现存一级子目录，ValueError 直接上抛），
+      再写入 current_factory_data.folder_path 与批次级
+      factory_alias_overrides[factory]=folder——仅本次批次生效，不落盘。
+    - save=True 且 folder 非 None：save_alias_entries 永久落 alias_map.json，
+      后续批次自动生效；返回 dict 带 "alias_saved"。save 异常不阻断重试
+      主流程——捕获记 warning，返回里带 "alias_save_error"。
+    - save=True 但 folder 为 None：ValueError（无对照可保存，防误用）。
     """
     graph = get_graph()
     cfg = _config(thread_id)
@@ -521,31 +533,76 @@ def retry_factory_extraction(
     if not factory:
         raise ValueError(f"thread {thread_id} 缺少当前工厂数据，无法单厂重试")
 
+    if save and folder is None:
+        raise ValueError("save=true 必须同时提供 folder（无对照可保存）")
+
+    # 对照注入：校验 folder 并组装 update（校验失败 ValueError 直接上抛）
+    validated_path: Path | None = None
+    if folder is not None:
+        from app.factory_match import validate_subfolder
+        upstream_root = (
+            snap.values.get("upstream_root") or get_settings().upstream_root)
+        validated_path = validate_subfolder(upstream_root, folder)
+
     # L2 日志关联：单厂重试也是一次跑图，绑定批次号（工厂名由 Node3 重绑）
     with logging_context(thread_id=thread_id):
         # 置强制重提标志：Node3 跳过会话缓存重新走提取流程；
         # Node3 所有返回分支自清 force_reextract=False，不会残留到后续工厂。
         # 不清 extracted_items——Node3 各分支都会覆写 cur["extracted_items"]
-        graph.update_state(cfg, {"force_reextract": True}, as_node=NODE2)
+        update: dict[str, Any] = {"force_reextract": True}
+        if validated_path is not None:
+            # 对照注入：folder_path 直接指向校验后的目录；
+            # 批次级 factory_alias_overrides 同步写入，仅本次生效不落盘
+            cur2 = dict(cur)
+            cur2["folder_path"] = str(validated_path)
+            update["current_factory_data"] = cur2
+            overrides = dict(snap.values.get("factory_alias_overrides") or {})
+            overrides[factory] = folder
+            update["factory_alias_overrides"] = overrides
+        graph.update_state(cfg, update, as_node=NODE2)
+
+        alias_saved: dict | None = None
+        alias_save_error: str | None = None
+        if save and validated_path is not None:
+            from app.factory_match import save_alias_entries
+            try:
+                # 永久对照落盘（.bak 备份 + 原子写），后续批次自动生效
+                alias_saved = save_alias_entries({factory: folder})
+            except Exception as e:  # noqa: BLE001 落盘失败不阻断重试主流程
+                logger.warning(
+                    "对照永久保存失败（重试仍继续）: %s -> %s (%s)",
+                    factory, folder, e)
+                alias_save_error = f"{type(e).__name__}: {e}"
+
         emit = _make_progress_emitter(on_progress, seed=snap.values)
         for event in graph.stream(None, cfg, stream_mode="updates"):
             emit(event)
             if "__interrupt__" in event:
                 _start_pre_extraction(thread_id)
-                return {
+                result: dict[str, Any] = {
                     "status": "pending_human_review",
                     "thread_id": thread_id,
                     "factory": factory,
                     "review_data": event["__interrupt__"][0].value,
                 }
+                if alias_saved is not None:
+                    result["alias_saved"] = alias_saved
+                if alias_save_error is not None:
+                    result["alias_save_error"] = alias_save_error
+                return result
 
         final = graph.get_state(cfg)
-        return {
+        result = {
             "status": "completed",
             "thread_id": thread_id,
             "factory": factory,
             "final_output_path": final.values.get("final_output_path"),
         }
+        if alias_saved is not None:
+            result["alias_saved"] = alias_saved
+        if alias_save_error is not None:
+            result["alias_save_error"] = alias_save_error
+        return result
 
 
 def get_order_state(thread_id: str) -> dict[str, Any]:

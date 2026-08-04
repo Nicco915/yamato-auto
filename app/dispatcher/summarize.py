@@ -130,10 +130,24 @@ def _sum_submit_review(args: dict, result: dict) -> dict:
 
 
 def _sum_retry_factory(args: dict, result: dict) -> dict:
-    """retry_factory：单厂重新提取后重新挂起待审核（或已是最后工厂完成）。"""
+    """retry_factory：单厂重新提取后重新挂起待审核（或已是最后工厂完成）。
+    带 folder 对照注入时 message 注明对照；alias_saved/alias_save_error
+    分别追加「对照已永久保存」与落盘失败警告。"""
     tid = result.get("thread_id") or args.get("thread_id")
     status = result.get("status")
     factory = result.get("factory")
+    folder = args.get("folder")
+    # 对照注入文案片段：带 folder 时在成功 message 中体现
+    mapping_text = f"按对照（→ {folder}）" if folder else ""
+
+    # 对照落盘结果的 summary_lines 补充（成功追加说明，失败追加警告）
+    def _alias_lines(lines: list) -> list:
+        if result.get("alias_saved"):
+            lines.append("对照已永久保存，后续批次自动生效。")
+        if result.get("alias_save_error"):
+            lines.append(f"⚠️ 对照永久保存失败（本次重试不受影响）："
+                         f"{result['alias_save_error']}")
+        return lines
 
     if status == "pending_human_review":
         review_data = result.get("review_data") or {}
@@ -144,25 +158,29 @@ def _sum_retry_factory(args: dict, result: dict) -> dict:
         prog = _progress_line(str(tid)) if tid else None
         if prog:
             lines.append(prog)
-        message = (f"批次 {tid} 工厂「{factory or '未知'}」已重新提取，"
-                   f"待人工审核{count_text}。")
-        return {"message": message, "summary_lines": lines,
+        if folder:
+            message = (f"批次 {tid} 工厂「{factory or '未知'}」已按对照"
+                       f"（→ {folder}）重新提取，待人工审核{count_text}。")
+        else:
+            message = (f"批次 {tid} 工厂「{factory or '未知'}」已重新提取，"
+                       f"待人工审核{count_text}。")
+        return {"message": message, "summary_lines": _alias_lines(lines),
                 "links": _links_for(str(tid) if tid else None)}
 
     if status == "completed":
-        message = (f"批次 {tid} 工厂「{factory or '未知'}」已重新提取，"
-                   "全部工厂处理完成，无需人工审核。")
+        message = (f"批次 {tid} 工厂「{factory or '未知'}」已{mapping_text}"
+                   "重新提取，全部工厂处理完成，无需人工审核。")
         lines = []
         out = result.get("final_output_path")
         if out:
             lines.append(f"最终输出：{out}")
-        return {"message": message, "summary_lines": lines,
+        return {"message": message, "summary_lines": _alias_lines(lines),
                 "links": ([{"label": "看批次", "href": f"/batch/{tid}"}]
                           if tid else [])}
 
     # 状态不认识：通用兜底但带上已知信息
     message = f"批次 {tid} 单厂重试已执行（状态：{status or '未知'}）。"
-    return {"message": message, "summary_lines": [],
+    return {"message": message, "summary_lines": _alias_lines([]),
             "links": _links_for(str(tid) if tid else None)}
 
 
