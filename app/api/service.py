@@ -30,7 +30,7 @@ from app.db.models import ReviewAudit
 from app.db.session import get_session
 from app.extraction.llm_client import usage_tracker
 from app.extraction.session import SESSIONS_DIR
-from app.graph import get_graph
+from app.graph import NODE2, NODE5, get_graph
 from app.logging_config import logging_context
 
 logger = logging.getLogger(__name__)
@@ -479,6 +479,56 @@ def rerun_with_paths(
         return {
             "status": "completed",
             "thread_id": thread_id,
+            "final_output_path": final.values.get("final_output_path"),
+        }
+
+
+def retry_factory_extraction(
+    thread_id: str,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict[str, Any]:
+    """单厂重试：只重跑当前挂起工厂的 Node3→Node5，已审核工厂不受影响。
+
+    机制同 rerun_with_paths（langgraph 1.2.9 坑）：update_state(as_node=NODE2)
+    作废 Node5 interrupt 现场，invoke 从 Node3 继续。Node2 仅作锚点不会重跑，
+    current_factory_data 仍在 state 中供 Node3 使用。
+    """
+    graph = get_graph()
+    cfg = _config(thread_id)
+    snap = graph.get_state(cfg)
+    if not snap.values:
+        raise ValueError(f"thread {thread_id} 不存在")
+    if NODE5 not in (snap.next or ()):
+        raise ValueError(f"thread {thread_id} 当前未挂起待审核，无法单厂重试")
+
+    cur = snap.values.get("current_factory_data") or {}
+    factory = cur.get("factory_name")
+    if not factory:
+        raise ValueError(f"thread {thread_id} 缺少当前工厂数据，无法单厂重试")
+
+    # L2 日志关联：单厂重试也是一次跑图，绑定批次号（工厂名由 Node3 重绑）
+    with logging_context(thread_id=thread_id):
+        # 置强制重提标志：Node3 跳过会话缓存重新走提取流程；
+        # Node3 所有返回分支自清 force_reextract=False，不会残留到后续工厂。
+        # 不清 extracted_items——Node3 各分支都会覆写 cur["extracted_items"]
+        graph.update_state(cfg, {"force_reextract": True}, as_node=NODE2)
+        emit = _make_progress_emitter(on_progress, seed=snap.values)
+        for event in graph.stream(None, cfg, stream_mode="updates"):
+            emit(event)
+            if "__interrupt__" in event:
+                _start_pre_extraction(thread_id)
+                return {
+                    "status": "pending_human_review",
+                    "thread_id": thread_id,
+                    "factory": factory,
+                    "review_data": event["__interrupt__"][0].value,
+                }
+
+        final = graph.get_state(cfg)
+        return {
+            "status": "completed",
+            "thread_id": thread_id,
+            "factory": factory,
             "final_output_path": final.values.get("final_output_path"),
         }
 

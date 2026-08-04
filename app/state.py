@@ -41,6 +41,10 @@ class AgentState(TypedDict, total=False):
 
     # ----- 人机协同 -----
     validation_status: str                # Pending / Approved / Rejected
+    # 单厂重试标志：置 True 时 Node3 跳过会话缓存强制重提（service 层
+    # retry_factory_extraction 写入）；Node3 消费后必须自清（所有返回分支
+    # 的 update 都带 False），防止残留污染后续工厂的提取流程
+    force_reextract: bool
 
     # ----- Node7 产物 -----
     final_output_path: str                # 最终输出的 Excel 副本路径

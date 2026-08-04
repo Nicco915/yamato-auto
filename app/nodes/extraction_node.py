@@ -164,21 +164,27 @@ def extraction_node(state: AgentState) -> dict:
     factory_name = cur.get("factory_name") or "未知工厂"
     folder_path = cur.get("folder_path")
     expected_skus = cur.get("expected_skus") or []
+    # 单厂重试标志（service.retry_factory_extraction 经 update_state 写入）：
+    # 为 True 时跳过会话缓存强制重提；本节点所有返回分支都带
+    # force_reextract=False 自清，防残留污染后续工厂
+    force = bool(state.get("force_reextract"))
 
     if not folder_path:
         logger.warning("[Node3] 工厂「%s」未匹配到文件夹，生成人工补录占位数据",
                        factory_name)
         cur["extracted_items"] = _placeholder_items(expected_skus, "no_folder_matched")
-        return {"current_factory_data": cur}
+        return {"current_factory_data": cur, "force_reextract": False}
 
     if _session_mod is None:
         logger.warning("[Node3] 提取引擎不可用（%s），使用 mock 数据",
                        _session_import_error or 'EXTRACTION_MOCK=1')
         cur["extracted_items"] = _mock_items(expected_skus, "mock")
-        return {"current_factory_data": cur}
+        return {"current_factory_data": cur, "force_reextract": False}
 
     # ---- 缓存短路：后台预提取线程可能已跑完该工厂 ----
-    cached = _try_load_cached_session(factory_name)
+    if force:
+        logger.info("[Node3] 工厂「%s」：强制重提，跳过会话缓存", factory_name)
+    cached = None if force else _try_load_cached_session(factory_name)
     if cached is not None:
         items = [dict(d) for d in (cached.get("items") or {}).values()]
         items += [dict(d) for d in (cached.get("no_code_items") or [])]
@@ -199,14 +205,14 @@ def extraction_node(state: AgentState) -> dict:
         if not items:
             cur["extracted_items"] = _placeholder_items(
                 expected_skus, "no_items_extracted")
-        return {"current_factory_data": cur}
+        return {"current_factory_data": cur, "force_reextract": False}
 
     try:
         session = _run_factory_session(folder_path, factory_name, expected_skus)
     except Exception as e:  # 提取异常不中断流转，转人工兜底
         logger.exception("[Node3] 提取引擎异常：%s，生成人工补录占位数据", e)
         cur["extracted_items"] = _placeholder_items(expected_skus, f"extraction_error: {e}")
-        return {"current_factory_data": cur}
+        return {"current_factory_data": cur, "force_reextract": False}
 
     # 会话累积结果 → Node4 契约（ExtractedItem.model_dump() 字段已对齐）
     items = [dict(d) for d in session.items.values()]
@@ -228,4 +234,4 @@ def extraction_node(state: AgentState) -> dict:
         logger.warning("[Node3] 提取结果为空，生成人工补录占位数据")
         cur["extracted_items"] = _placeholder_items(expected_skus, "no_items_extracted")
 
-    return {"current_factory_data": cur}
+    return {"current_factory_data": cur, "force_reextract": False}
