@@ -266,6 +266,46 @@ def case_7_legacy_regression() -> None:
         os.environ["DISPATCHER_ENGINE"] = "react"
 
 
+def case_8_stale_pending_no_masking() -> None:
+    """陈旧 pending 不遮蔽新问题：上一轮未确认的确认卡挂在 session 上，
+    本轮用户问新问题应正常回答（E2E 实证 bug 的回归——react_engine 用
+    身份比较只认【本轮新建】的 pending_action）。"""
+    sid = fresh_session_id("C8")
+    tid = "YM-REACT-STALE"
+    # turn1：出确认卡但不 confirm（pending 留置 session）
+    lc_llm.set_script([
+        {"tool_calls": [{"name": "create_batch",
+                         "args": {"thread_id": tid,
+                                  "downstream_file_path": DOWNSTREAM,
+                                  "upstream_root": str(EMPTY_DIR)}}]},
+    ])
+    r1 = with_lock_retry(lambda: dispatcher.handle_message(
+        f"发起批次 {tid} 用空目录", session_id=sid))
+    assert r1["status"] == "pending_confirmation", r1
+    sess = sessions.get_session(sid)
+    assert sess.pending_action is not None
+
+    # turn2：同一 session 问新问题——应正常走只读链路回答，不被旧卡遮蔽
+    lc_llm.set_script([
+        {"tool_calls": [{"name": "get_usage", "args": {}}]},
+        {"final_text": "用量回答如下"},
+    ])
+    r2 = dispatcher.handle_message("查一下用量", session_id=sid)
+    assert r2["status"] == "ok", r2
+    assert r2["message"] == "用量回答如下", r2
+    # 旧 pending 原样保留（等 confirm），对话历史记的是本轮回答
+    assert sess.pending_action is not None
+    assert sess.pending_action["args"]["thread_id"] == tid
+    assert sess.history[-1]["content"] == "用量回答如下", sess.history[-1]
+    print("  ✓ 陈旧 pending 不遮蔽：新问题正常回答，旧卡保留待确认")
+
+    # turn3：旧卡仍可 confirm（确认通道不受引擎影响）
+    r3 = with_lock_retry(lambda: dispatcher.confirm(sid, None))
+    assert r3["status"] == "applied", r3
+    assert r3["tool"] == "create_batch", r3
+    print("  ✓ 旧卡 confirm：status=applied")
+
+
 # ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
@@ -307,6 +347,7 @@ def main() -> int:
     run("5. 并行双写只出一卡", case_5_parallel_double_write_single_card)
     run("6. 超轮兜底", case_6_recursion_fallback)
     run("7. legacy 回归", case_7_legacy_regression)
+    run("8. 陈旧 pending 不遮蔽新问题", case_8_stale_pending_no_masking)
 
     passed = sum(1 for _, ok, _ in results if ok)
     print(f"===== 总结：{passed}/{len(results)} 通过 =====")

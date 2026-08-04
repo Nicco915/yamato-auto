@@ -112,6 +112,11 @@ def run_dispatch_react(message: str, session: DispatcherSession, *,
     debug_log.log_event("user_message", session_id=session_id, phase=phase,
                         message=message)
 
+    # 陈旧 pending 快照：上一轮未确认的确认卡会一直挂在 session 上（等
+    # confirm/reject），结果映射只认【本轮新建】的 pending（身份比较），
+    # 否则用户问个新问题都会被旧卡遮蔽（E2E 实证 bug）
+    pending_before = session.pending_action
+
     try:
         result = agent.invoke({"messages": messages},
                               config={"recursion_limit": RECURSION_LIMIT})
@@ -148,10 +153,10 @@ def run_dispatch_react(message: str, session: DispatcherSession, *,
         _emit_final(on_progress, question)
         return {"status": "ok", "intent": "soft_confirm", "message": question}
 
-    # 影子写工具已生成确认卡（本轮建的 pending_action）：绝不执行，
-    # 等 confirm 走人工确认通道
+    # 影子写工具已生成确认卡（本轮新建的 pending_action）：绝不执行，
+    # 等 confirm 走人工确认通道；陈旧 pending（上一轮未确认）不遮蔽本轮
     action = session.pending_action
-    if action:
+    if action is not None and action is not pending_before:
         # 对话历史写入预览详情（LLM 后续轮次能回答追问，如"哪些存疑"）
         history_text = action["summary"]
         if action["preview_lines"]:
