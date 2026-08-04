@@ -32,6 +32,9 @@ if str(APP_ROOT) not in sys.path:
 # 必须在 import app.dispatcher 之前设置：保证 import 链上任何读取
 # DISPATCHER_MOCK 的模块都落在 mock 通道，不产生真实 LLM 副作用
 os.environ["DISPATCHER_MOCK"] = "1"
+# 本文件测 triage 分诊层（legacy 引擎专属机制），无论外部环境变量如何都钉死
+# legacy——防止全量套件以 DISPATCHER_ENGINE=react 外导时被误跑
+os.environ["DISPATCHER_ENGINE"] = "legacy"
 
 import app.dispatcher as dispatcher  # noqa: E402
 from app.dispatcher import loop as _loop  # noqa: E402

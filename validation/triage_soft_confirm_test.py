@@ -42,6 +42,9 @@ from pathlib import Path
 os.environ.setdefault("EXTRACTION_MOCK", "1")   # 提取走 mock（本测试不跑图，防御性设置）
 os.environ["DISPATCHER_MOCK"] = "1"             # 调度循环 + 分诊都走剧本，不调真实 LLM
 os.environ["GUIDE_MOCK"] = "1"                  # ask_guide 走模板降级（确定性输出）
+# 本文件测 triage 分诊层（legacy 引擎专属机制），无论外部环境变量如何都钉死
+# legacy——防止全量套件以 DISPATCHER_ENGINE=react 外导时被误跑
+os.environ["DISPATCHER_ENGINE"] = "legacy"
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(APP_ROOT))
