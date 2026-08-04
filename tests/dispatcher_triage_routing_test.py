@@ -41,6 +41,11 @@ from app.dispatcher import loop as _loop  # noqa: E402
 from app.dispatcher import sessions as _sessions  # noqa: E402
 from app.dispatcher import triage as _triage  # noqa: E402
 
+# 二次钉死：llm_client 模块 import 时 load_dotenv(override=True) 会把
+# 生产 .env 的 DISPATCHER_ENGINE=react 灌进 os.environ 覆盖上面的钉——
+# app import 完成后必须重钉（_engine() 在调用时才读，此处钉住即生效）
+os.environ["DISPATCHER_ENGINE"] = "legacy"
+
 
 # ---------------------------------------------------------------------------
 # 测试基建
