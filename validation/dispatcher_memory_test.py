@@ -12,6 +12,11 @@
 
 用法：
   EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_memory_test.py
+  DISPATCHER_ENGINE=react EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_memory_test.py
+
+双引擎可跑：case 6 经 handle_message/confirm 端到端（入口按
+DISPATCHER_ENGINE 分流），剧本经 _dual_engine.set_scripts 同注两条
+mock 通道。
 
 隔离（血泪红线）：L2 记忆落 master.db、case 6 建批次落 checkpoints.db，
 全部指向临时目录（import app 之后再设 env + cache_clear + 真实库断言
@@ -33,8 +38,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app.dispatcher.memory import OperationMemory  # noqa: E402
 from app import dispatcher  # noqa: E402
-from app.dispatcher import loop  # noqa: E402
 
+from _dual_engine import set_scripts  # noqa: E402
 from _test_isolation import isolate_to_tmp  # noqa: E402
 
 # ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----
@@ -177,8 +182,7 @@ def case_6_integration() -> None:
     tid = f"MEM-TEST-TID-{int(time.time()*1000)}"
 
     # 发起批次（写操作）
-    loop._MOCK_SCRIPT.clear()
-    loop._MOCK_SCRIPT.extend([
+    set_scripts([
         {"tool_calls": [{"id": "c1", "name": "create_batch",
                          "args": {"thread_id": tid,
                                   "downstream_file_path": "/Users/nz/Downloads/yamato/96/ContentsOfTheContainer_202624_青島XD_20260708.xlsx",
@@ -200,8 +204,7 @@ def case_6_integration() -> None:
     print(f"  ✓ 写操作确认后 L2 记忆自动更新：last_thread_id={r['last_thread_id']}")
 
     # 下一轮对话应该知道"刚才"的批次
-    loop._MOCK_SCRIPT.clear()
-    loop._MOCK_SCRIPT.extend([{"final_text": "好的，我帮你重跑"}])
+    set_scripts([{"final_text": "好的，我帮你重跑"}])
     r3 = dispatcher.handle_message("重跑刚才的批次", session_id=sid)
     assert r3["status"] == "ok", r3
     print(f"  ✓ 下一轮对话可以引用'刚才'的批次")

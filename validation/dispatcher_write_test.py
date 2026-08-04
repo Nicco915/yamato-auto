@@ -14,6 +14,10 @@ dispatcher_read_test.py 隔离）：
 
 用法（在 app/ 目录下）：
   EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_write_test.py
+  DISPATCHER_ENGINE=react EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_write_test.py
+
+双引擎可跑：剧本经 _dual_engine.set_scripts 同注 legacy/react 两条 mock
+通道（确认门拦截、篡改防护、TTL、审计落库等安全断言两引擎同一标准）。
 
 隔离（血泪红线）：checkpoint/master db、output、alias_map、sessions 目录
 全部指向临时目录（import app 之后再设 env + cache_clear + 真实库断言守卫，
@@ -42,9 +46,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app import dispatcher  # noqa: E402
 from app.api import service  # noqa: E402
 from app.api.main import app  # noqa: E402
-from app.dispatcher import loop, sessions  # noqa: E402
+from app.dispatcher import sessions  # noqa: E402
 from app.graph import get_graph  # noqa: E402
 
+from _dual_engine import set_scripts  # noqa: E402
 from _test_isolation import isolate_to_tmp  # noqa: E402
 
 # ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----
@@ -71,11 +76,6 @@ def with_lock_retry(fn):
         raise
 
 
-def set_script(items: list[dict]) -> None:
-    loop._MOCK_SCRIPT.clear()
-    loop._MOCK_SCRIPT.extend(items)
-
-
 def fresh_session_id(tag: str) -> str:
     return f"DISP-WRITE-TEST-{tag}-{int(time.time()*1000)}"
 
@@ -88,7 +88,7 @@ def case_1_write_tool_intercept() -> tuple[str, str]:
     """写工具拦截不执行：pending_confirmation + checkpoints 无该 thread。"""
     sid = fresh_session_id("C1")
     tid = f"DISP-WRITE-TEST-INTERCEPT-{int(time.time()*1000) % 100000}"
-    set_script([
+    set_scripts([
         {"tool_calls": [{"id": "c1", "name": "create_batch",
                          "args": {"thread_id": tid,
                                   "downstream_file_path": DOWNSTREAM,
@@ -118,7 +118,7 @@ def case_2_confirm_executes() -> str:
     """confirm 执行：无客户端 action 时走服务端留存版本，批次已创建。"""
     sid = fresh_session_id("C2")
     tid = f"DISP-WRITE-TEST-CONFIRM-{int(time.time()*1000) % 100000}"
-    set_script([
+    set_scripts([
         {"tool_calls": [{"id": "c1", "name": "create_batch",
                          "args": {"thread_id": tid,
                                   "downstream_file_path": DOWNSTREAM,
@@ -142,7 +142,7 @@ def case_3_tamper_action_protection() -> None:
     """篡改 action 防护：confirm 时传不同 thread_id，执行的应是留存版本。"""
     sid = fresh_session_id("C3")
     tid = f"DISP-WRITE-TEST-TAMPER-{int(time.time()*1000) % 100000}"
-    set_script([
+    set_scripts([
         {"tool_calls": [{"id": "c1", "name": "create_batch",
                          "args": {"thread_id": tid,
                                   "downstream_file_path": DOWNSTREAM,
@@ -205,7 +205,7 @@ def case_5_submit_review_diff_preview() -> None:
     new_items[0]["extracted_data"]["total_quantity"] = \
         int(new_items[0]["extracted_data"].get("total_quantity") or 0) + 10
     sid = fresh_session_id("C5")
-    set_script([
+    set_scripts([
         {"tool_calls": [{"id": "c1", "name": "submit_review",
                          "args": {"thread_id": tid, "approved": True,
                                   "items": new_items}}]},
@@ -245,7 +245,7 @@ def case_6_rerun() -> None:
     with_lock_retry(lambda: service.create_batch(
         tid, downstream_file_path=DOWNSTREAM, upstream_root=str(EMPTY_DIR)))
     sid = fresh_session_id("C6")
-    set_script([
+    set_scripts([
         {"tool_calls": [{"id": "c1", "name": "rerun",
                          "args": {"thread_id": tid}}]},
     ])
@@ -276,7 +276,7 @@ def case_7_set_paths_via_dispatcher() -> None:
     try:
         new_root = "/Users/nz/Downloads/yamato/96/工厂"  # 本机真实目录
         sid = fresh_session_id("C7")
-        set_script([
+        set_scripts([
             {"tool_calls": [{"id": "c1", "name": "set_paths",
                              "args": {"paths": {"upstream_root": new_root}}}]},
         ])

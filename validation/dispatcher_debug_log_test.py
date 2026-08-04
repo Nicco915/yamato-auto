@@ -14,8 +14,14 @@ DISPATCHER_MOCK=1 剧本驱动；日志写到真实 app/data/logs/dispatcher.log
 （测试后清理自己写入的验证——只断言文件内容含本会话标记，不删文件：
 该文件是滚动日志，可能已有生产记录）。
 
+双引擎可跑：用例 1 直调当前引擎的主循环（_dual_engine.run_dispatch），
+剧本经 _dual_engine.set_scripts 同注两条 mock 通道；llm_request 的 mode
+字段按引擎取期望——legacy 的 mock 分支记 "mock"，react 引擎只有 native
+tool_calls 一种调用形态（lc_llm mock 模式也记 "native-lc"）。
+
 用法（在 app/ 目录下）：
   DISPATCHER_MOCK=1 python3 validation/dispatcher_debug_log_test.py
+  DISPATCHER_ENGINE=react DISPATCHER_MOCK=1 python3 validation/dispatcher_debug_log_test.py
 """
 from __future__ import annotations
 
@@ -31,9 +37,12 @@ os.environ["DISPATCHER_MOCK"] = "1"
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(APP_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app.dispatcher import debug_log, loop, sessions  # noqa: E402
 from app.dispatcher.tools import TOOLS, Tool  # noqa: E402
+
+from _dual_engine import engine, run_dispatch, set_scripts  # noqa: E402
 
 LOG_FILE = APP_ROOT / "app" / "data" / "logs" / "dispatcher.log"
 
@@ -45,11 +54,6 @@ def check(cond: bool, label: str) -> None:
     assert cond, f"FAIL: {label}"
     _passed += 1
     print(f"  ok {label}")
-
-
-def set_script(items: list[dict]) -> None:
-    loop._MOCK_SCRIPT.clear()
-    loop._MOCK_SCRIPT.extend(items)
 
 
 def read_log_lines(marker: str) -> list[dict]:
@@ -95,14 +99,14 @@ try:
     print("== 1. run_dispatch 全链路事件落盘 ==")
     sid = f"{MARK}-S1"
     # 轮1：read 工具调用 → 轮2：write 工具调用（确认门拦截）
-    set_script([
+    set_scripts([
         {"tool_calls": [{"id": "c1", "name": "dbg_read",
                          "args": {"query": "你好", "api_key": "sk-secret"}}]},
         {"tool_calls": [{"id": "c2", "name": "dbg_write",
                          "args": {"target": "批次A", "token": "tok-123"}}]},
     ])
     session = sessions.get_session(sid)
-    result = loop.run_dispatch("测试消息", session, session_id=sid)
+    result = run_dispatch("测试消息", session, session_id=sid)
     check(result["status"] == "pending_confirmation", "写工具被确认门拦截")
 
     events = read_log_lines(MARK)
@@ -116,7 +120,11 @@ try:
     req = next(e for e in events if e["event"] == "llm_request")
     check('"role": "system"' in req["messages"]
           and "测试消息" in req["messages"], "llm_request 含完整 prompt")
-    check(req["mode"] == "mock" and req["round"] == 1, "llm_request 带 mode/round")
+    # mode 按引擎取期望：legacy 的 mock 分支记 "mock"；react 引擎只有
+    # native tool_calls 一种调用形态，lc_llm mock 模式也记 "native-lc"
+    expected_mode = "native-lc" if engine() == "react" else "mock"
+    check(req["mode"] == expected_mode and req["round"] == 1,
+          "llm_request 带 mode/round")
 
     resp1 = next(e for e in events
                  if e["event"] == "llm_response" and e["round"] == 1)

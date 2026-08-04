@@ -16,6 +16,11 @@
 
 用法（在 app/ 目录下）：
   EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_chat_ui_test.py
+  DISPATCHER_ENGINE=react EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_chat_ui_test.py
+
+双引擎可跑：case 2/3/4 经 handle_message/confirm（入口按
+DISPATCHER_ENGINE 分流），剧本经 _dual_engine.set_scripts 同注两条
+mock 通道；confirm 通道两引擎共用（execute_confirmed），断言同一标准。
 """
 from __future__ import annotations
 
@@ -36,9 +41,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app import dispatcher  # noqa: E402
 from app.api import service  # noqa: E402
 from app.api.main import app  # noqa: E402
-from app.dispatcher import loop, sessions  # noqa: E402
+from app.dispatcher import sessions  # noqa: E402
 from app.dispatcher.summarize import summarize_applied  # noqa: E402
 
+from _dual_engine import set_scripts  # noqa: E402
 from _test_isolation import isolate_to_tmp  # noqa: E402
 
 # ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----
@@ -52,11 +58,6 @@ DOWNSTREAM = os.environ.get(
 )
 EMPTY_UPSTREAM = TMP / "empty_upstream"
 EMPTY_UPSTREAM.mkdir(exist_ok=True)
-
-
-def _set_script(items: list[dict]) -> None:
-    loop._MOCK_SCRIPT.clear()
-    loop._MOCK_SCRIPT.extend(items)
 
 
 def _create_batch_args(tid: str) -> dict:
@@ -102,7 +103,7 @@ def case_2_confirm_fields_and_record_turn() -> None:
     """confirm 响应含 message/summary_lines/links/args；record_turn 中文摘要。"""
     tid = f"W2-OK-{int(time.time()*1000) % 100000}"
     sid = f"W2-SID-OK-{int(time.time()*1000)}"
-    _set_script([
+    set_scripts([
         {"tool_calls": [{"id": "c1", "name": "create_batch",
                          "args": _create_batch_args(tid)}]},
     ])
@@ -136,7 +137,7 @@ def case_3_error_result_status() -> None:
                          upstream_root=str(EMPTY_UPSTREAM),
                          factory_filter=["山東中地"])
     sid = f"W2-SID-DUP-{int(time.time()*1000)}"
-    _set_script([
+    set_scripts([
         {"tool_calls": [{"id": "c1", "name": "create_batch",
                          "args": _create_batch_args(tid)}]},
     ])
@@ -162,7 +163,7 @@ def case_4_history_endpoint() -> None:
 
     # 4b. found：有一轮对话的 session
     sid = f"W3-SID-HIST-{int(time.time()*1000)}"
-    _set_script([{"final_text": "你好，我是调度 Agent"}])
+    set_scripts([{"final_text": "你好，我是调度 Agent"}])
     dispatcher.handle_message("你好", session_id=sid)
     r = client.get("/api/v1/dispatcher/history", params={"session_id": sid})
     body = r.json()
@@ -173,7 +174,7 @@ def case_4_history_endpoint() -> None:
 
     # 4c. pending 裁剪：无 args，有 tool/summary/preview_lines/created_at
     tid = f"W3-PENDING-{int(time.time()*1000) % 100000}"
-    _set_script([
+    set_scripts([
         {"tool_calls": [{"id": "c1", "name": "create_batch",
                          "args": _create_batch_args(tid)}]},
     ])
@@ -198,7 +199,7 @@ def case_4_history_endpoint() -> None:
 
     # 4e. 过期会话：found:false 且被清出会话表
     sid_old = f"W3-SID-OLD-{int(time.time()*1000)}"
-    _set_script([{"final_text": "旧会话"}])
+    set_scripts([{"final_text": "旧会话"}])
     dispatcher.handle_message("hi", session_id=sid_old)
     sessions.get_session(sid_old).updated_at = time.time() - 3 * 3600
     r = client.get("/api/v1/dispatcher/history", params={"session_id": sid_old})

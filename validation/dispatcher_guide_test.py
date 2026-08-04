@@ -10,6 +10,11 @@
 
 用法：
   EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 GUIDE_MOCK=1 python3 validation/dispatcher_guide_test.py
+  DISPATCHER_ENGINE=react EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 GUIDE_MOCK=1 python3 validation/dispatcher_guide_test.py
+
+双引擎可跑：用例 4/5 直调调度主循环，经 _dual_engine.run_dispatch 按
+DISPATCHER_ENGINE 分流（legacy→loop.run_dispatch，react→react_engine），
+剧本经 _dual_engine.set_scripts 同注两条 mock 通道。
 
 隔离（血泪红线）：checkpoint/master db、output、sessions 目录全部指向
 临时目录（import app 之后再设 env + cache_clear + 真实库断言守卫，
@@ -29,10 +34,11 @@ APP_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(APP_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from app.dispatcher import loop, tools  # noqa: E402
+from app.dispatcher import tools  # noqa: E402
 from app.dispatcher.guide import ask_guide  # noqa: E402
 from app.dispatcher.sessions import DispatcherSession  # noqa: E402
 
+from _dual_engine import run_dispatch, set_scripts  # noqa: E402
 from _test_isolation import isolate_to_tmp  # noqa: E402
 
 # ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----
@@ -68,15 +74,14 @@ def case_3_unknown_fallback() -> None:
 
 
 def case_4_dispatcher_call() -> None:
-    """调度 Agent 正确调用 ask_guide。"""
+    """调度 Agent 正确调用 ask_guide（直调当前引擎的主循环）。"""
     session = DispatcherSession()
-    loop._MOCK_SCRIPT.clear()
-    loop._MOCK_SCRIPT.extend([
+    set_scripts([
         {"tool_calls": [{"id": "c1", "name": "ask_guide",
                          "args": {"question": "怎么发起批次？"}}]},
         {"final_text": "根据操作指引，发起批次很简单..."},
     ])
-    r = loop.run_dispatch("怎么发起批次？", session, phase=1)
+    r = run_dispatch("怎么发起批次？", session, phase=1)
     assert r["status"] == "ok", r
     assert len(session.tool_history) == 1, session.tool_history
     assert session.tool_history[0]["tool"] == "ask_guide"
@@ -84,12 +89,12 @@ def case_4_dispatcher_call() -> None:
 
 
 def case_5_real_llm() -> None:
-    """真实 LLM 调用（关闭 mock）。"""
+    """真实 LLM 调用（关闭 mock，直调当前引擎的主循环）。"""
     os.environ["DISPATCHER_MOCK"] = "0"
     os.environ.pop("GUIDE_MOCK", None)
     try:
         session = DispatcherSession()
-        r = loop.run_dispatch("怎么发起新批次？", session, phase=1)
+        r = run_dispatch("怎么发起新批次？", session, phase=1)
         assert r["status"] == "ok", r
         assert len(session.tool_history) == 1
         assert session.tool_history[0]["tool"] == "ask_guide"

@@ -15,6 +15,11 @@
 
 用法（在 app/ 目录下）：
   EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_exec_stream_test.py
+  DISPATCHER_ENGINE=react EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_exec_stream_test.py
+
+双引擎可跑：case 1 经 SSE 端点（handle_message 按 DISPATCHER_ENGINE
+分流），剧本经 _dual_engine.set_scripts 同注两条 mock 通道；
+case 2/3 直调 service.run_until_interrupt，与引擎无关。
 """
 from __future__ import annotations
 
@@ -36,8 +41,8 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app import dispatcher  # noqa: E402
 from app.api import service  # noqa: E402
 from app.api.main import app  # noqa: E402
-from app.dispatcher import loop  # noqa: E402
 
+from _dual_engine import set_scripts  # noqa: E402
 from _test_isolation import isolate_to_tmp  # noqa: E402
 
 # ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----
@@ -53,11 +58,6 @@ EMPTY_UPSTREAM = TMP / "empty_upstream"
 EMPTY_UPSTREAM.mkdir(exist_ok=True)
 
 
-def _set_script(items: list[dict]) -> None:
-    loop._MOCK_SCRIPT.clear()
-    loop._MOCK_SCRIPT.extend(items)
-
-
 def _parse_sse(text: str) -> list[dict]:
     events = []
     for line in text.splitlines():
@@ -71,7 +71,7 @@ def case_1_stream_confirm_events() -> None:
     """流式 confirm：exec_progress 事件序 + 末事件 applied。"""
     tid = f"W4A-STREAM-{int(time.time()*1000) % 100000}"
     sid = f"W4A-SID-{int(time.time()*1000)}"
-    _set_script([
+    set_scripts([
         {"tool_calls": [{"id": "c1", "name": "create_batch",
                          "args": {"thread_id": tid,
                                   "downstream_file_path": DOWNSTREAM,

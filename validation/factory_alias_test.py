@@ -20,6 +20,11 @@ Node2 overrides / dispatcher 两轮确认端到端）。
 
 用法（在 app/ 目录下）：
   EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/factory_alias_test.py
+  DISPATCHER_ENGINE=react EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/factory_alias_test.py
+
+双引擎可跑：case 6 经 handle_message/confirm（入口按 DISPATCHER_ENGINE
+分流），剧本经 _dual_engine.set_scripts 同注两条 mock 通道；
+case 1–5 直调匹配/预扫/落盘/Node2，与引擎无关。
 """
 from __future__ import annotations
 
@@ -43,9 +48,9 @@ from app import dispatcher  # noqa: E402
 from app import factory_match as fm  # noqa: E402
 from app.api import service  # noqa: E402
 from app.config import get_settings  # noqa: E402
-from app.dispatcher import loop  # noqa: E402
 from app.nodes.folder_router import folder_router  # noqa: E402
 
+from _dual_engine import set_scripts  # noqa: E402
 from _test_isolation import isolate_to_tmp  # noqa: E402
 
 # ---- 夹具目录（隔离前先建好，ALIAS_MAP_PATH 随隔离指向它）----
@@ -69,11 +74,6 @@ def _make_xlsx(path: Path, rows: list[tuple[str, str]]) -> str:
         ws.append([factory, sku, "ITEM", 10])
     wb.save(path)
     return str(path)
-
-
-def _set_script(items: list[dict]) -> None:
-    loop._MOCK_SCRIPT.clear()
-    loop._MOCK_SCRIPT.extend(items)
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +243,7 @@ def case_6_dispatcher_two_rounds() -> None:
     # ---- 轮1：无 decisions → pending_confirmation 带 factory_scan ----
     tid1 = f"FA-TEST-R1-{int(time.time()*1000) % 100000}"
     sid1 = f"FA-TEST-S1-{int(time.time()*1000)}"
-    _set_script([
+    set_scripts([
         {"tool_calls": [{"id": "c1", "name": "create_batch",
                          "args": {"thread_id": tid1,
                                   "downstream_file_path": xlsx,
@@ -264,7 +264,7 @@ def case_6_dispatcher_two_rounds() -> None:
     # ---- 轮2：带 decisions（save=false）confirm → overrides 进 state，不落盘 ----
     tid2 = f"FA-TEST-R2-{int(time.time()*1000) % 100000}"
     sid2 = f"FA-TEST-S2-{int(time.time()*1000)}"
-    _set_script([
+    set_scripts([
         {"tool_calls": [{"id": "c1", "name": "create_batch",
                          "args": {"thread_id": tid2,
                                   "downstream_file_path": xlsx,
@@ -291,7 +291,7 @@ def case_6_dispatcher_two_rounds() -> None:
     # ---- 轮3：save=true confirm → 追加落盘（.bak + 原子写）----
     tid3 = f"FA-TEST-R3-{int(time.time()*1000) % 100000}"
     sid3 = f"FA-TEST-S3-{int(time.time()*1000)}"
-    _set_script([
+    set_scripts([
         {"tool_calls": [{"id": "c1", "name": "create_batch",
                          "args": {"thread_id": tid3,
                                   "downstream_file_path": xlsx,

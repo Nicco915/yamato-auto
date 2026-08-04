@@ -21,6 +21,10 @@ resolved（method=本次决定/永久对照），摘要与三档 lines 读过滤
 
 用法（在 app/ 目录下）：
   EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/create_batch_preview_decision_test.py
+
+双引擎说明：本测试只直调 _preview_create_batch（确认门预览的共享实现，
+两引擎同走这一段代码），不经调度引擎，DISPATCHER_ENGINE 取值无感，
+两种引擎下直接跑即可。
 """
 from __future__ import annotations
 
