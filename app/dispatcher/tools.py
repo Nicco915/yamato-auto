@@ -180,7 +180,9 @@ def _preview_create_batch(args: dict) -> dict:
     进 lines，结构化结果放 factory_scan 供确认卡渲染；
     轮2（带 alias_decisions）：先做 _validate_alias_decisions 硬校验，
     失败返回 blocked=True（loop 层转 clarify，不出确认卡）；
-    校验通过后展示每条决定 [仅本次]/[永久保存]，
+    校验通过：被决定的工厂从 candidates/unmatched 移除并注入 resolved
+    （确认卡与摘要不再把已决工厂显示为存疑），
+    同时展示每条决定 [仅本次]/[永久保存]，
     永久保存且覆盖既有 alias key 时给覆盖警告。
     """
     try:
@@ -220,6 +222,32 @@ def _preview_create_batch(args: dict) -> dict:
         candidates = scan.get("candidates") or {}
         unmatched = scan.get("unmatched") or []
         warnings.extend(scan.get("warnings") or [])
+
+        # ---- 轮2：alias_decisions 硬校验 + 决定合并进预扫三档 ----
+        # 必须早于三档 lines/摘要渲染：被决定的工厂从 candidates/unmatched
+        # 移除并注入 resolved（method 标注 永久对照/本次决定），否则确认卡
+        # 与摘要会把已决工厂继续显示为存疑，给人"决定没生效"的错觉
+        overrides: dict[str, str] = {}
+        to_save: dict[str, str] = {}
+        if alias_decisions:
+            overrides, to_save, err = _validate_alias_decisions(
+                alias_decisions, downstream, upstream, factory_filter)
+            if err is not None:
+                warnings.append(err)
+                return _preview("工厂对照校验未通过", lines, warnings,
+                                factory_scan=scan, blocked=True)
+            for factory, folder in overrides.items():
+                candidates.pop(factory, None)
+                if factory in unmatched:
+                    unmatched.remove(factory)
+                resolved[factory] = {
+                    "folder": folder,
+                    "score": 100.0,
+                    "method": "永久对照" if factory in to_save else "本次决定",
+                }
+            scan["resolved"] = resolved
+            scan["candidates"] = candidates
+            scan["unmatched"] = unmatched
 
         if resolved:
             lines.append("工厂对照·确定命中（无需确认）:")
@@ -268,16 +296,9 @@ def _preview_create_batch(args: dict) -> dict:
                     warnings.append(
                         "全部工厂均已处理：跳过已处理工厂后将不会创建新批次")
 
-        # ---- 轮2：用户已给出 alias_decisions，展示决定清单 ----
+        # ---- 轮2：展示决定清单（硬校验与预扫合并已在三档渲染前完成，
+        # overrides/to_save 直接复用，不再重复校验）----
         if alias_decisions:
-            # 先做硬校验（preview 期拦截坏工厂名/坏文件夹）：
-            # 失败返回 blocked=True，loop 层直接转 clarify，不出确认卡
-            _, _, err = _validate_alias_decisions(
-                alias_decisions, downstream, upstream, factory_filter)
-            if err is not None:
-                warnings.append(err)
-                return _preview("工厂对照校验未通过", lines, warnings,
-                                factory_scan=scan, blocked=True)
             from app.factory_match import load_alias_map
             existing_alias = load_alias_map()
             lines.append("本次工厂对照决定:")
