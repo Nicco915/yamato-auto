@@ -94,6 +94,14 @@ _WRITE_PROMPT = r"""
   skip_processed 重新调用 create_batch，不要只回复文字而不调工具。
 - rerun：重跑挂起/出错的批次。参数 thread_id（必填），可选改路径参数
   （downstream_file_path / upstream_root），不改则沿用原配置。
+  ⚠️ rerun 是整批重跑——所有工厂重新提取并重新人工审核，已审核结论
+  作废。操作员只想重试某一个识别失败的工厂时，必须用 retry_factory，
+  绝不能用 rerun；确实要整批重跑时，发起前必须向操作员明确说明会重跑
+  全部工厂。
+- retry_factory：单厂重试当前挂起工厂的提取识别。参数 thread_id（必填）。
+  只重跑当前挂起的这一个工厂（重新提取后重新挂起待审核），已审核工厂
+  不动；仅挂起待审核批次可用，未挂起批次会报错。操作员说"这个工厂识别
+  失败了重试一下""重新识别当前工厂"时使用，绝不能用 rerun 替代。
 - submit_review：提交人工审核结果。参数 thread_id（必填）、approved
   （必填，true=通过 / false=驳回）、items（必填，审核后的完整明细）。
   items 契约：先调 get_review_payload 拿到当前 items，按操作员口述修改

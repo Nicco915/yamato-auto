@@ -482,6 +482,45 @@ def _exec_rerun(args: dict,
         return _err(e)
 
 
+def _preview_retry_factory(args: dict) -> dict:
+    """retry_factory 预览：取当前挂起 payload，展示将重试的工厂与 SKU 数。"""
+    try:
+        thread_id = args["thread_id"]
+        payload = service.get_review_payload(thread_id)
+        if payload is None:
+            return _preview(
+                "无法单厂重试", [],
+                [f"批次 {thread_id} 当前未挂起待审核（不存在或已流转），"
+                 "仅挂起批次可重试当前工厂"])
+
+        factory = payload.get("factory_name") or "（未知工厂）"
+        items = payload.get("items") or []
+        lines = [f"批次 {thread_id} 当前挂起工厂: {factory}"
+                 f"（{len(items)} 个 SKU）"]
+        return _preview(
+            f"将重新提取批次 {thread_id} 当前挂起工厂「{factory}」的识别数据，"
+            "已审核工厂不受影响",
+            lines, [])
+    except Exception as e:  # noqa: BLE001
+        return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
+
+
+def _exec_retry_factory(args: dict,
+                        on_progress: Callable[[dict], None] | None = None
+                        ) -> dict:
+    """retry_factory 执行：service.retry_factory_extraction 内部校验挂起状态，
+    异常转 {"error": ...}。on_progress（W4a）包装成 exec_progress 透传。"""
+    try:
+        return service.retry_factory_extraction(
+            args["thread_id"],
+            on_progress=_wrap_on_progress("retry_factory", args, on_progress),
+        )
+    except ValueError as e:
+        return {"error": str(e)}
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
 # 内部字段名 → 用户可读中文名映射
 _FIELD_LABEL: dict[str, str] = {
     "total_quantity": "总件数",
@@ -985,6 +1024,25 @@ TOOLS: dict[str, Tool] = {
         risk="write",
         preview=_preview_rerun,
         execute=_exec_rerun,
+    ),
+    "retry_factory": Tool(
+        name="retry_factory",
+        description="重试当前挂起工厂的提取识别（只重跑这一个工厂，从提取节点"
+                    "重新执行到重新挂起审核，已审核工厂不受影响）。"
+                    "适用场景：当前工厂识别失败/超时/生成了人工补录占位数据，"
+                    "操作员要求重试该工厂。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。"
+                    "仅挂起待审核批次可用；未挂起批次会报错。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "thread_id": _THREAD_ID_PROP,
+            },
+            "required": ["thread_id"],
+        },
+        risk="write",
+        preview=_preview_retry_factory,
+        execute=_exec_retry_factory,
     ),
     "submit_review": Tool(
         name="submit_review",
