@@ -100,7 +100,7 @@ def extract_doc(file_path: str) -> ChannelResult:
 
     for attempt in range(3):
         result.json_attempts += 1
-        raw = llm_client.chat_completion(
+        raw = llm_client.extraction_chat_completion(
             messages, vision=False, source_file=source_name
         )
         try:

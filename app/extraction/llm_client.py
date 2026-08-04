@@ -178,14 +178,18 @@ def get_settings() -> dict:
             f"未找到 SILICONFLOW_API_KEY。请在 {_ENV_PATH} "
             "中写入 SILICONFLOW_API_KEY=sk-xxx，或设置同名环境变量后重试。"
         )
+    text_model = os.environ.get("TEXT_MODEL", DEFAULT_TEXT_MODEL).strip() or DEFAULT_TEXT_MODEL
     return {
         "api_key": key,
         "base_url": os.environ.get("SILICONFLOW_BASE_URL", DEFAULT_BASE_URL).strip()
         or DEFAULT_BASE_URL,
         "vision_model": os.environ.get("VISION_MODEL", DEFAULT_VISION_MODEL).strip()
         or DEFAULT_VISION_MODEL,
-        "text_model": os.environ.get("TEXT_MODEL", DEFAULT_TEXT_MODEL).strip()
-        or DEFAULT_TEXT_MODEL,
+        "text_model": text_model,
+        # 提取流水线文本通道专用模型：EXTRACTION_TEXT_MODEL 未设置时回退
+        # text_model（向后兼容）；调度 Agent 仍走 text_model，互不影响。
+        "extraction_text_model": os.environ.get("EXTRACTION_TEXT_MODEL", "").strip()
+        or text_model,
     }
 
 
@@ -381,6 +385,45 @@ def chat_completion(
         kwargs["response_format"] = {"type": "json_object"}
 
     resp = _create_with_retry(kwargs, use_model, kind, source_file)
+    return resp.choices[0].message.content or ""
+
+
+def extraction_chat_completion(
+    messages: list[dict],
+    *,
+    vision: bool = False,
+    source_file: str = "",
+    temperature: float = 0.0,
+    max_tokens: int = 16384,
+    json_mode: bool = True,
+) -> str:
+    """提取流水线专用聊天补全，返回原始文本。
+
+    与 chat_completion 的唯一区别：vision=False 时模型取自
+    get_settings()["extraction_text_model"]（EXTRACTION_TEXT_MODEL，
+    未设置时回退 TEXT_MODEL），使提取文本通道与调度 Agent 的
+    TEXT_MODEL 解耦。vision=True 时直接委托 chat_completion，
+    视觉路径完全不变。json_mode/重试/用量记录与 chat_completion 一致。
+    """
+    if vision:
+        return chat_completion(
+            messages,
+            vision=True,
+            source_file=source_file,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+        )
+    s = get_settings()
+    use_model = s["extraction_text_model"]
+
+    kwargs = _base_kwargs(messages, use_model, temperature, max_tokens)
+    if json_mode:
+        # 与 chat_completion 相同：不支持 response_format 的模型由
+        # _create_with_retry 摘掉该参数降级重试。
+        kwargs["response_format"] = {"type": "json_object"}
+
+    resp = _create_with_retry(kwargs, use_model, "text", source_file)
     return resp.choices[0].message.content or ""
 
 

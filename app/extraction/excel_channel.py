@@ -281,7 +281,7 @@ def extract_excel(file_path: str) -> ChannelResult:
     # JSON 解析失败最多重试 2 次（即最多 3 次调用）
     for attempt in range(3):
         result.json_attempts += 1
-        raw = llm_client.chat_completion(
+        raw = llm_client.extraction_chat_completion(
             messages, vision=False, source_file=source_name
         )
         try:
