@@ -12,6 +12,8 @@
             background: #1f2937; color: #fff; }
   #topbar .title { font-weight: 700; font-size: 15px; }
   #topbar .meta { font-size: 13px; color: #cbd5e1; }
+  #topbar .back-link { color: #cbd5e1; font-size: 13px; text-decoration: none; white-space: nowrap; }
+  #topbar .back-link:hover { color: #fff; }
   #topbar .spacer { flex: 1; }
   #badge { padding: 3px 10px; border-radius: 10px; font-size: 12px; background: #b45309; }
   #badge.done { background: #15803d; }
@@ -117,6 +119,7 @@
 <body>
 
 <div id="topbar">
+  <a class="back-link" href="/">← 返回主页</a>
   <span class="title">人工双屏审核</span>
   <span class="meta" id="tb-thread">thread: -</span>
   <span class="meta" id="tb-factory">工厂: -</span>
