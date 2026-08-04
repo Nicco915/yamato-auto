@@ -24,10 +24,22 @@
 - confirm：确认执行入口，内部走 loop.execute_confirmed（优先服务端留存的
   pending_action，客户端 action 仅作降级通道）；终态清空 Triage 槽位。
 
+双引擎并存期（迁移过渡）：DISPATCHER_ENGINE 环境变量选调度引擎——
+- legacy（缺省）：上文描述的 triage 分诊 + loop.run_dispatch 手写循环；
+- react：langgraph.prebuilt.create_react_agent 引擎（react_engine.py），
+  意图判别与多轮协商交还单循环模型自主完成，影子写工具确认门、黄灯反问
+  （request_clarification + 入口短路消费）、L2 记忆注入等铁律语义不变；
+  软挂起「是」的消费不进 LLM、不过 triage，直接用布防时已校验的参数走
+  lc_tools.build_pending_action 出确认卡。
+confirm 入口与引擎无关（execute_confirmed 通道两引擎共用），完全不动。
+
 双适配器设计意图见 loop.py 模块 docstring：qwen 原生 tool_calls 可靠性
-未验证时，DISPATCHER_STEP_MODE=json 可零代码切换到 json_mode 备胎通道。
+未验证时，DISPATCHER_STEP_MODE=json 可零代码切换到 json_mode 备胎通道
+（仅 legacy 引擎适用；react 引擎固定走 native tool_calls）。
 """
 from __future__ import annotations
+
+import os
 
 from app.dispatcher import sessions as _sessions
 from app.dispatcher import triage as _triage
@@ -58,6 +70,83 @@ _TOOL_CN = {
 _SOFT_CONFIRM_YES = frozenset(
     {"是", "对", "嗯", "好", "没错", "确认", "是的", "好的", "ok"})
 _SOFT_CONFIRM_NO = frozenset({"不", "不是", "不对", "算了", "取消", "不用了"})
+
+
+def _engine() -> str:
+    """读取调度引擎（每次调用现读环境变量，测试可随时切换）。
+
+    "react" → create_react_agent 引擎；其余（含缺省）→ legacy 手写循环。
+    """
+    mode = os.environ.get("DISPATCHER_ENGINE", "legacy").strip().lower()
+    return "react" if mode == "react" else "legacy"
+
+
+def _handle_message_react(message: str, session: _sessions.DispatcherSession,
+                          *, phase: int, session_id: str | None,
+                          on_progress) -> dict:
+    """react 引擎分支：软挂起短路消费 → react_engine.run_dispatch_react。
+
+    黄灯区软挂起一轮窗口（react 版，与 _consume_soft_pending 同一判定表）：
+    - 确认（是/对/好的/ok…）：**不进 LLM、不过 triage**——soft_pending 的
+      args 在布防时（request_clarification 工具内）已过 validate_args，
+      直接走 lc_tools.build_pending_action 出预览确认卡；
+    - 否定/中止（不/算了/取消…）：槽位与软挂起全清，回复取消文案；
+    - 其他消息：清软挂起后继续走引擎（用户补充参数或换话题，新消息带
+      history 进 react 循环，不丢信息）。
+    """
+    from app.dispatcher import lc_tools as _lc_tools
+    from app.dispatcher import react_engine as _react_engine
+
+    pending = session.soft_pending
+    if pending:
+        text = message.strip().lower()
+        if text in _SOFT_CONFIRM_YES:
+            outcome = _lc_tools.build_pending_action(
+                pending["target_tool"], dict(pending["slots"]), session,
+                on_progress=on_progress, session_id=session_id)
+            _sessions.clear_soft_pending(session)
+            if outcome["ok"] and outcome["clarify"]:
+                # preview blocked（业务硬校验失败）：清槽位转 clarify 回复
+                _sessions.clear_slots(session)
+                reply = outcome["msg_text"]
+                _sessions.record_turn(session, message, reply)
+                if on_progress:
+                    on_progress({"type": "final", "message": reply})
+                return {"status": "ok", "message": reply, "clarify": True}
+            if outcome["ok"]:
+                # 确认卡已存 session.pending_action（映射同 react_engine）
+                action = outcome["action"]
+                _sessions.record_turn(session, message,
+                                      outcome["history_text"])
+                if on_progress:
+                    on_progress({"type": "final",
+                                 "message": outcome["msg_text"]})
+                return {"status": "pending_confirmation",
+                        "action": action,
+                        "preview": action["preview_lines"],
+                        "message": outcome["msg_text"],
+                        "warnings": action["warnings"],
+                        "factory_scan": action.get("factory_scan")}
+            # 布防参数失效（如已有其他待确认操作）：原样转述错误文案
+            reply = outcome["msg_text"]
+            _sessions.record_turn(session, message, reply)
+            if on_progress:
+                on_progress({"type": "final", "message": reply})
+            return {"status": "ok", "message": reply}
+        if text in _SOFT_CONFIRM_NO:
+            _sessions.clear_slots(session)  # 内含 soft_pending 清理
+            reply = "好的，已取消。请告诉我您的实际需求。"
+            _sessions.record_turn(session, message, reply)
+            if on_progress:
+                on_progress({"type": "final", "message": reply})
+            return {"status": "ok", "message": reply, "intent": "soft_cancel"}
+        # 其他消息：清软挂起后继续走引擎
+        _sessions.clear_soft_pending(session)
+
+    return _react_engine.run_dispatch_react(
+        message, session, phase=phase, session_id=session_id,
+        on_progress=on_progress)
+
 
 
 def _soft_confirm_question(tool: str, slots: dict) -> str:
@@ -157,6 +246,16 @@ def handle_message(message: str, session_id: str | None = None, *, phase: int = 
         return {"status": "error", "message": "message 不能为空"}
     session = (_sessions.get_session(session_id) if session_id
                else _sessions.DispatcherSession())
+
+    # 引擎分流（双引擎并存期）：react 走 create_react_agent 引擎，
+    # legacy（缺省）走下方既有 triage 路径（一行不动）
+    if _engine() == "react":
+        result = _handle_message_react(message, session, phase=phase,
+                                       session_id=session_id,
+                                       on_progress=on_progress)
+        if session_id:
+            result["session_id"] = session_id
+        return result
 
     # 黄灯区软挂起一轮窗口：先于 triage 消费（确认提升 / 否定取消 /
     # 其他消息清挂起后继续正常分诊）
