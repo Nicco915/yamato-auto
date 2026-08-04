@@ -17,6 +17,10 @@ class CurrentFactoryData(TypedDict, total=False):
     extracted_items: List[Dict[str, Any]]   # Node3 提取的原始数据（总数/总重）
     calculated_items: List[Dict[str, Any]]  # Node4 计算+查库后的完整数据
     missing_skus: List[str]               # 下游要求但提取结果中缺失的 SKU
+    # ----- W6a 暂缓队列标记（Node3/Node2 写入）-----
+    extraction_ok: bool                   # Node3 提取是否成功（占位分支 False，成功/mock True）
+    failure_reason: str                   # 提取失败原因（no_folder_matched / no_items_extracted / extraction_error: ...）
+    is_final_attempt: bool                # True=暂缓队列二遍重试（仍失败才最终挂起人工补录）
 
 
 class AgentState(TypedDict, total=False):
@@ -35,6 +39,10 @@ class AgentState(TypedDict, total=False):
     # {工厂名: {SKU: [openpyxl 行号, ...]}}，Node6 精准写回单元格用
     downstream_row_map: Dict[str, Dict[str, List[int]]]
     pending_factories: List[str]          # 待处理工厂队列
+    # 暂缓队列（W6a）：提取失败的工厂先记到这里（条目 {"factory_name",
+    # "failure_reason"}），不进 Node5/Node6——占位数据绝不写 Excel/主库；
+    # 主队列走完后由 Node2 弹出做二遍重试，仍失败才最终挂起人工补录
+    deferred_factories: List[Dict]
 
     # ----- 当前批次 -----
     current_factory_data: CurrentFactoryData

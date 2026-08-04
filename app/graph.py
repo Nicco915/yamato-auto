@@ -1,9 +1,10 @@
 """StateGraph 编排 + SqliteSaver checkpointer 编译。
 
-状态流转（《第一阶段.md》第 5 节）：
-    START -> Node1 -> Node2 -> Node3 -> Node4 -> Node5(🔴interrupt)
-          -> Node6 --(队列非空)--> Node2 ...
-                   --(队列已空)--> Node7 -> END
+状态流转（《第一阶段.md》第 5 节 + W6a 暂缓队列）：
+    START -> Node1 -> Node2 -> Node3 -> Node4 --(成功/二遍仍失败/最后一个)--> Node5(🔴interrupt)
+          -> Node6 --(主队列或暂缓队列非空)--> Node2 ...
+                   --(两队列皆空)--> Node7 -> END
+          Node4 --(失败且后面还有厂)--> Node4B(暂缓) --> Node2
 """
 import sqlite3
 from pathlib import Path
@@ -13,6 +14,7 @@ from langgraph.graph import END, START, StateGraph
 
 from app.config import get_settings
 from app.nodes.compute_align import compute_align
+from app.nodes.defer_node import defer_node
 from app.nodes.export_node import export_node
 from app.nodes.extraction_node import extraction_node
 from app.nodes.folder_router import folder_router
@@ -26,14 +28,33 @@ NODE1 = "node1_parse_downstream"
 NODE2 = "node2_folder_router"
 NODE3 = "node3_extraction"
 NODE4 = "node4_compute_align"
+NODE4B = "node4b_defer"
 NODE5 = "node5_human_review"
 NODE6 = "node6_writer"
 NODE7 = "node7_export"
 
 
+def _route_after_compute(state: AgentState) -> str:
+    """Node4 后的条件边（W6a 暂缓队列分流）。
+
+    提取失败且不是二遍重试、且后面还有工厂（主队列或暂缓队列非空）
+    → Node4B 暂缓，跳过 Node5/Node6（占位数据绝不写回）；
+    其余情形（成功 / 二遍仍失败 / 最后一个工厂失败——两队列皆空不空转）
+    → Node5 挂起人工审核/补录。
+    """
+    cur = state.get("current_factory_data") or {}
+    failed = cur.get("extraction_ok") is False
+    final = bool(cur.get("is_final_attempt"))
+    has_more = bool(state.get("pending_factories")) or bool(state.get("deferred_factories"))
+    return NODE4B if (failed and not final and has_more) else NODE5
+
+
 def _route_after_writer(state: AgentState) -> str:
-    """Node6 后的条件边：队列非空则循环回 Node2，否则进 Node7 终态导出。"""
-    if state.get("pending_factories"):
+    """Node6 后的条件边：主队列或暂缓队列非空则循环回 Node2，否则进 Node7 终态导出。
+
+    暂缓队列（W6a）也算未完——失败工厂要等主队列走完后二遍重试。
+    """
+    if state.get("pending_factories") or state.get("deferred_factories"):
         return NODE2
     return NODE7
 
@@ -46,6 +67,7 @@ def build_graph(checkpointer=None):
     builder.add_node(NODE2, folder_router)
     builder.add_node(NODE3, extraction_node)
     builder.add_node(NODE4, compute_align)
+    builder.add_node(NODE4B, defer_node)
     builder.add_node(NODE5, human_review)
     builder.add_node(NODE6, writer)
     builder.add_node(NODE7, export_node)
@@ -54,7 +76,9 @@ def build_graph(checkpointer=None):
     builder.add_edge(NODE1, NODE2)
     builder.add_edge(NODE2, NODE3)
     builder.add_edge(NODE3, NODE4)
-    builder.add_edge(NODE4, NODE5)
+    # W6a：失败且后面还有厂 → Node4B 暂缓回 Node2；其余 → Node5 挂起
+    builder.add_conditional_edges(NODE4, _route_after_compute, {NODE4B: NODE4B, NODE5: NODE5})
+    builder.add_edge(NODE4B, NODE2)
     builder.add_edge(NODE5, NODE6)
     # 工厂维度批处理循环
     builder.add_conditional_edges(NODE6, _route_after_writer, {NODE2: NODE2, NODE7: NODE7})

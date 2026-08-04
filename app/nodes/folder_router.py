@@ -6,6 +6,13 @@ app/factory_match.py（匹配/推荐/alias 读写唯一事实来源），
 本节点只负责队列调度、目录枚举与单据收集。
 
 匹配到后列出文件夹下所有单据文件（PDF/Excel/图片），写入 state。
+
+W6a 暂缓队列二遍取队：主队列已空、暂缓队列（deferred_factories）非空时，
+弹出暂缓条目重新走正常匹配流程（期间用户若已保存 alias_map.json 或
+文件夹已就位会自动命中），并标记 is_final_attempt=True +
+force_reextract=True（跳过会话缓存强制重提）；仍失败才最终挂起人工补录。
+no_folder_matched 的二遍零 LLM 成本（无文件夹直接走占位分支，瞬间完成），
+无需特判。
 """
 import logging
 from pathlib import Path
@@ -25,11 +32,22 @@ SUPPORTED_EXTS = {".pdf", ".xlsx", ".xls", ".jpg", ".jpeg", ".png", ".csv",
 def folder_router(state: AgentState) -> dict:
     settings = get_settings()
     queue = list(state.get("pending_factories") or [])
-    if not queue:
-        # 队列已空，理论上不会走到这里（Node6 条件边已拦截）
-        return {"current_factory_data": {}}
+    deferred = list(state.get("deferred_factories") or [])
 
-    factory = queue.pop(0)
+    is_final_attempt = False
+    if queue:
+        factory = queue.pop(0)
+    elif deferred:
+        # 主队列已空：弹暂缓条目做二遍重试（W6a）。期间用户若已保存
+        # alias_map.json 或文件夹已就位，下面的正常匹配流程会自动命中。
+        entry = deferred.pop(0)
+        factory = entry.get("factory_name")
+        is_final_attempt = True
+        logger.warning("[Node2] 暂缓重试：工厂「%s」（上次失败原因：%s）",
+                       factory, entry.get("failure_reason") or "unknown")
+    else:
+        # 两队列皆空，理论上不会走到这里（Node4/Node6 条件边已拦截）
+        return {"current_factory_data": {}}
 
     # L2 日志关联：多工厂循环的调度入口，进入某工厂处理即绑定工厂名。
     # 实测：LangGraph 每个节点在拷贝的 context 中执行，节点内 set 不外泄
@@ -72,11 +90,12 @@ def folder_router(state: AgentState) -> dict:
 
     logger.info(
         "[Node2] 工厂「%s」-> 文件夹 %s (方式 %s，得分 %s)，单据 %d 个，"
-        "期望 SKU %d 个",
+        "期望 SKU %d 个%s",
         factory, folder_path or "未匹配", match_method, match_score,
-        len(source_documents), len(expected_skus))
+        len(source_documents), len(expected_skus),
+        "（暂缓重试）" if is_final_attempt else "")
 
-    return {
+    update = {
         "pending_factories": queue,
         "current_factory_data": {
             "factory_name": factory,
@@ -87,5 +106,13 @@ def folder_router(state: AgentState) -> dict:
             "extracted_items": [],
             "calculated_items": [],
             "missing_skus": [],
+            # W6a：标记是否暂缓二遍重试（Node4 条件边/Node5 payload 用）
+            "is_final_attempt": is_final_attempt,
         },
     }
+    if is_final_attempt:
+        # 二遍重试：弹出后的暂缓队列写回 + 跳过会话缓存强制重提
+        # （force_reextract 由 Node3 消费后自清）
+        update["deferred_factories"] = deferred
+        update["force_reextract"] = True
+    return update

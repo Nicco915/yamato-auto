@@ -173,12 +173,17 @@ def extraction_node(state: AgentState) -> dict:
         logger.warning("[Node3] 工厂「%s」未匹配到文件夹，生成人工补录占位数据",
                        factory_name)
         cur["extracted_items"] = _placeholder_items(expected_skus, "no_folder_matched")
+        # W6a：提取失败标记，供 Node4 条件边分流暂缓队列
+        cur["extraction_ok"] = False
+        cur["failure_reason"] = "no_folder_matched"
         return {"current_factory_data": cur, "force_reextract": False}
 
     if _session_mod is None:
         logger.warning("[Node3] 提取引擎不可用（%s），使用 mock 数据",
                        _session_import_error or 'EXTRACTION_MOCK=1')
         cur["extracted_items"] = _mock_items(expected_skus, "mock")
+        # mock 视为成功（保证既有 mock 测试主流程不变），不写 failure_reason
+        cur["extraction_ok"] = True
         return {"current_factory_data": cur, "force_reextract": False}
 
     # ---- 缓存短路：后台预提取线程可能已跑完该工厂 ----
@@ -205,6 +210,11 @@ def extraction_node(state: AgentState) -> dict:
         if not items:
             cur["extracted_items"] = _placeholder_items(
                 expected_skus, "no_items_extracted")
+            # 缓存命中但 items 为空：等同提取失败，走暂缓/挂起分流
+            cur["extraction_ok"] = False
+            cur["failure_reason"] = "no_items_extracted"
+        else:
+            cur["extraction_ok"] = True
         return {"current_factory_data": cur, "force_reextract": False}
 
     try:
@@ -212,6 +222,8 @@ def extraction_node(state: AgentState) -> dict:
     except Exception as e:  # 提取异常不中断流转，转人工兜底
         logger.exception("[Node3] 提取引擎异常：%s，生成人工补录占位数据", e)
         cur["extracted_items"] = _placeholder_items(expected_skus, f"extraction_error: {e}")
+        cur["extraction_ok"] = False
+        cur["failure_reason"] = f"extraction_error: {e}"
         return {"current_factory_data": cur, "force_reextract": False}
 
     # 会话累积结果 → Node4 契约（ExtractedItem.model_dump() 字段已对齐）
@@ -233,5 +245,9 @@ def extraction_node(state: AgentState) -> dict:
         # 零容错：一条都没提出来绝不空转，全量占位交人工补录
         logger.warning("[Node3] 提取结果为空，生成人工补录占位数据")
         cur["extracted_items"] = _placeholder_items(expected_skus, "no_items_extracted")
+        cur["extraction_ok"] = False
+        cur["failure_reason"] = "no_items_extracted"
+    else:
+        cur["extraction_ok"] = True
 
     return {"current_factory_data": cur, "force_reextract": False}

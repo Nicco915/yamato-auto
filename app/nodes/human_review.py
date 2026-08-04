@@ -97,6 +97,13 @@ def human_review(state: AgentState) -> dict:
         "weight_diff_warn_ratio": get_settings().weight_diff_warn_ratio,
     }
 
+    # W6a：暂缓二遍重试仍失败的最终挂起，透传标记供审核页提示
+    # 「已重试仍失败，请人工补录或告知对照文件夹」（前端渲染本期不做）；
+    # 无此情形不加键，payload 结构对既有消费者保持兼容
+    if cur.get("is_final_attempt") and cur.get("extraction_ok") is False:
+        review_payload["final_attempt"] = True
+        review_payload["failure_reason"] = cur.get("failure_reason") or "unknown"
+
     logger.info("[Node5] 🔴 挂起等待人工审核：工厂「%s」，%d 个 SKU",
                 cur.get('factory_name'), len(items_payload))
 

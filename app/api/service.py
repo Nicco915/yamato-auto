@@ -58,7 +58,7 @@ def _make_progress_emitter(
     工厂全集/队列/当前工厂须从挂起现场取）。
     事件构造与回调整体 try/except：on_progress 抛异常绝不影响跑图。
     """
-    from app.graph import NODE1, NODE2, NODE3, NODE6
+    from app.graph import NODE1, NODE2, NODE3, NODE4B, NODE6
 
     seed = seed or {}
     allow = set(seed["factory_filter"]) if seed.get("factory_filter") else None
@@ -98,15 +98,30 @@ def _make_progress_emitter(
                                 "total": total,
                                 "message": f"装箱单解析完成，共 {total} 个工厂"}
                 elif node == NODE2 and factory:
-                    # 当前工厂刚出队列、在处理中，不计入 done；序号 = done+1
-                    done = max(popped - 1, 0)
-                    progress = {"node": node, "factory": factory, "done": done,
-                                "total": total,
-                                "message": f"开始处理 {factory}（{done + 1}/{total}）"}
+                    cur_data = value.get("current_factory_data") or {}
+                    if cur_data.get("is_final_attempt"):
+                        # W6a 暂缓二遍重试：不带序号（此时 pending 集合不变，
+                        # done+1 序号口径会失真）
+                        done = max(popped - 1, 0)
+                        progress = {"node": node, "factory": factory, "done": done,
+                                    "total": total,
+                                    "message": f"开始重试 {factory}（暂缓重试）"}
+                    else:
+                        # 当前工厂刚出队列、在处理中，不计入 done；序号 = done+1
+                        done = max(popped - 1, 0)
+                        progress = {"node": node, "factory": factory, "done": done,
+                                    "total": total,
+                                    "message": f"开始处理 {factory}（{done + 1}/{total}）"}
                 elif node == NODE3 and factory:
                     done = max(popped - 1, 0)
                     progress = {"node": node, "factory": factory, "done": done,
                                 "total": total, "message": f"{factory} 提取完成"}
+                elif node == NODE4B and factory:
+                    # W6a 暂缓：done 不计、total 不变（暂缓厂未写回不算完成）
+                    done = max(popped - 1, 0)
+                    progress = {"node": node, "factory": factory, "done": done,
+                                "total": total,
+                                "message": f"{factory} 提取失败，已暂缓，将在其余工厂处理完后重试"}
                 elif node == NODE6 and factory:
                     # 写回完成：当前工厂计入 done
                     progress = {"node": node, "factory": factory, "done": popped,
