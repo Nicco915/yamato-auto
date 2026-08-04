@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Annotated, Callable, Literal, Optional
@@ -60,6 +61,13 @@ from app.dispatcher.tools import TOOLS, Tool, validate_args, visible_tools
 logger = logging.getLogger(__name__)
 
 TOOL_RESULT_CAP = 6000  # 只读工具结果 JSON 序列化后回喂 LLM 的字符上限（同 loop.py）
+
+# 一次一确认的竞态防线：ToolNode 对同一条 AIMessage 的多个工具调用是
+# 线程池并发执行的（executor.map），「查 pending 为空 → preview → 存
+# pending」若非原子，并行双写会双双通过检查、后写覆盖先写（出两张卡）。
+# 模块级锁 + 双重检查（preview 前快查、存卡前锁内复查）保证一次一确认：
+# 先完成存卡者胜，后到者按「已有一个待确认的操作」拒绝（对外契约不变）。
+_PENDING_ACTION_LOCK = threading.Lock()
 
 
 # ---------------------------------------------------------------------------
@@ -225,7 +233,8 @@ def build_pending_action(tool_name: str, args: dict,
         return {"ok": False, "clarify": False, "action": None,
                 "msg_text": msg, "history_text": msg}
 
-    # 一次一确认（代码保险）：已有待确认操作时拒绝再发起
+    # 一次一确认（代码保险）：已有待确认操作时拒绝再发起（preview 前快查，
+    # 并发双写的最终防线在存卡前的锁内复查，见 _PENDING_ACTION_LOCK 注释）
     if session.pending_action:
         msg = "已有一个待确认的操作，请先确认或取消后再发起新的。"
         return {"ok": False, "clarify": False, "action": None,
@@ -253,7 +262,8 @@ def build_pending_action(tool_name: str, args: dict,
         return {"ok": True, "clarify": True, "action": None,
                 "msg_text": clarify_text, "history_text": clarify_text}
 
-    # 组信封（字段与 loop.py 确认门完全一致），服务端持有防篡改
+    # 组信封（字段与 loop.py 确认门完全一致），服务端持有防篡改；
+    # 存卡前锁内复查——并发双写时先完成存卡者胜，后到者按一次一确认拒绝
     action = {
         "kind": "dispatcher_tool",
         "tool": tool_name,
@@ -265,7 +275,12 @@ def build_pending_action(tool_name: str, args: dict,
         # W5 透传：工厂名对照预扫结果随信封留存，刷新恢复确认卡时仍完整
         "factory_scan": preview.get("factory_scan"),
     }
-    session.pending_action = action
+    with _PENDING_ACTION_LOCK:
+        if session.pending_action:
+            msg = "已有一个待确认的操作，请先确认或取消后再发起新的。"
+            return {"ok": False, "clarify": False, "action": None,
+                    "msg_text": msg, "history_text": msg}
+        session.pending_action = action
 
     sessions.record_tool(session, tool=tool_name,
                          args_summary=_args_summary(clean_args),
