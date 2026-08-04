@@ -1,6 +1,6 @@
 # 供应链单证自动化 — 项目进度总览
 
-> 最后更新：2026-08-03（后台预提取：审核不阻塞识别，见 6.12 节）
+> 最后更新：2026-08-04（调度 Agent React 引擎迁移，见 6.17 节）
 > 设计文档：`../agent设计/`（第一/二/三阶段、api接口以及异步机制、人工审核界面设计、提取agent背景prompt）
 
 ## 1. 项目目标
@@ -853,6 +853,67 @@ confirm_rejected`，均带 session_id+时间戳；敏感参数键脱敏；
   spy 门控计数（有 hint 走 executor、无 hint 与低置信走 system）/
   executor prompt 下工具链路连通性
 - 全量回归 10 个测试文件全绿
+
+## 6.17 调度 Agent React 引擎迁移（2026-08-04 完成，分支 feat/dispatcher-react-engine，worktree wt-react-engine 开发，10+1 commit 合入 main）
+
+**动机**：Triage 分诊架构（6.15/6.16）不够灵活——每条消息强制穿
+「意图分类→槽位合并→置信度路由」流水线，新增对话形态要同时改
+prompts/triage/__init__ 三个文件；分诊层与执行层职责反复踩坑
+（参数滴灌、blocked 转 clarify 等补丁越积越多）。
+
+**方案**：双引擎并存 + 环境变量切换——`DISPATCHER_ENGINE=legacy|react`，
+legacy 即现有 triage 链路（保持不动），react 用
+`langgraph.prebuilt.create_react_agent` 直接替代分诊+执行两段。
+**生产 .env 已切 react**，回退只需改回 legacy（零代码改动）。
+
+**spike 先行实证**（迁移前验证路线可行）：qwen native tool_calls
+解析率 100%、写工具零幻觉、参数滴灌 5/5、baseline 14/14——
+判定 create_react_agent 路线可行后才开始正式开发。
+
+**新文件**（`app/dispatcher/`）：
+- `lc_llm.py`：Qwen BaseChatModel 适配器——薄包 llm_client，
+  保留 debug_log/日志插桩，不复制 HTTP/重试逻辑
+- `lc_tools.py`：影子工具层——闭包工厂绑定 session；
+  **写工具只 preview 存 pending_action**（真正执行仍走
+  confirm→execute_confirmed）；`request_clarification(target_action,
+  args, question)` 黄灯工具；一次一确认锁
+- `react_engine.py`：引擎本体（图构建/消息适配/结果映射）
+- `prompts.py` 新增 `react_prompt`（rules 段与 executor 复用同一来源）
+
+**黄灯机制保留方式**：新增 `request_clarification(target_action, args,
+question)` 工具 + soft_pending——LLM 主动调该工具表示「缺参/存疑」，
+引擎重建为澄清回复；**用户答「是」不进 LLM，直接出确认卡**
+（与 legacy 确认门语义对齐）。
+
+**关键技术实证**（langgraph 1.2.9，留给后来者）：
+1. `Command(goto=END)` 在 1.2.9 中是 **no-op**——硬停工具必须用
+   `StructuredTool(return_direct=True)` + `Command(update=[ToolMessage
+   (确认文案)])`，且**文案必须放在 ToolMessage.content**（放其他字段
+   用户看不到）
+2. ToolNode 线程池**并发执行**同一 AIMessage 的多个工具调用——
+   pending 独占必须加锁双重检查（先查再写非原子，并发下会双写）
+3. v2 图超步**不抛异常**——返回 remaining_steps 哨兵 AIMessage，
+   兜底识别要走双路径（异常 + 哨兵消息两条路都得接）
+4. 陈旧 pending_action 遮蔽新问题 bug——pending 身份比较
+   只认本轮新建的（历史残留 pending 不得拦截新问题）
+
+**测试**：
+- `validation/_dual_engine.py`：同剧本双注——一份测试剧本 legacy/react
+  各注一遍，9 个测试双引擎可跑；6 个 triage 专属测试硬钉 legacy
+  （且 app import 后**二次重钉**防 dotenv override 盖回环境变量）
+- `dispatcher_react_engine_test.py`（新增，8 用例）
+- 全套 18 个测试文件 × 2 引擎全绿（仅 triage_fewshot_test 用例 2
+  为历史遗留失败，与本次迁移无关）
+- **E2E（真实 qwen + FastAPI）**：只读查询 / 缺参追问 / 确认卡 /
+  SSE 事件 / history 端点 args 不泄露 / 篡改确认 400 全部验证通过
+
+**安全不变量未变**（迁移铁律）：写操作唯一执行通道
+confirm→execute_confirmed（TTL + 三道防线）、pending_action
+服务端持有（防客户端伪造）、一次一确认、回复纯文本。
+
+**后续待办**：平行运行观察 `dispatcher.log` 1-2 周 → 删 legacy
+（triage.py、run_dispatch、槽位字段、execute_confirmed 移 confirm.py）
+→ 更新 CLAUDE.md。
 
 ## 7. 关键设计决策记录
 
