@@ -435,6 +435,20 @@ def _preview_rerun(args: dict) -> dict:
         if not next_nodes:
             warnings.append("该批次未处于挂起状态：仅挂起批次可重跑，确认后执行会报错")
 
+        # 整批重跑醒目警告：与挂起状态警告相互独立，始终追加
+        requirements = values.get("downstream_requirements") or {}
+        if requirements:
+            warnings.append(
+                f"⚠️ 本操作是整批重跑：将从第 1 个工厂重新开始，"
+                f"全部 {len(requirements)} 个工厂需重新提取并重新人工审核，"
+                f"已审核结论作废。若只需重试当前识别失败的工厂，"
+                f"请改用 retry_factory 工具。")
+        else:
+            warnings.append(
+                "⚠️ 本操作是整批重跑：所有工厂需重新提取并重新人工审核，"
+                "已审核结论作废。若只需重试当前识别失败的工厂，"
+                "请改用 retry_factory 工具。")
+
         for key, label in (("upstream_root", "上游工厂文件夹"),
                            ("downstream_file_path", "下游装箱单")):
             old = values.get(key) or "（未设置，走 .env 缺省）"
@@ -949,7 +963,8 @@ TOOLS: dict[str, Tool] = {
     ),
     "rerun": Tool(
         name="rerun",
-        description="让挂起中的批次带新路径从 Node1 重跑（回到 Node5 挂起）。"
+        description="整批重跑（所有工厂重新提取+重新审核）。"
+                    "让挂起中的批次带新路径从 Node1 重跑（回到 Node5 挂起）。"
                     "写操作：须先向操作员展示 preview 并获得确认后才执行。"
                     "仅挂起批次可重跑；已完成批次会报错。",
         parameters={
