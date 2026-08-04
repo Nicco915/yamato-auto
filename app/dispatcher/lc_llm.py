@@ -171,12 +171,33 @@ class QwenDispatcherChatModel(BaseChatModel):
     def _generate(self, messages: list[BaseMessage], stop=None,
                   run_manager=None, **kwargs) -> ChatResult:
         """同步生成一步：mock 剧本 → on_progress → 转换 → 调 llm_client → 回包。"""
-        # mock 分支：DISPATCHER_MOCK=1 时弹剧本，不碰网络（确定性测试关键口）
+        # mock 分支：DISPATCHER_MOCK=1 时弹剧本，不碰网络（确定性测试关键口）。
+        # 观测口径与真实分支一致——llm_thinking 进度 + debug_log 请求/响应，
+        # 迁移期排错先翻 dispatcher.log 的习惯不变；mode 固定 "native-lc"
+        # （react 引擎只有 native tool_calls 一种调用形态，mock 只是替换了
+        # 生成来源，与旧 loop.py mock 记 "mock" 对应——双引擎测试按
+        # DISPATCHER_ENGINE 取期望 mode）
         if os.environ.get("DISPATCHER_MOCK") == "1":
+            self._round += 1
+            if self.on_progress:
+                try:
+                    self.on_progress({"type": "llm_thinking", "round": self._round})
+                except Exception:  # noqa: BLE001 进度回调绝不弄挂 LLM 调用
+                    pass
+            oai_messages = self._to_openai_messages(messages)
+            debug_log.log_llm_request(session_id=self.session_id,
+                                      round_no=self._round, mode="native-lc",
+                                      messages=oai_messages)
             if not _SCRIPT:
                 ai = AIMessage(content="[mock] 剧本已用尽")
             else:
                 ai = _script_to_message(_SCRIPT.pop(0))
+            debug_log.log_llm_response(
+                session_id=self.session_id, round_no=self._round,
+                step={"final_text": None if ai.tool_calls else ai.content,
+                      "tool_calls": [{"id": tc["id"], "name": tc["name"],
+                                      "args": tc.get("args") or {}}
+                                     for tc in ai.tool_calls]})
             return ChatResult(generations=[ChatGeneration(message=ai)])
 
         self._round += 1
