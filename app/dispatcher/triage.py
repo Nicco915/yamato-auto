@@ -16,6 +16,9 @@ qa 走知识库、action 进 Executor（loop）、clarify 直接反问用户。
 - L2 操作记忆只作背景上下文注入 prompt（帮分诊器理解「再跑一次」「那个
   批次」这类指代），绝不参与槽位填充——槽位只来自本轮消息与 session 里
   已确认的槽位，防止旧记忆污染新意图；
+- L1 槽位（current_target_tool / current_slots）以【进行中的任务】形式
+  注入 prompt（帮分诊器理解「是的」「对」这类针对进行中任务的短答），
+  但槽位合并仍由代码侧 merge_slots 完成，模型只输出本轮新提取参数；
 - 分诊层不碰 items / alias_decisions / skip_processed——它们由 executor
   多轮协商产生，prompt 侧已明确禁止模型提取，本层 REQUIRED_SLOTS 也不列。
 """
@@ -82,9 +85,9 @@ def run_triage(message: str, session: DispatcherSession, *, phase: int = 2,
     """执行一次分诊，返回 TriageResult；任何失败返回 None（降级旧循环）。
 
     流程：mock 剧本 → 开关 → 组装 messages（triage_prompt + L2 上下文 +
-    最近对话历史）→ chat_completion(json_mode) → Pydantic 校验
-    （失败重试一次，再失败 None）→ Python 侧后校验 → triage 进度事件。
-    绝不抛异常。
+    L1 槽位上下文 slots_context + 最近对话历史）→ chat_completion(json_mode)
+    → Pydantic 校验（失败重试一次，再失败 None）→ Python 侧后校验 →
+    triage 进度事件。绝不抛异常。
     """
     # 1. 总开关：off 时零行为变化（优先级高于 mock 剧本——关停分诊就是
     #    全量关停，连测试剧本也不该再消耗）
@@ -112,10 +115,20 @@ def run_triage(message: str, session: DispatcherSession, *, phase: int = 2,
         except Exception:  # noqa: BLE001 L2 记忆加载失败不阻塞主流程
             pass
 
-    # 4. 组装 messages：system = triage_prompt（含 L2 + 最近对话历史）
+    # 4. 组装 messages：system = triage_prompt（含 L2 + L1 槽位 + 最近对话历史）
+    # L1 槽位上下文：进行中的任务与已收集参数注入 prompt（帮分诊器理解
+    # 「是的」「对」这类针对进行中任务的短答；槽位合并仍由代码侧
+    # merge_slots 完成，模型只输出本轮新提取参数）
+    slots_context = None
+    if session.current_target_tool:
+        slots_context = {
+            "target_tool": session.current_target_tool,
+            "slots": dict(session.current_slots),
+        }
     messages = [
         {"role": "system", "content": prompts.triage_prompt(
-            phase=phase, l2_context=l2_context, history=session.history)},
+            phase=phase, l2_context=l2_context, history=session.history,
+            slots_context=slots_context)},
         {"role": "user", "content": message},
     ]
 
