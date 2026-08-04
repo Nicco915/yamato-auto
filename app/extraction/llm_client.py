@@ -7,7 +7,7 @@
 - VISION_MODEL          默认 Qwen/Qwen2.5-VL-72B-Instruct
 - TEXT_MODEL            默认 Qwen/Qwen2.5-72B-Instruct
 
-可靠性：超时 120s；429/5xx 指数退避重试最多 3 次；每次调用记录 token 用量。
+可靠性：超时 300s；429/5xx 指数退避重试最多 3 次；每次调用记录 token 用量。
 
 可观测性（L4）：每次调用记 INFO（用途/模型/耗时/tokens/finish_reason），
 finish_reason=length（max_tokens 截断，历史"假死"事故指纹）单独 WARNING，
@@ -40,7 +40,7 @@ DEFAULT_BASE_URL = "https://api.siliconflow.cn/v1"
 DEFAULT_VISION_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
 DEFAULT_TEXT_MODEL = "Qwen/Qwen2.5-72B-Instruct"
 
-REQUEST_TIMEOUT = 120  # 秒
+REQUEST_TIMEOUT = 300  # 秒
 MAX_API_RETRIES = 3  # 429/5xx 时最多重试 3 次
 
 DEBUG_TRUNC_LIMIT = 500  # 请求/响应原文 DEBUG 日志的截断长度
