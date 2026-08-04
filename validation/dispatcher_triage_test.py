@@ -10,7 +10,10 @@ dispatcher_read/write 测试隔离）：
    loop（monkeypatch 捕获 hint），rerun 写工具走确认门 pending_confirmation；
 4. 工具切换：旧 create_batch 槽位被 rerun 替换，旧参数不合并；
 5. 中止：clarify + target_tool=None → 旧槽位清空，reply 透传；
-6. 置信度边界：confidence=0.8（不满足 >0.8）→ 走旧循环不带 hint；
+6. 置信度边界：confidence=0.8（不满足 >0.8）+ 只读工具 → 走旧循环不带 hint
+   （2026-08-04 黄灯区改造：0.8+写工具现在走黄灯确认式反问，见
+   triage_soft_confirm_test.py；本用例改用只读工具 list_batches 保持
+   「低置信走旧循环」的原测试意图）；
 7. blocked 预览：create_batch 带不存在 folder 的 alias_decisions →
    业务硬校验拦截转 clarify（不出确认卡），槽位清空、pending_action 为空；
 8. 开关关闭：DISPATCHER_TRIAGE=off 时 triage 剧本不被消费，直走旧循环；
@@ -205,12 +208,17 @@ def case_5_abort() -> None:
 
 
 def case_6_confidence_boundary() -> None:
-    """置信度边界：confidence=0.8（不满足 >0.8）→ 走旧循环不带 hint。"""
+    """置信度边界：confidence=0.8（不满足 >0.8）+ 只读工具 → 走旧循环不带 hint。
+
+    2026-08-04 黄灯区改造：0.8+写工具（原 rerun 剧本）在新行为下走黄灯
+    确认式反问，本用例改用只读工具 list_batches 保持「低置信走旧循环」
+    的原测试意图；写工具黄灯行为由 triage_soft_confirm_test.py 覆盖。
+    """
     sid = "DISP-TRIAGE-TEST-C6"
     set_scripts(
         triage_items=[{
-            "intent": "action", "target_tool": "rerun",
-            "extracted_args": {"thread_id": "DISP-TRIAGE-TEST-C6-BATCH"},
+            "intent": "action", "target_tool": "list_batches",
+            "extracted_args": {},
             "confidence": 0.8,
         }],
         loop_items=[{"final_text": "旧循环处理结果"}],
@@ -226,8 +234,7 @@ def case_6_confidence_boundary() -> None:
 
     dispatcher.run_dispatch = spy
     try:
-        r = dispatcher.handle_message("重跑批次 DISP-TRIAGE-TEST-C6-BATCH",
-                                      session_id=sid)
+        r = dispatcher.handle_message("现在有哪些批次？", session_id=sid)
     finally:
         dispatcher.run_dispatch = orig
     assert r["status"] == "ok" and r["message"] == "旧循环处理结果", r
@@ -328,7 +335,7 @@ CASES = [
     ("3. 两轮槽位合并（带 hint 进 loop + 确认门）", case_3_two_turn_slot_merge),
     ("4. 工具切换（旧槽位作废）", case_4_tool_switch),
     ("5. 中止（槽位清空 + reply 透传）", case_5_abort),
-    ("6. 置信度边界 0.8（不带 hint）", case_6_confidence_boundary),
+    ("6. 置信度边界 0.8 + 只读工具（不带 hint）", case_6_confidence_boundary),
     ("7. blocked 预览转 clarify", case_7_blocked_preview),
     ("8. 开关关闭（triage 剧本不消费）", case_8_switch_off),
     ("9. mock 空剧本降级旧路", case_9_mock_degrade),

@@ -16,7 +16,11 @@ _get_session/_record_turn（TTL 惰性清理 + 总量淘汰最旧），但**独�
   什么、操作员批没批"，也是排查"它为什么说已执行"类事故的依据；
 - current_slots / current_target_tool：Triage 分诊层的多轮参数收集
   槽位——操作员分多轮才把写工具参数说全时，已提取参数暂存于此，
-  凑齐进 loop 生成 pending_action、或用户中止/换话题时清空。
+  凑齐进 loop 生成 pending_action、或用户中止/换话题时清空；
+- soft_pending：Triage 黄灯区（0.6–0.8 置信的写工具请求）的软挂起
+  状态——确认式反问已发出、等操作员一轮内答复，"是"则按已存意图
+  直接进 loop（不再过 triage），"算了"则全清，其他消息清挂起后
+  正常走新一轮分诊。
 
 存储为进程内 dict：重启即丢（可接受，pending 状态本就短命），需要跨重启
 持久时再迁 app/db。锁只保护 dict 读写；session 本体在锁外被修改（含 LLM
@@ -39,7 +43,7 @@ class DispatcherSession:
     """单会话状态：对话历史 + 待确认写操作信封 + 工具调用审计流水。"""
 
     __slots__ = ("history", "pending_action", "tool_history", "updated_at",
-                 "current_slots", "current_target_tool")
+                 "current_slots", "current_target_tool", "soft_pending")
 
     def __init__(self) -> None:
         # 发给 LLM 的精简历史：{"role": "user"/"assistant", "content": str}
@@ -53,6 +57,9 @@ class DispatcherSession:
         # Triage 多轮参数收集槽位：未凑齐的工具参数 + 对应目标工具名
         self.current_slots: dict = {}
         self.current_target_tool: str | None = None
+        # Triage 黄灯区软挂起（一轮有效）：
+        # {"target_tool": str, "slots": dict, "question": str, "armed": True}
+        self.soft_pending: dict | None = None
 
 
 _SESSIONS: dict[str, DispatcherSession] = {}
@@ -140,6 +147,27 @@ def set_slots(session: DispatcherSession, target_tool: str | None,
 
 
 def clear_slots(session: DispatcherSession) -> None:
-    """清空槽位状态（pending_action 创建 / confirm 终态 / qa 换话题 / 用户中止时调用）。"""
+    """清空槽位状态（pending_action 创建 / confirm 终态 / qa 换话题 / 用户中止时调用）。
+
+    软挂起 soft_pending 一并清：换话题/中止/终态时状态必须一致归零，
+    否则下一轮会被入口短路误消费。
+    """
     session.current_slots = {}
     session.current_target_tool = None
+    session.soft_pending = None
+
+
+def set_soft_pending(session: DispatcherSession, tool: str, slots: dict,
+                     question: str) -> None:
+    """写入黄灯区软挂起（确认式反问已发出，等操作员一轮内答复）。"""
+    session.soft_pending = {
+        "target_tool": tool,
+        "slots": dict(slots or {}),
+        "question": question,
+        "armed": True,
+    }
+
+
+def clear_soft_pending(session: DispatcherSession) -> None:
+    """清空黄灯区软挂起（软确认提升 / 软否定 / 换话题时调用）。"""
+    session.soft_pending = None
