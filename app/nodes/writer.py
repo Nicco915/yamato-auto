@@ -7,6 +7,8 @@
      （与既有填好文件布局一致：第 32/33/34 列），已存在则跳过；
    - 净重 = 单件净重 × SOTOBAKO_D_HACCHU_SU，毛重同理，2 位小数；
    - 中文品名 = 主数据 name_cn（新 SKU 经 Node5 人工补录）；
+   - 写入单元格格式：字号 9 + 四周细边框（2026-08-04 用户定），
+     字体族/加粗保留单元格原有设置；
    - 表格格式严格不变：全程 openpyxl，禁止 pandas 写入。
 2. 写数据库（Upsert）：
    - 新 SKU：INSERT 人工补录的多语言品名/HS 编码/单件重量；
@@ -18,6 +20,7 @@ from copy import copy
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.styles import Border, Side
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -31,6 +34,20 @@ logger = logging.getLogger(__name__)
 # 待添加的三列（插入到 SHOHIN_MEI_E 之后，与既有填好文件布局一致）
 NEW_COL_NAMES = ("中文品名", "净重", "毛重")
 INSERT_AFTER_COL = "SHOHIN_MEI_E"
+
+# 写入单元格格式（2026-08-04 用户定）：字号 9 + 四周细边框
+WRITE_FONT_SIZE = 9
+_THIN_SIDE = Side(style="thin")
+WRITE_BORDER = Border(left=_THIN_SIDE, right=_THIN_SIDE,
+                      top=_THIN_SIDE, bottom=_THIN_SIDE)
+
+
+def _apply_write_format(cell) -> None:
+    """写入单元格格式：字号 9 + 四周细边框；字体族/加粗/颜色保留原设置。"""
+    font = copy(cell.font)   # StyleProxy → Font，可改后再赋值
+    font.sz = WRITE_FONT_SIZE
+    cell.font = font
+    cell.border = WRITE_BORDER
 
 
 def _ensure_output_copy(state: AgentState) -> Path:
@@ -95,11 +112,14 @@ def _write_excel(state: AgentState, out_path: Path) -> int:
             qty = ws.cell(row=excel_row, column=col_qty).value
             qty = float(qty) if isinstance(qty, (int, float)) else 0.0
             if name_cn:
-                ws.cell(row=excel_row, column=col_cn, value=name_cn)
+                cell = ws.cell(row=excel_row, column=col_cn, value=name_cn)
+                _apply_write_format(cell)
             if unit_net is not None:
-                ws.cell(row=excel_row, column=col_net, value=round(unit_net * qty, 2))
+                cell = ws.cell(row=excel_row, column=col_net, value=round(unit_net * qty, 2))
+                _apply_write_format(cell)
             if unit_gross is not None:
-                ws.cell(row=excel_row, column=col_gross, value=round(unit_gross * qty, 2))
+                cell = ws.cell(row=excel_row, column=col_gross, value=round(unit_gross * qty, 2))
+                _apply_write_format(cell)
             written += 1
     wb.save(out_path)
     return written
