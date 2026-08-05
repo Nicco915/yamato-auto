@@ -19,6 +19,12 @@ Node5 补录，不中断流转。
 对剩余工厂逐个预提取并存入 session JSON；本节点发现 session 已有结果时
 直接加载跳过 LLM 调用——实现"审核工厂 A 时提取工厂 B，审核不阻塞提取"。
 保存用原子写入（.tmp → rename），防并发读脏数据。
+
+缓存新鲜度校验（2026-08-05，方案C兜底）：会话缓存只按工厂名命名、无批次
+维度，上一批次的 JSON 可能残留。命中前先校验缓存内的路径证据
+（targets[].path / source_file）是否仍落在本批次 upstream_root 之下，
+不在（或无任何可用路径证据）则视为陈旧、弃缓存重提，防"改了路径但
+没清缓存""rerun_with_paths 改路径重跑"等场景全厂误用上一批次数据。
 """
 import json
 import logging
@@ -133,12 +139,71 @@ def _run_factory_session(folder_path: str, factory_name: str,
     return session
 
 
-def _try_load_cached_session(factory_name: str) -> dict | None:
+def _looks_like_path(value: str) -> bool:
+    """区分真实文件路径与 "mock"/"no_folder_matched" 这类非路径标记。
+
+    真路径必含路径分隔符（/ 或 \\）或 Windows 盘符前缀（如 D:）；
+    纯标记词不含分隔符，跳过不作为新鲜度证据。
+    """
+    if "/" in value or "\\" in value:
+        return True
+    # Windows 盘符退化形态（无分隔符的 "D:xxx"，防御性判断）
+    return len(value) >= 2 and value[0].isalpha() and value[1] == ":"
+
+
+def _collect_path_evidence(data: dict) -> list[str]:
+    """从缓存 JSON 收集路径证据：优先 targets[].path，
+    targets 无可用路径时回落 items[*].source_file / no_code_items[*].source_file。
+    非路径标记（mock/no_folder_matched 等）一律跳过。"""
+    target_paths = [t.get("path") for t in (data.get("targets") or [])]
+    evidence = [p for p in target_paths
+                if isinstance(p, str) and _looks_like_path(p)]
+    if evidence:
+        return evidence
+    items = list((data.get("items") or {}).values())
+    items += list(data.get("no_code_items") or [])
+    return [i["source_file"] for i in items
+            if isinstance(i.get("source_file"), str)
+            and _looks_like_path(i["source_file"])]
+
+
+def _is_cache_fresh(data: dict, factory_name: str, upstream_root: str) -> bool:
+    """校验缓存路径证据是否仍属于当前批次的上游根目录。
+
+    判定规则（宁可重提、不误用旧批次数据）：
+    - 缓存里没有任何可用路径证据 → 陈旧；
+    - 至少一条证据位于 upstream_root 之下且该文件仍存在 → 新鲜；
+    - 其余情况（全部证据不在 root 下 / 在 root 下但文件已删）→ 陈旧。
+    """
+    root = Path(upstream_root).expanduser().resolve()
+    evidence = _collect_path_evidence(data)
+    if not evidence:
+        logger.info("[Node3] 工厂「%s」会话缓存无任何路径证据，视为陈旧弃用"
+                    "（当前上游根目录 %s），走正常提取", factory_name, root)
+        return False
+    for raw in evidence:
+        try:
+            p = Path(raw).expanduser().resolve()
+        except (OSError, RuntimeError):
+            continue  # resolve 失败（如符号链接环）不致命，跳过该条
+        if p.is_relative_to(root) and p.exists():
+            return True
+    logger.info("[Node3] 工厂「%s」会话缓存视为陈旧弃用：缓存示例路径 %s "
+                "不在当前上游根目录 %s 之下（或文件已删），走正常提取",
+                factory_name, evidence[0], root)
+    return False
+
+
+def _try_load_cached_session(factory_name: str,
+                             upstream_root: str | None = None) -> dict | None:
     """尝试从已落盘的 session JSON 加载提取结果。
 
-    返回 None 表示缓存未命中（文件不存在 / JSON 损坏 / 无 items），
+    返回 None 表示缓存未命中（文件不存在 / JSON 损坏 / 无 items / 缓存陈旧），
     调用方应走正常提取流程。JSON 损坏时只记 warning 不抛异常——
     可能是后台预提取正在写入（虽已原子 rename，但极端情况下仍可能）。
+
+    upstream_root 为 None 时不做新鲜度校验（兼容预提取等既有调用方）；
+    给出时按 _is_cache_fresh 规则校验，陈旧缓存视同未命中。
     """
     path = _SESSIONS_DIR / f"{factory_name}.json"
     if not path.is_file():
@@ -152,6 +217,9 @@ def _try_load_cached_session(factory_name: str) -> dict | None:
     items = data.get("items") or {}
     if not items and not data.get("no_code_items"):
         return None  # 空会话（只有元数据无提取结果），不算命中
+    if upstream_root is not None and not _is_cache_fresh(
+            data, factory_name, upstream_root):
+        return None  # 陈旧缓存（疑似上一批次残留），视同未命中
     return data
 
 
@@ -189,7 +257,11 @@ def extraction_node(state: AgentState) -> dict:
     # ---- 缓存短路：后台预提取线程可能已跑完该工厂 ----
     if force:
         logger.info("[Node3] 工厂「%s」：强制重提，跳过会话缓存", factory_name)
-    cached = None if force else _try_load_cached_session(factory_name)
+    # 新鲜度校验（方案C兜底）：以本批次 upstream_root 判定缓存是否陈旧，
+    # state 缺省时回落 .env 缺省上游根目录（与 folder_router 口径一致）
+    upstream_root = state.get("upstream_root") or get_settings().upstream_root
+    cached = None if force else _try_load_cached_session(
+        factory_name, upstream_root)
     if cached is not None:
         items = [dict(d) for d in (cached.get("items") or {}).values()]
         items += [dict(d) for d in (cached.get("no_code_items") or [])]
