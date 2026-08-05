@@ -58,10 +58,12 @@ def test_state_transitions() -> Path:
         (upstream / name).mkdir(parents=True, exist_ok=True)
 
     # 替身：缓存厂命中缓存；失败厂抛 TimeoutError；成功厂正常返回
+    # （fake_load 第二参数对齐 _try_load_cached_session 新签名：
+    # 预提取调用点已接入 upstream_root 新鲜度校验，替身收下但不使用）
     orig_load = extraction_node._try_load_cached_session
     orig_run = extraction_node._run_factory_session
 
-    def fake_load(factory):
+    def fake_load(factory, upstream_root=None):
         return {"items": {"SKU1": {}}} if factory == "缓存厂" else None
 
     def fake_run(folder_path, factory, expected_skus):

@@ -309,8 +309,10 @@ def _pre_extract_factories(
     progress = _PreExtractProgress(thread_id, factories) if thread_id else None
 
     for factory in factories:
-        # 缓存已存在则跳过（可能是前次预提取或旧批次留下的）
-        if _try_load_cached_session(factory) is not None:
+        # 缓存已存在且新鲜（路径证据仍在当前批次 upstream_root 之下）则跳过；
+        # 新鲜度校验是 rerun_with_paths 改路径重跑场景的兜底：旧根目录留下
+        # 的缓存视为陈旧，照常重提，不误用上一批次数据
+        if _try_load_cached_session(factory, str(root_path)) is not None:
             logger.info("[预提取] 工厂「%s」：缓存已存在，跳过", factory)
             if progress:
                 progress.update(factory, "cached")
@@ -1065,14 +1067,41 @@ _SESSION_DONE_STATUSES = ("complete_auto", "complete_manual")
 _SESSION_PARTIAL_STATUSES = ("collecting", "waiting_pl")
 
 
+def _latest_archived_session(factory: str) -> Path | None:
+    """在 sessions/_archive/ 下找最新归档批次目录里的 {factory}.json。
+
+    只在主路径未命中时被调用（避免每次预检都遍历归档）；归档批次目录
+    按 mtime 取最新（实现最简单，且归档后目录不再变动，mtime 即归档时刻）。
+    _archive 不存在/为空/任何 IO 异常都返回 None（视为无证据），绝不抛异常。
+    """
+    archive_root = SESSIONS_DIR / _ARCHIVE_DIR_NAME
+    try:
+        if not archive_root.is_dir():
+            return None
+        batch_dirs = [d for d in archive_root.iterdir() if d.is_dir()]
+        if not batch_dirs:
+            return None
+        latest = max(batch_dirs, key=lambda d: d.stat().st_mtime)
+        candidate = latest / f"{factory}.json"
+        return candidate if candidate.is_file() else None
+    except OSError:
+        return None
+
+
 def _session_status_light(factory: str) -> tuple[str | None, str | None]:
     """轻量读 sessions/{factory}.json，只取 (status, updated_at)，不算 coverage。
 
-    文件不存在/损坏返回 (None, None)。
+    主路径未命中时回读 sessions/_archive/ 最新归档批次目录中的同名文件：
+    归档是批次边界（方案A 新批次启动会把上一批次 session 整体移入
+    _archive），预检的「已处理」记忆需要跨批次回看最近一次归档，否则
+    「提过完成但未审核落库」的工厂在新批次预检中被误判为未处理。
+    文件不存在/归档为空/JSON 损坏一律静默回落，返回 (None, None)。
     """
     path = SESSIONS_DIR / f"{factory}.json"
     if not path.is_file():
-        return None, None
+        path = _latest_archived_session(factory)
+        if path is None:
+            return None, None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 损坏的会话文件按无会话处理
