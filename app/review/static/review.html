@@ -709,9 +709,10 @@ function submitReview() {
 async function doSubmit() {
   const btn = $("btn-submit");
   btn.disabled = true; btn.textContent = "提交中…";
-  // 清理前端临时标记
+  // 清理前端临时标记；有改动的项显式带上 is_human_edited（后端比对之外的冗余保险）
   const submitItems = items.map((it) => {
     const c = { ...it };
+    if (c._modified) c.is_human_edited = true;
     delete c._modified;
     return c;
   });
