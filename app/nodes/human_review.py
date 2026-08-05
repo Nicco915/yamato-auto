@@ -67,6 +67,23 @@ def _norm_bool(v):
     return None  # 无法识别视为未填写，不触发更新
 
 
+def _detect_compliance_edits(h_item: dict, base: dict) -> bool:
+    """检测人工是否修改了合规字段（中文品名/HS/商检等）：
+    老 SKU 原值在 db_record，需回退；归一化后 None 视为未改。
+    """
+    db = base.get("db_record") or {}
+    for f in ("name_cn", "name_en", "name_jp", "hs_code"):
+        new_v = _norm_text(h_item.get(f))
+        old_v = _norm_text(base.get(f) if base.get(f) is not None else db.get(f))
+        if new_v is not None and new_v != old_v:
+            return True
+    new_insp = _norm_bool(h_item.get("inspection_required"))
+    old_insp = _norm_bool(base.get("inspection_required")
+                          if base.get("inspection_required") is not None
+                          else db.get("inspection_required"))
+    return new_insp is not None and new_insp != old_insp
+
+
 def human_review(state: AgentState) -> dict:
     # L2 日志关联：从 state 重绑当前工厂名（多工厂 resume 链上 submit 拷贝的
     # context 残留上一工厂）；interrupt 恢复后节点从头重跑，入口绑定对
@@ -153,19 +170,8 @@ def human_review(state: AgentState) -> dict:
             for k in ("total_quantity", "total_net_weight", "total_gross_weight")
         )
 
-        # 检测人工是否修改了合规字段（中文品名/HS/商检等）：
-        # 老 SKU 原值在 db_record，需回退；归一化后 None 视为未改
-        db = base.get("db_record") or {}
-        for f in ("name_cn", "name_en", "name_jp", "hs_code"):
-            new_v = _norm_text(h_item.get(f))
-            old_v = _norm_text(base.get(f) if base.get(f) is not None else db.get(f))
-            if new_v is not None and new_v != old_v:
-                edited = True
-        new_insp = _norm_bool(h_item.get("inspection_required"))
-        old_insp = _norm_bool(base.get("inspection_required")
-                              if base.get("inspection_required") is not None
-                              else db.get("inspection_required"))
-        if new_insp is not None and new_insp != old_insp:
+        # 检测人工是否修改了合规字段（中文品名/HS/商检等）
+        if _detect_compliance_edits(h_item, base):
             edited = True
 
         # 覆写提取数据（人工只改原始数值，不需要也不应该自己算单重）
