@@ -13,80 +13,57 @@ from app.split.schemas import RawItem
 def load_filled_excel(path: str | Path) -> list[RawItem]:
     """读取 filled ContentsOfTheContainer，只取有数据的行（跳过表头）。
 
-    字段映射（1-based 列号）：
-      KANRI_NO(1)、MINATO_MEI_KJ(19)、CONTAINER_MEI(12)、
-      MAKER_MEI_KJ(25)、SHOHIN_CD(29)、净重(33)、毛重(34)、
-      SOTOBAKO_D_HACCHU_SU(36)
+    按表头列名定位（列顺序变化不影响），所需列：
+      KANRI_NO、MINATO_MEI_KJ、CONTAINER_MEI、MAKER_MEI_KJ、
+      SHOHIN_CD、净重、毛重、SOTOBAKO_D_HACCHU_SU
 
     表头在第 1 行，数据从第 2 行开始。跳过 KANRI_NO 为空的行。
+    缺列时抛 ValueError。
     """
+    REQUIRED = [
+        "KANRI_NO", "MINATO_MEI_KJ", "CONTAINER_MEI", "MAKER_MEI_KJ",
+        "SHOHIN_CD", "净重", "毛重", "SOTOBAKO_D_HACCHU_SU",
+    ]
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb.active
 
+    header = [str(c.value).strip() if c.value is not None else "" for c in ws[1]]
+    missing = [n for n in REQUIRED if n not in header]
+    if missing:
+        wb.close()
+        raise ValueError(f"filled Excel 缺少必需列: {missing}")
+    col = {name: header.index(name) + 1 for name in REQUIRED}  # 1-based
+
+    def num(v, as_int=False):
+        if v is None:
+            return None
+        try:
+            return int(v) if as_int else float(v)
+        except (ValueError, TypeError):
+            return None
+
     items: list[RawItem] = []
     for row_idx in range(2, ws.max_row + 1):
-        kanri_no = ws.cell(row=row_idx, column=1).value
-        if kanri_no is None:
+        kanri_val = ws.cell(row=row_idx, column=col["KANRI_NO"]).value
+        if kanri_val is None:
             continue
-        kanri_no = str(kanri_no).strip()
+        kanri_no = str(kanri_val).strip()
         if not kanri_no:
             continue
 
-        # Port (col 19)
-        port_val = ws.cell(row=row_idx, column=19).value
-        port = str(port_val).strip() if port_val is not None else ""
-
-        # Container type (col 12)
-        ctype_val = ws.cell(row=row_idx, column=12).value
-        container_type = str(ctype_val).strip() if ctype_val is not None else ""
-
-        # Maker (col 25)
-        maker_val = ws.cell(row=row_idx, column=25).value
-        maker = str(maker_val).strip() if maker_val is not None else ""
-
-        # SKU (col 29)
-        sku_val = ws.cell(row=row_idx, column=29).value
-        sku = str(sku_val).strip() if sku_val is not None else ""
-
-        # 净重 (col 33)
-        nw_val = ws.cell(row=row_idx, column=33).value
-        if nw_val is not None:
-            try:
-                net_weight = float(nw_val)
-            except (ValueError, TypeError):
-                net_weight = None
-        else:
-            net_weight = None
-
-        # 毛重 (col 34)
-        gw_val = ws.cell(row=row_idx, column=34).value
-        if gw_val is not None:
-            try:
-                gross_weight = float(gw_val)
-            except (ValueError, TypeError):
-                gross_weight = None
-        else:
-            gross_weight = None
-
-        # 件数 (col 36)
-        pcs_val = ws.cell(row=row_idx, column=36).value
-        if pcs_val is not None:
-            try:
-                pcs = int(pcs_val)
-            except (ValueError, TypeError):
-                pcs = None
-        else:
-            pcs = None
+        def text(name):
+            v = ws.cell(row=row_idx, column=col[name]).value
+            return str(v).strip() if v is not None else ""
 
         items.append(RawItem(
             kanri_no=kanri_no,
-            port=port,
-            container_type=container_type,
-            maker=maker,
-            sku=sku,
-            net_weight=net_weight,
-            gross_weight=gross_weight,
-            pcs=pcs,
+            port=text("MINATO_MEI_KJ"),
+            container_type=text("CONTAINER_MEI"),
+            maker=text("MAKER_MEI_KJ"),
+            sku=text("SHOHIN_CD"),
+            net_weight=num(ws.cell(row=row_idx, column=col["净重"]).value),
+            gross_weight=num(ws.cell(row=row_idx, column=col["毛重"]).value),
+            pcs=num(ws.cell(row=row_idx, column=col["SOTOBAKO_D_HACCHU_SU"]).value, as_int=True),
         ))
 
     wb.close()
