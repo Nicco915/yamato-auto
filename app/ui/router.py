@@ -69,6 +69,12 @@ async def batch_page(thread_id: str) -> HTMLResponse:  # noqa: ARG001
     return _read_page("batch.html")
 
 
+@router.get("/split/{split_thread_id}", response_class=HTMLResponse)
+async def split_page(split_thread_id: str) -> HTMLResponse:  # noqa: ARG001
+    """分票审核页（前端从路径自取 split_thread_id）。"""
+    return _read_page("split.html")
+
+
 # ---------- UI 专用 API ----------
 
 

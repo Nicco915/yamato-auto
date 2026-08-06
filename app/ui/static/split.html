@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>分票审核 - 雅玛多单证自动化</title>
+<link rel="stylesheet" href="/ui/static/ui.css">
+<style>
+  /* 页面局部样式；通用组件全部来自 ui.css */
+  .split-page { max-width: 1200px; margin: 0 auto; padding: 0 16px 40px; }
+  .split-header { margin-top: 18px; }
+  .split-header .title-row {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  }
+  .split-header .title-row h2 {
+    font-size: 17px; font-weight: 700; margin: 0; flex-shrink: 0;
+    word-break: break-all;
+  }
+  .split-header .start-time { font-size: 12px; color: var(--muted); }
+  .split-section-title {
+    font-size: 14px; font-weight: 700; color: var(--text);
+    margin: 0 0 10px; display: flex; align-items: center; gap: 8px;
+  }
+  .split-section-title .count { font-weight: 400; color: var(--muted); font-size: 12px; }
+  .action-bar {
+    display: flex; align-items: center; gap: 10px; padding: 14px 0;
+    border-top: 1px solid var(--border); margin-top: 16px;
+    flex-wrap: wrap;
+  }
+  .action-bar .spacer { flex: 1; }
+  .ticket-type-group { margin-bottom: 8px; }
+</style>
+</head>
+<body>
+
+<div id="split-page" class="split-page">
+
+  <!-- 头部：面包屑 + 标题 -->
+  <div class="card split-header">
+    <div class="split-breadcrumb">
+      <a href="/">工作台</a> &rarr;
+      <a id="batch-link" href="#">批次详情</a> &rarr;
+      <span>分票审核</span>
+    </div>
+    <div class="title-row">
+      <h2 id="title-source">-</h2>
+      <span id="status-badge" class="badge">-</span>
+      <span id="start-time" class="start-time">-</span>
+    </div>
+  </div>
+
+  <!-- 港口 Tab 栏 -->
+  <div class="port-tabs" id="port-tabs"></div>
+
+  <!-- 双栏布局 -->
+  <div class="split-layout" id="split-layout">
+
+    <!-- 左栏：原始柜列表 -->
+    <div class="split-left">
+      <div class="split-section-title">
+        原始柜列表 <span class="count" id="container-count"></span>
+      </div>
+      <div id="container-list">
+        <p class="empty-hint">加载中…</p>
+      </div>
+    </div>
+
+    <!-- 右栏：票方案 -->
+    <div class="split-right">
+      <div class="split-section-title">
+        票方案 <span class="count" id="ticket-count"></span>
+        <span class="warning-summary" id="warn-summary-top" style="display:none"></span>
+      </div>
+      <div id="ticket-cards">
+        <p class="empty-hint">加载中…</p>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 底部操作栏 -->
+  <div class="action-bar" id="action-bar">
+    <button id="btn-confirm" class="btn btn-primary" onclick="confirmSplit()">确认分票</button>
+    <button id="btn-reset" class="btn btn-ghost" onclick="resetSplit()" style="display:none">重置分票</button>
+    <span class="spacer"></span>
+    <span class="warning-summary" id="warn-count-bottom" style="display:none"></span>
+    <a id="btn-back" class="btn" href="#">返回批次</a>
+  </div>
+
+</div>
+
+<!-- 强制确认弹窗（复用 ui.css .modal-mask/.modal） -->
+<div id="force-modal" class="modal-mask" onclick="if(event.target===this)closeForceModal()">
+  <div class="modal">
+    <h3>强制确认</h3>
+    <p id="force-msg" style="line-height:1.6;color:#4b5563"></p>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeForceModal()">取消</button>
+      <button class="btn btn-primary" onclick="forceConfirm()">强制通过</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="/ui/static/ui.js"></script>
+<script src="/ui/static/split.js"></script>
+</body>
+</html>
