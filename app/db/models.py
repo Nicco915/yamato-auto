@@ -33,6 +33,10 @@ class Factory(Base):
 
     factory_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     factory_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    # 中文短名（中地/正达/贝来），文件夹匹配目标
+    short_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # 商检工厂标记（取代 INSPECTION_FACTORIES 兜底名单）
+    is_inspection_factory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     skus: Mapped[list["FactorySKU"]] = relationship(
@@ -179,3 +183,16 @@ class ProductGroupMember(Base):
     display_order = Column(Integer, nullable=False)   # 显示顺序，首行带箱数/毛重
     split_price = Column(Float, nullable=True)        # set_split：组件单价 USD/套；box_share：NULL（金额平均分）
     split_net_weight = Column(Float, nullable=True)   # 组件单件净重 kg/件
+
+
+# FactoryAlias 表——工厂别名（日文名/全称/Excel 变体）
+# 统一入库取代 alias_map.json（文件夹匹配）与 FACTORY_NORMALIZE_MAP（Excel 归一化）；
+# 同一 alias 两种用途合并为一行（两个 use_* 标记同 True），按 factories 实体关联。
+class FactoryAlias(Base):
+    __tablename__ = 'factory_aliases'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    factory_id = Column(Integer, ForeignKey('factories.factory_id'), nullable=False)
+    alias = Column(String, nullable=False, index=True)    # 别名（日文名/全称/Excel 变体）
+    use_folder_match = Column(Boolean, nullable=False, default=True)    # 用于文件夹匹配（原 alias_map）
+    use_excel_normalize = Column(Boolean, nullable=False, default=False)  # 用于 Excel 归一化（原 NORMALIZE_MAP）
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
