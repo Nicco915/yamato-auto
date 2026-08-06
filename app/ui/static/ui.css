@@ -497,3 +497,48 @@ input::placeholder { color: #9ca3af; }
   .split-layout { flex-direction: column; }
   .split-left, .split-right { flex: none; width: 100%; }
 }
+
+/* ========== 主数据维护页（/mappings） ========== */
+
+/* 待完善行：整行黄色背景 */
+.row-incomplete { background: #fff8e1; }
+.row-incomplete:hover { background: #fff3cd !important; }
+
+/* 品名组类型标签 */
+.group-tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.tag-set { background: #dbeafe; color: #1d4ed8; }
+.tag-box { background: #ede9fe; color: #6d28d9; }
+
+/* 品名组卡片头 */
+.group-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+.group-card-header .spacer { flex: 1; }
+.group-card-header .btn { margin-left: 6px; }
+
+/* 主数据维护页文本域 */
+textarea {
+  padding: 6px 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 5px;
+  font-size: 13px;
+  font-family: var(--font);
+  background: #fff;
+  color: var(--text);
+  resize: vertical;
+}
+textarea:focus {
+  outline: 2px solid #93c5fd;
+  border-color: var(--primary);
+}
+textarea::placeholder { color: #9ca3af; }

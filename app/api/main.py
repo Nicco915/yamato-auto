@@ -26,6 +26,7 @@ from app.logging_config import _takeover_uvicorn, setup_logging
 from app.review.router import configure_review
 from app.review.router import router as review_router
 from app.split.router import router as split_router
+from app.ui.mappings_api import router as mappings_router
 from app.ui.router import router as ui_router
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,8 @@ app.include_router(ui_router)
 
 # 分票 API：启动/查看/确认/重置（与提取图共用 checkpoints.db，split- 前缀区分）
 app.include_router(split_router)
+# 主数据维护 API：产品映射 + 品名组（/api/v1/mappings）
+app.include_router(mappings_router)
 app.mount(
     "/ui/static",
     StaticFiles(directory=Path(__file__).resolve().parents[1] / "ui" / "static"),
