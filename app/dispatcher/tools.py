@@ -860,6 +860,571 @@ def _exec_curate_kb(args: dict,
 
 
 # ---------------------------------------------------------------------------
+# 分票工具辅助
+# ---------------------------------------------------------------------------
+
+def _proposal_summary(thread_id: str, proposal: dict) -> str:
+    """从 proposal dict 生成自然语言摘要（调度 Agent 基础原则 2：纯文字）。"""
+    ports = proposal.get("ports", [])
+    total_tickets = sum(len(pg.get("groups", [])) for pg in ports)
+
+    if total_tickets == 0:
+        return f"批次 {thread_id} 分票方案暂无票"
+
+    status = proposal.get("status", "pending_review")
+    status_text = "已确认" if status == "confirmed" else "待审核"
+
+    header = f"批次 {thread_id} {status_text}分票，共 {total_tickets} 票，{len(ports)} 个港口"
+    port_parts = []
+    for pg in ports:
+        port = pg.get("port", "?")
+        tickets = pg.get("groups", [])
+        sj_count = sum(
+            1 for t in tickets
+            if t.get("sj_factories") and (
+                isinstance(t["sj_factories"], list) and len(t["sj_factories"]) > 0
+            )
+        )
+        base = f"{port} {len(tickets)} 票"
+        if sj_count:
+            base += f"（含 {sj_count} 票商检）"
+        port_parts.append(base)
+    return f"{header}：{'、'.join(port_parts)}"
+
+
+def _reconstruct_proposal_from_declarations(
+    split_thread_id: str, decls: list,
+) -> dict:
+    """从 Declaration 表记录重构 proposal 格式。"""
+    from collections import OrderedDict
+
+    port_groups: dict[str, list[dict]] = OrderedDict()
+    for d in decls:
+        if d.port not in port_groups:
+            port_groups[d.port] = []
+        port_groups[d.port].append({
+            "ticket_no": d.ticket_no,
+            "port": d.port,
+            "container_type": d.container_type,
+            "items": d.items or [],
+            "sj_factories": d.sj_factories or [],
+            "warnings": d.warnings or [],
+        })
+
+    return {
+        "split_thread_id": split_thread_id,
+        "status": "confirmed",
+        "ports": [
+            {"port": port, "groups": tickets}
+            for port, tickets in port_groups.items()
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# 分票只读工具（risk="read"，func 直接查询）
+# ---------------------------------------------------------------------------
+
+def _fn_get_split_proposal(args: dict) -> dict:
+    """查看当前推荐/已确认分票方案。返回自然语言摘要。"""
+    try:
+        thread_id = args["thread_id"]
+        split_thread_id = f"split-{thread_id}"
+
+        # 1) 尝试从 split graph state 读
+        from app.split.graph import get_split_graph
+        graph = get_split_graph()
+        config = {"configurable": {"thread_id": split_thread_id}}
+        snap = graph.get_state(config)
+
+        if snap.values:
+            status = snap.values.get("status", "")
+            proposal = snap.values.get("proposal")
+
+            if status in ("confirmed", "pending_review") and proposal:
+                msg = _proposal_summary(thread_id, proposal)
+                return {"status": status, "message": msg}
+
+            # 其他状态（loading、completed 等）
+            if proposal:
+                msg = _proposal_summary(thread_id, proposal)
+                return {"status": status or "unknown", "message": msg}
+            return {"status": status or "unknown",
+                    "message": f"批次 {thread_id} 分票状态：{status}（方案尚未生成）"}
+
+        # 2) 尝试从 Declaration 表读已确认的
+        from app.db.models import Declaration
+        from app.db.session import get_session
+        with get_session() as sess:
+            decls = sess.query(Declaration).filter(
+                Declaration.split_thread_id == split_thread_id,
+                Declaration.status == "confirmed",
+            ).order_by(Declaration.port, Declaration.ticket_no).all()
+            if decls:
+                proposal = _reconstruct_proposal_from_declarations(
+                    split_thread_id, decls)
+                msg = _proposal_summary(thread_id, proposal)
+                return {"status": "confirmed", "message": msg}
+
+        # 3) 兜底
+        return {"status": "not_started",
+                "message": "该批次尚未启动分票"}
+    except Exception as e:
+        return _err(e)
+
+
+def _fn_list_declarations(args: dict) -> dict:
+    """列出某批次的所有票，按港口+票号排序。返回自然语言列表。"""
+    try:
+        thread_id = args["thread_id"]
+        split_thread_id = f"split-{thread_id}"
+
+        from app.db.models import Declaration
+        from app.db.session import get_session
+        with get_session() as sess:
+            decls = sess.query(Declaration).filter(
+                Declaration.split_thread_id == split_thread_id,
+                Declaration.status == "confirmed",
+            ).order_by(Declaration.port, Declaration.ticket_no).all()
+
+        if not decls:
+            return {"status": "empty",
+                    "message": f"批次 {thread_id} 暂无已确认的票"}
+
+        lines = []
+        for d in decls:
+            sj_factories = d.sj_factories or []
+            if sj_factories:
+                factory_names = [
+                    f.get("factory_name", "")
+                    for f in sj_factories
+                    if isinstance(f, dict) and f.get("factory_name")
+                ]
+                if factory_names:
+                    sj_text = f" 含商检({', '.join(factory_names)})"
+                elif any(
+                    isinstance(f, str) and f
+                    for f in sj_factories
+                ):
+                    sj_text = f" 含商检({', '.join(f for f in sj_factories if isinstance(f, str) and f)})"
+                else:
+                    sj_text = " 含商检"
+            else:
+                sj_text = " 普通"
+
+            items = d.items or []
+            full_count = sum(
+                1 for it in items
+                if isinstance(it, dict) and not it.get("is_partial")
+            )
+            container_desc = f"{full_count} 柜" if full_count else ""
+            if not container_desc and items:
+                container_desc = f"{len(items)} 柜"
+
+            lines.append(
+                f"「{d.ticket_no}」{d.container_type} {container_desc}{sj_text}"
+            )
+
+        if len(lines) > 50:
+            port_summary: dict[str, dict[str, int]] = {}
+            for d in decls:
+                port = d.port
+                if port not in port_summary:
+                    port_summary[port] = {"count": 0, "sj_count": 0}
+                port_summary[port]["count"] += 1
+                if d.sj_factories:
+                    port_summary[port]["sj_count"] += 1
+
+            summary_lines = [f"共 {len(decls)} 票，以下为港口汇总："]
+            for port, stats in sorted(port_summary.items()):
+                parts = [f"{port} {stats['count']} 票"]
+                if stats["sj_count"]:
+                    parts.append(f"含 {stats['sj_count']} 票商检")
+                summary_lines.append("  " + "，".join(parts))
+            return {"status": "ok", "message": "\n".join(summary_lines),
+                    "total": len(decls)}
+
+        return {"status": "ok", "message": "\n".join(lines),
+                "total": len(decls)}
+    except Exception as e:
+        return _err(e)
+
+
+# ---------------------------------------------------------------------------
+# 分票写工具（risk="write"，preview + execute，execute 内二次校验）
+# ---------------------------------------------------------------------------
+
+def _preview_start_split(args: dict) -> dict:
+    """start_split 预览：校验上游批次 + 源文件 + 判定是否已存在分票。"""
+    try:
+        thread_id = (args.get("thread_id") or "").strip()
+        source_file_path = args.get("source_file_path")
+
+        lines = [f"上游批次: {thread_id}"]
+        warnings: list[str] = []
+
+        if not thread_id:
+            warnings.append("thread_id 为空，确认后执行会失败")
+        else:
+            state = service.get_order_state(thread_id)
+            if not state.get("exists"):
+                warnings.append(f"上游批次不存在: {thread_id}")
+            elif not source_file_path:
+                values = state.get("values") or {}
+                source_file_path = values.get("final_output_path")
+                if source_file_path:
+                    lines.append(f"源文件（从批次状态获取）: {source_file_path}")
+                else:
+                    warnings.append("无法获取批次输出文件路径，请手动提供 source_file_path")
+
+        if source_file_path:
+            p = Path(source_file_path).expanduser()
+            if not p.is_file():
+                warnings.append(f"源文件不存在: {source_file_path}")
+            else:
+                lines.append(f"源文件: {source_file_path}")
+
+        # 查是否已有分票记录
+        split_thread_id = f"split-{thread_id}"
+        try:
+            from app.split.graph import get_split_graph
+            graph = get_split_graph()
+            snap = graph.get_state(
+                {"configurable": {"thread_id": split_thread_id}})
+            if snap.values:
+                status = snap.values.get("status", "")
+                warnings.append(
+                    f"该批次已有分票记录（状态：{status}），确认后将覆盖")
+        except Exception:
+            pass  # split graph 未初始化时不阻塞
+
+        summary = f"确认启动批次 {thread_id} 的分票？"
+        return _preview(summary, lines, warnings)
+    except Exception as e:
+        return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
+
+
+def _exec_start_split(
+    args: dict,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """start_split 执行：获取源文件 → 启动分票图 → 跑到 human_review 挂起。"""
+    try:
+        thread_id = args["thread_id"].strip()
+        if not thread_id:
+            return {"error": "thread_id 不能为空"}
+
+        source_file_path = args.get("source_file_path")
+        if not source_file_path:
+            state = service.get_order_state(thread_id)
+            if not state.get("exists"):
+                return {"error": f"上游批次不存在: {thread_id}"}
+            values = state.get("values") or {}
+            source_file_path = values.get("final_output_path")
+            if not source_file_path:
+                return {"error": "无法获取批次输出文件路径，请手动提供 source_file_path"}
+
+        p = Path(source_file_path).expanduser()
+        if not p.is_file():
+            return {"error": f"源文件不存在: {source_file_path}"}
+
+        split_thread_id = f"split-{thread_id}"
+
+        from app.split.graph import get_split_graph
+        graph = get_split_graph()
+        config = {"configurable": {"thread_id": split_thread_id}}
+
+        initial = {
+            "split_thread_id": split_thread_id,
+            "source_file_path": str(p),
+        }
+
+        # 跑图直到 interrupt（human_review 挂起）
+        for event in graph.stream(initial, config, stream_mode="updates"):
+            if "__interrupt__" in event:
+                final_snap = graph.get_state(config)
+                proposal = final_snap.values.get("proposal", {})
+                total_tickets = sum(
+                    len(pg.get("groups", []))
+                    for pg in proposal.get("ports", [])
+                )
+                return {
+                    "status": "pending_review",
+                    "split_thread_id": split_thread_id,
+                    "message": (
+                        f"已启动分票，split ID: split-{thread_id}，"
+                        f"共 {total_tickets} 票，正在等待人工审核。"
+                        f"建议打开 /split/split-{thread_id} 页面查看。"
+                    ),
+                }
+
+        final_snap = graph.get_state(config)
+        return {
+            "status": final_snap.values.get("status", "completed"),
+            "split_thread_id": split_thread_id,
+            "message": f"分票已完成: split-{thread_id}",
+        }
+    except Exception as e:
+        return _err(e)
+
+
+def _preview_confirm_split(args: dict) -> dict:
+    """confirm_split 预览：统计警告，force 模式判定。"""
+    try:
+        thread_id = (args.get("thread_id") or "").strip()
+        force = bool(args.get("force", False))
+        split_thread_id = f"split-{thread_id}"
+
+        if not thread_id:
+            return _preview("无法确认分票", [], ["thread_id 为空"])
+
+        from app.split.graph import get_split_graph
+        graph = get_split_graph()
+        snap = graph.get_state(
+            {"configurable": {"thread_id": split_thread_id}})
+
+        if not snap.values:
+            return _preview(
+                "无法确认分票", [],
+                [f"分票批次不存在: split-{thread_id}"])
+
+        if not snap.next:
+            return _preview(
+                "无法确认分票", [],
+                ["该分票批次未处于等待审核状态，或已完成"])
+
+        proposal = snap.values.get("proposal", {})
+        if not proposal:
+            return _preview("无法确认分票", [], ["未找到分票方案"])
+
+        # 收集所有警告
+        all_warnings: list[str] = []
+        total_tickets = 0
+        for pg in proposal.get("ports", []):
+            for ticket in pg.get("groups", []):
+                total_tickets += 1
+                for w in ticket.get("warnings", []):
+                    if isinstance(w, dict):
+                        all_warnings.append(
+                            f"{ticket.get('ticket_no', '?')}: "
+                            f"{w.get('message', '')}"
+                        )
+                    elif isinstance(w, str):
+                        all_warnings.append(
+                            f"{ticket.get('ticket_no', '?')}: {w}"
+                        )
+
+        if all_warnings and not force:
+            brief = all_warnings[:3]
+            if len(all_warnings) > 3:
+                brief.append(f"...等共 {len(all_warnings)} 个警告")
+            return _preview(
+                f"该方案存在 {len(all_warnings)} 个警告：{brief[0] if brief else ''}。"
+                f"是否强制通过？如确认将被标为'强制通过'。",
+                [f"批次 {thread_id} 分票方案共 {total_tickets} 票"]
+                + brief,
+                [w[:200] for w in all_warnings],
+            )
+
+        lines = [f"批次 {thread_id} 分票方案共 {total_tickets} 票"]
+        if force and all_warnings:
+            lines.append(f"将强制通过（忽略 {len(all_warnings)} 个警告）")
+        if all_warnings and not force:
+            lines.append(f"方案无警告，将正常确认")
+        for w in all_warnings[:5]:
+            lines.append(f"  [警告] {w[:120]}")
+        if len(all_warnings) > 5:
+            lines.append(f"  ...等共 {len(all_warnings)} 个警告")
+
+        summary = f"确认批次 {thread_id} 分票方案（共 {total_tickets} 票）？"
+        if force:
+            summary += "（强制通过模式）"
+        return _preview(summary, lines,
+                        [w[:200] for w in all_warnings])
+    except Exception as e:
+        return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
+
+
+def _exec_confirm_split(
+    args: dict,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """confirm_split 执行：Command(resume=proposal) 唤醒图继续跑完。"""
+    try:
+        thread_id = args["thread_id"].strip()
+        force = bool(args.get("force", False))
+        split_thread_id = f"split-{thread_id}"
+
+        from langgraph.types import Command
+        from app.split.graph import get_split_graph
+
+        graph = get_split_graph()
+        config = {"configurable": {"thread_id": split_thread_id}}
+        snap = graph.get_state(config)
+
+        if not snap.values:
+            return {"error": f"分票批次不存在: split-{thread_id}"}
+
+        if not snap.next:
+            return {"error": "该分票批次未处于等待审核状态，或已完成"}
+
+        proposal = snap.values.get("proposal", {})
+        if not proposal:
+            return {"error": "未找到分票方案"}
+
+        # 构造 resume 数据
+        resume_data = dict(proposal)
+        resume_data["status"] = "confirmed"
+        resume_data["force_confirmed"] = force
+
+        # 唤醒图跑完（persist_split → generate_docs → END）
+        for event in graph.stream(
+            Command(resume=resume_data), config, stream_mode="updates"
+        ):
+            if "__interrupt__" in event:
+                final_snap = graph.get_state(config)
+                return {
+                    "status": "pending_review",
+                    "split_thread_id": split_thread_id,
+                    "message": (
+                        f"分票确认后出现新的中断，"
+                        f"status: {final_snap.values.get('status')}"
+                    ),
+                }
+
+        final_snap = graph.get_state(config)
+        # 统计票数
+        total_tickets = sum(
+            len(pg.get("groups", []))
+            for pg in proposal.get("ports", [])
+        )
+        version = final_snap.values.get("version", 1)
+
+        return {
+            "status": "confirmed",
+            "split_thread_id": split_thread_id,
+            "version": version,
+            "total_declarations": total_tickets,
+            "message": (
+                f"批次 {thread_id} 分票已确认，共 {total_tickets} 票"
+                f"已写入数据库。{'（强制通过）' if force else ''}"
+            ),
+        }
+    except Exception as e:
+        return _err(e)
+
+
+def _preview_reset_split(args: dict) -> dict:
+    """reset_split 预览：展示当前版本与重置确认提示。"""
+    try:
+        thread_id = (args.get("thread_id") or "").strip()
+        split_thread_id = f"split-{thread_id}"
+
+        if not thread_id:
+            return _preview("无法重置分票", [], ["thread_id 为空"])
+
+        from app.split.graph import get_split_graph
+        graph = get_split_graph()
+        snap = graph.get_state(
+            {"configurable": {"thread_id": split_thread_id}})
+
+        if not snap.values:
+            return _preview(
+                "无法重置分票", [],
+                [f"分票批次不存在: split-{thread_id}"])
+
+        old_version = snap.values.get("version", 1)
+
+        lines = [
+            f"批次: {thread_id}",
+            f"split ID: {split_thread_id}",
+            f"当前版本: V{old_version}",
+            "原有方案将被保留为历史版本，推荐方案重新生成。",
+        ]
+
+        summary = (
+            f"确认重置批次 {thread_id} 的分票？"
+            "原有方案将被保留为历史版本，推荐方案重新生成。"
+        )
+        return _preview(summary, lines)
+    except Exception as e:
+        return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
+
+
+def _exec_reset_split(
+    args: dict,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """reset_split 执行：resume reset → update_state(START) → 重跑 proposal。"""
+    try:
+        thread_id = args["thread_id"].strip()
+        split_thread_id = f"split-{thread_id}"
+
+        from langgraph.graph import START
+        from langgraph.types import Command
+        from app.split.graph import get_split_graph
+
+        graph = get_split_graph()
+        config = {"configurable": {"thread_id": split_thread_id}}
+        snap = graph.get_state(config)
+
+        if not snap.values:
+            return {"error": f"分票批次不存在: split-{thread_id}"}
+
+        old_version = snap.values.get("version", 0)
+        source_file_path = snap.values.get("source_file_path", "")
+        if not source_file_path:
+            proposal = snap.values.get("proposal", {})
+            source_file_path = proposal.get("source_file", "")
+
+        if not source_file_path:
+            return {"error": "无法获取源文件路径，无法重新生成方案"}
+
+        # 如果在挂起状态，先用 reset 唤醒跑完清理
+        if snap.next:
+            for _event in graph.stream(
+                Command(resume={"status": "reset"}),
+                config,
+                stream_mode="updates",
+            ):
+                pass  # 跑完 persist_split 的 reset 清理
+
+        # 重置到 START 并重跑
+        graph.update_state(config, {
+            "split_thread_id": split_thread_id,
+            "source_file_path": source_file_path,
+        }, as_node=START)
+
+        for event in graph.stream(None, config, stream_mode="updates"):
+            if "__interrupt__" in event:
+                final_snap = graph.get_state(config)
+                new_version = final_snap.values.get("version",
+                                                   old_version + 1)
+                return {
+                    "status": "pending_review",
+                    "split_thread_id": split_thread_id,
+                    "version": new_version,
+                    "message": (
+                        f"已重置分票方案，新版本 V{new_version}，"
+                        f"请查看 /split/split-{thread_id} 页面。"
+                    ),
+                }
+
+        final_snap = graph.get_state(config)
+        new_version = final_snap.values.get("version", old_version + 1)
+        return {
+            "status": "completed",
+            "version": new_version,
+            "message": (
+                f"已重置分票方案，新版本 V{new_version}，"
+                f"请查看 /split/split-{thread_id} 页面。"
+            ),
+        }
+    except Exception as e:
+        return _err(e)
+
+
+# ---------------------------------------------------------------------------
 # 工具注册表
 # ---------------------------------------------------------------------------
 
@@ -1170,6 +1735,93 @@ TOOLS: dict[str, Tool] = {
         risk="write",
         preview=_preview_curate_kb,
         execute=_exec_curate_kb,
+    ),
+
+    # ---- 分票工具（只读 + 写）----
+    "get_split_proposal": Tool(
+        name="get_split_proposal",
+        description="查看当前推荐/已确认分票方案的摘要（港口数/票数/商检分布）。"
+                    "操作员问“分票方案是什么”“这个批次怎么分的”时使用；"
+                    "返回纯自然语言摘要如“批次 XX 已确认分票，共 30 票，4 个港口："
+                    "名古屋港 12 票（含 4 票商检）…”。",
+        parameters={
+            "type": "object",
+            "properties": {"thread_id": _THREAD_ID_PROP},
+            "required": ["thread_id"],
+        },
+        risk="read",
+        func=_fn_get_split_proposal,
+    ),
+    "list_declarations": Tool(
+        name="list_declarations",
+        description="列出某批次所有已确认票的明细，按港口+票号排序。"
+                    "每票一行：「票号」箱型 柜数 含商检(工厂名)/普通。"
+                    "超 50 票时自动按港口汇总。"
+                    "操作员问“有哪些票”“某批次票的明细”时使用。",
+        parameters={
+            "type": "object",
+            "properties": {"thread_id": _THREAD_ID_PROP},
+            "required": ["thread_id"],
+        },
+        risk="read",
+        func=_fn_list_declarations,
+    ),
+    "start_split": Tool(
+        name="start_split",
+        description="对话触发分票：为已完成的提取批次启动分票流水线。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。"
+                    "preview 自动从批次状态获取 filled Excel 路径；"
+                    "也可手动提供 source_file_path 覆盖。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "thread_id": _THREAD_ID_PROP,
+                "source_file_path": {
+                    "type": "string",
+                    "description": "可选，批次 filled Excel 的绝对路径；"
+                                   "缺省时从上游批次 state 取 final_output_path",
+                },
+            },
+            "required": ["thread_id"],
+        },
+        risk="write",
+        preview=_preview_start_split,
+        execute=_exec_start_split,
+    ),
+    "confirm_split": Tool(
+        name="confirm_split",
+        description="对话中确认分票方案（相当于 UI 的「确认分票」按钮）。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。"
+                    "方案存在警告时，操作员须确认是否强制通过"
+                    "（force=true）；无警告时直接确认。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "thread_id": _THREAD_ID_PROP,
+                "force": {
+                    "type": "boolean",
+                    "description": "可选，默认 false。true=强制通过（忽略警告，"
+                                   "标记为强制通过）",
+                },
+            },
+            "required": ["thread_id"],
+        },
+        risk="write",
+        preview=_preview_confirm_split,
+        execute=_exec_confirm_split,
+    ),
+    "reset_split": Tool(
+        name="reset_split",
+        description="对话中重置分票：原有方案保留为历史版本，重新生成推荐方案。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。",
+        parameters={
+            "type": "object",
+            "properties": {"thread_id": _THREAD_ID_PROP},
+            "required": ["thread_id"],
+        },
+        risk="write",
+        preview=_preview_reset_split,
+        execute=_exec_reset_split,
     ),
 }
 
