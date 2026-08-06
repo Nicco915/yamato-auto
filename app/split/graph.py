@@ -42,10 +42,14 @@ class SplitState(TypedDict, total=False):
     proposal: dict                # SplitProposal.model_dump()
 
     # ---- 流程控制 ----
-    status: str                   # loading / pending_review / confirmed / reset / completed
+    status: str                   # loading / pending_review / confirmed / reset / completed / declare_failed
     version: int                  # Declaration 版本号，每次确认递增
     force_confirmed: bool         # 人工审核时是否强制通过
     errors: list[str]             # 错误信息收集
+
+    # ---- Node 5 报关生成 ----
+    invoice_number: str           # 发票号码段（confirm 时人工输入，可空→跳过生成）
+    declare_result: dict          # generate_declarations 返回（generated/count/warnings/out_dir）
 
 
 # ---- 节点名常量（供外部引用）----

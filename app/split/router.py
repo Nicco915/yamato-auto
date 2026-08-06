@@ -14,10 +14,12 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
 from langgraph.graph import START
 from langgraph.types import Command
 from pydantic import BaseModel
 
+from app.declare.service import declarations_dir, generate_declarations
 from app.split.graph import get_split_graph
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,10 @@ class StartSplitResponse(BaseModel):
 class ConfirmSplitRequest(BaseModel):
     proposal: dict  # 人工改后的完整 proposal
     force: bool = False
+
+
+class GenerateRequest(BaseModel):
+    invoice_number: str  # 人工输入的号码段，如 '656'
 
 
 class ProposalResponse(BaseModel):
@@ -247,3 +253,61 @@ def reset_split(split_thread_id: str):
         "split_thread_id": split_thread_id,
         "status": "completed",
     }
+
+
+# ---------------------------------------------------------------------------
+# 报关单生成 / 文件列表 / 下载
+# ---------------------------------------------------------------------------
+
+@router.post("/{split_thread_id}/generate")
+def generate(split_thread_id: str, req: GenerateRequest):
+    """手动触发生成（不经过图的 confirm 流程也能生成）。
+
+    直接调 declare.service.generate_declarations。要求该 split_thread_id
+    已有 confirmed 的 Declaration，否则 400。
+    """
+    invoice_number = req.invoice_number.strip()
+    if not invoice_number:
+        raise HTTPException(status_code=400, detail="invoice_number 不能为空")
+    try:
+        result = generate_declarations(split_thread_id, invoice_number)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        logger.exception(
+            "generate: split_thread_id=%s 报关单生成失败", split_thread_id
+        )
+        raise HTTPException(status_code=500, detail=f"报关单生成失败: {e}")
+    return {"split_thread_id": split_thread_id, **result}
+
+
+@router.get("/{split_thread_id}/files")
+def list_files(split_thread_id: str):
+    """列出该任务输出目录下的 xlsx 文件（文件名 + 大小 + 修改时间）。"""
+    out_dir = declarations_dir(split_thread_id)
+    files = []
+    if out_dir.is_dir():
+        for p in sorted(out_dir.glob("*.xlsx")):
+            st = p.stat()
+            files.append({
+                "name": p.name,
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+            })
+    return {
+        "split_thread_id": split_thread_id,
+        "out_dir": str(out_dir),
+        "count": len(files),
+        "files": files,
+    }
+
+
+@router.get("/{split_thread_id}/download/{filename}")
+def download(split_thread_id: str, filename: str):
+    """下载单个报关单文件。防目录穿越：filename 不得含 '/'、'\\\\'、'..'。"""
+    if "/" in filename or "\\" in filename or ".." in filename:
+        raise HTTPException(status_code=400, detail="非法文件名")
+    path = declarations_dir(split_thread_id) / filename
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"文件不存在: {filename}")
+    return FileResponse(path, filename=filename)

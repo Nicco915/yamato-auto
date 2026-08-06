@@ -237,10 +237,16 @@ def persist_split(state: dict) -> dict:
     logger.info("persist_split: 落库 %d 条 Declaration, version=%d",
                 total_decls, new_version)
 
-    return {
+    result = {
         "status": "confirmed",
         "version": new_version,
     }
+    # confirm 时人工输入的发票号码段（可选）：resume 的 proposal dict 带
+    # invoice_number 字段时存入 state，供 generate_docs 节点使用
+    invoice_number = proposal_dict.get("invoice_number")
+    if invoice_number:
+        result["invoice_number"] = str(invoice_number).strip()
+    return result
 
 
 # ===================================================================
@@ -248,9 +254,48 @@ def persist_split(state: dict) -> dict:
 # ===================================================================
 
 def generate_docs(state: dict) -> dict:
-    """占位节点——等报关单模版提供后实现。
+    """生成全部报关单（declare.service.generate_declarations）。
 
-    当前直接返回 status='completed'。
+    - state['invoice_number'] 为空：跳过生成（confirm 时未带号码段），
+      declare_result 注明 skipped，后续走 POST /{id}/generate 手动生成；
+    - 生成成功：declare_result 写入文件列表/warnings，status='completed'；
+    - 生成失败：不炸图——异常写入 errors，status='declare_failed'。
     """
-    logger.info("generate_docs: 占位，状态置为 completed")
-    return {"status": "completed"}
+    split_tid = state["split_thread_id"]
+    invoice_number = (state.get("invoice_number") or "").strip()
+
+    if not invoice_number:
+        logger.info(
+            "generate_docs: split_thread_id=%s 无 invoice_number，跳过生成",
+            split_tid,
+        )
+        return {
+            "status": "completed",
+            "declare_result": {
+                "skipped": "no invoice_number",
+                "generated": [],
+                "count": 0,
+                "warnings": [],
+            },
+        }
+
+    try:
+        from app.declare.service import generate_declarations
+
+        result = generate_declarations(split_tid, invoice_number)
+    except Exception as e:  # noqa: BLE001 生成失败不炸图，状态标记供人工排查
+        logger.exception(
+            "generate_docs: split_thread_id=%s 报关单生成失败", split_tid
+        )
+        return {
+            "status": "declare_failed",
+            "errors": [f"declare_failed: {e}"],
+            "declare_result": {
+                "error": str(e), "generated": [], "count": 0, "warnings": [],
+            },
+        }
+
+    logger.info(
+        "generate_docs: split_thread_id=%s 生成 %d 票", split_tid, result["count"]
+    )
+    return {"status": "completed", "declare_result": result}
