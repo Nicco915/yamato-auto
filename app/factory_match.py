@@ -7,8 +7,12 @@ Node2（folder_router）与批次预扫（service/tools）共用本模块：
   rapidfuzz top-N + 包含强信号（如 天津市依依衛生用品 ⊃ 依依）保底 70 分；
 - validate_subfolder：上游根目录下一级子目录名的防注入校验，
   发起批次 alias_decisions 与运行中 retry_factory 对照注入共用（同源）；
-- load/save_alias_entries：alias_map.json 的读写，损坏容错、原子写、
-  写前 .bak 备份、模块级锁串行。
+- load/save_alias_entries：工厂别名读写。DB（factory_aliases 表）为权威源，
+  alias_map.json 退化为回退：DB 查询为空或异常时自动回落 json 文件
+  （损坏容错、原子写、写前 .bak 备份、模块级锁串行）；
+- load_excel_normalize_map / load_inspection_factories：Excel 归一化映射与
+  商检工厂名单，同样 DB 优先、config（FACTORY_NORMALIZE_MAP /
+  INSPECTION_FACTORIES）兜底。
 """
 import json
 import logging
@@ -21,6 +25,8 @@ from pathlib import Path
 from rapidfuzz import fuzz, process
 
 from app.config import get_settings
+from app.db.models import Factory, FactoryAlias
+from app.db.session import get_session
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +46,23 @@ def _alias_path(path: str | Path | None = None) -> Path:
     return get_settings().alias_map_abs
 
 
-def load_alias_map(path: str | Path | None = None) -> dict:
+def _load_alias_map_from_db() -> dict:
+    """从 factory_aliases 读文件夹匹配别名：{alias: factory.short_name}。
+
+    short_name 为空的行跳过。调用方负责异常捕获。"""
+    with get_session() as sess:
+        rows = (
+            sess.query(FactoryAlias.alias, Factory.short_name)
+            .join(Factory, FactoryAlias.factory_id == Factory.factory_id)
+            .filter(FactoryAlias.use_folder_match.is_(True))
+            .all()
+        )
+    return {alias: short for alias, short in rows if short}
+
+
+def _load_alias_map_from_json(p: Path) -> dict:
     """读取 alias_map.json。文件不存在或 JSON 损坏时记日志并返回 {}，
     绝不抛异常（损坏即崩曾打崩 Node2 整条提取线）。"""
-    p = _alias_path(path)
     if not p.exists():
         return {}
     try:
@@ -55,6 +74,24 @@ def load_alias_map(path: str | Path | None = None) -> dict:
         logger.error("alias_map 顶层不是 dict,按空表处理: %s", p)
         return {}
     return data
+
+
+def load_alias_map(path: str | Path | None = None) -> dict:
+    """读取工厂别名对照。DB 为权威源，json 文件为回退。
+
+    未显式传 path 时优先查 DB（factory_aliases）：结果非空直接返回；
+    DB 为空（未迁移）或查询任何异常，记日志并回退 json 文件，
+    行为与旧版完全一致。显式传 path 时只读指定 json 文件（测试/工具用）。
+    """
+    if path is None:
+        try:
+            db_map = _load_alias_map_from_db()
+        except Exception as e:  # DB 不可用绝不阻塞主流程
+            logger.warning("factory_aliases 查询失败,回退 alias_map.json: %s", e)
+            db_map = {}
+        if db_map:
+            return db_map
+    return _load_alias_map_from_json(_alias_path(path))
 
 
 def match_factory_folder(
@@ -202,19 +239,69 @@ def validate_subfolder(upstream_root: str | Path, folder: str) -> Path:
     return p.resolve()
 
 
+def _save_alias_entries_to_db(entries: dict) -> dict:
+    """把 alias 对照写入 factory_aliases（upsert）。异常抛给调用方回退 json。
+
+    目标工厂解析顺序：short_name == 中文短名 → factory_name == 日文名 →
+    新建 Factory（factory_name=日文名, short_name=中文短名）。
+    同 alias 已指向不同 factory 时记入 overwritten（语义与 json 版一致）。"""
+    overwritten: list[str] = []
+    with get_session() as sess:
+        for alias, short in entries.items():
+            factory = (
+                sess.query(Factory).filter(Factory.short_name == short).first()
+                or sess.query(Factory)
+                .filter(Factory.factory_name == alias)
+                .first()
+            )
+            if factory is None:
+                factory = Factory(factory_name=alias, short_name=short)
+                sess.add(factory)
+                sess.flush()
+            row = (
+                sess.query(FactoryAlias)
+                .filter(FactoryAlias.alias == alias)
+                .first()
+            )
+            if row is None:
+                sess.add(FactoryAlias(
+                    factory_id=factory.factory_id,
+                    alias=alias,
+                    use_folder_match=True,
+                ))
+            else:
+                if row.factory_id != factory.factory_id:
+                    overwritten.append(alias)
+                row.factory_id = factory.factory_id
+                row.use_folder_match = True
+        sess.commit()
+    if overwritten:
+        logger.warning("alias 对照改指向其他工厂: %s", overwritten)
+    return {"saved": len(entries), "overwritten": overwritten,
+            "path": "db:factory_aliases"}
+
+
 def save_alias_entries(
     entries: dict,
     path: str | Path | None = None,
 ) -> dict:
-    """追加/覆盖 alias 对照并落盘。
+    """追加/覆盖 alias 对照。DB 为权威源，json 原子写为回退。
 
-    模块级锁串行；写前备份 .bak；临时文件 + os.replace 原子写；
-    已有 key 写入不同值时记入 overwritten。返回
-    {"saved": 写入条数, "overwritten": [被覆盖的 key], "path": 落盘路径}。
+    未显式传 path 时优先写 DB（factory_aliases upsert）；DB 写入任何异常
+    记日志并回退 json 落盘（写前备份 .bak、临时文件 + os.replace 原子写、
+    模块级锁串行）。显式传 path 时只写指定 json 文件。
+    返回 {"saved": 写入条数, "overwritten": [被覆盖的 key], "path": 落盘位置}。
     """
+    if path is None:
+        with _save_lock:
+            try:
+                return _save_alias_entries_to_db(entries)
+            except Exception as e:
+                logger.error("alias 写 DB 失败,回退 alias_map.json: %s", e)
+
     p = _alias_path(path)
     with _save_lock:
-        existing = load_alias_map(p)
+        existing = _load_alias_map_from_json(p)
         overwritten = [k for k, v in entries.items()
                        if k in existing and existing[k] != v]
         merged = {**existing, **entries}
@@ -232,3 +319,46 @@ def save_alias_entries(
         logger.warning("alias 对照覆盖既有 key: %s", overwritten)
     return {"saved": len(entries), "overwritten": overwritten,
             "path": str(p)}
+
+
+def load_excel_normalize_map() -> dict[str, str]:
+    """Excel 工厂名归一化映射：{Excel 变体: 规范 factory_name}。
+
+    DB（factory_aliases.use_excel_normalize=True）非空返回 DB 结果；
+    DB 为空或查询异常回退 config.FACTORY_NORMALIZE_MAP。"""
+    try:
+        with get_session() as sess:
+            rows = (
+                sess.query(FactoryAlias.alias, Factory.factory_name)
+                .join(Factory, FactoryAlias.factory_id == Factory.factory_id)
+                .filter(FactoryAlias.use_excel_normalize.is_(True))
+                .all()
+            )
+        db_map = {alias: name for alias, name in rows}
+    except Exception as e:
+        logger.warning("factory_aliases 查询失败,回退 FACTORY_NORMALIZE_MAP: %s", e)
+        db_map = {}
+    if db_map:
+        return db_map
+    return dict(get_settings().FACTORY_NORMALIZE_MAP)
+
+
+def load_inspection_factories() -> list[str]:
+    """商检工厂名单（factory_name 列表）。
+
+    DB 有任一 is_inspection_factory=True 行 → 返回 DB 名单；
+    否则（未标记/查询异常）回退 config.INSPECTION_FACTORIES。"""
+    try:
+        with get_session() as sess:
+            names = [
+                r[0]
+                for r in sess.query(Factory.factory_name)
+                .filter(Factory.is_inspection_factory.is_(True))
+                .all()
+            ]
+    except Exception as e:
+        logger.warning("factories 查询失败,回退 INSPECTION_FACTORIES: %s", e)
+        names = []
+    if names:
+        return names
+    return list(get_settings().INSPECTION_FACTORIES)

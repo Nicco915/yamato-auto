@@ -26,6 +26,7 @@ from app.db.models import (
 from app.db.session import get_session
 from app.declare.aggregator import aggregate_ticket, rows_for_ticket
 from app.declare.mapping import build_mapping_index
+from app.factory_match import load_excel_normalize_map, load_inspection_factories
 from app.declare.naming import (
     PORT_MAP,
     declaration_filename,
@@ -96,8 +97,6 @@ def generate_declarations(split_thread_id: str, invoice_number: str) -> dict:
     Raises:
         ValueError: 无 confirmed Declaration（方案未确认）等输入问题。
     """
-    settings = get_settings()
-
     # ---- 1. 读 confirmed Declaration，按港口分组、票内按 ticket_no 排序 ----
     with get_session() as sess:
         decls = (
@@ -144,9 +143,11 @@ def generate_declarations(split_thread_id: str, invoice_number: str) -> dict:
     raw_items = load_filled_excel(source_file)
     if not raw_items:
         raise ValueError(f"filled Excel 无数据行: {source_file}")
+    # 归一化映射与商检名单：DB 优先，config 兜底
+    normalize_map = load_excel_normalize_map()
     for r in raw_items:
-        r.maker = normalize_maker(r.maker, settings.FACTORY_NORMALIZE_MAP)
-    sj_map = classify_sj_factories(raw_items, {}, settings.INSPECTION_FACTORIES)
+        r.maker = normalize_maker(r.maker, normalize_map)
+    sj_map = classify_sj_factories(raw_items, {}, load_inspection_factories())
     onboard = format_onboard(_read_etd(source_file))
 
     # ---- 3. 输出目录：幂等——先清空旧 xlsx 再生成 ----

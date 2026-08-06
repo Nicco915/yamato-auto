@@ -11,9 +11,9 @@ from datetime import datetime, timezone
 
 from langgraph.types import interrupt
 
-from app.config import get_settings
 from app.db.models import Container, Declaration
 from app.db.session import get_session
+from app.factory_match import load_excel_normalize_map, load_inspection_factories
 from app.split.engine import propose
 from app.split.loader import load_filled_excel
 from app.split.normalize import classify_sj_factories, normalize_maker
@@ -60,7 +60,6 @@ def load_filled(state: dict) -> dict:
     输入 state['source_file_path']（批次 final_output_path）。
     输出 state['raw_items']（list[dict]）、state['sj_map']。
     """
-    settings = get_settings()
     source = state["source_file_path"]
 
     # 1) 读取 filled Excel
@@ -69,12 +68,13 @@ def load_filled(state: dict) -> dict:
         logger.warning("load_filled: 文件 %s 未读取到任何数据行", source)
         return {"status": "loading", "raw_items": [], "sj_map": {}, "errors": ["empty_file"]}
 
-    # 2) 工厂名归一化
+    # 2) 工厂名归一化（DB factory_aliases 优先，config 兜底）
+    normalize_map = load_excel_normalize_map()
     for r in raw:
-        r.maker = normalize_maker(r.maker, settings.FACTORY_NORMALIZE_MAP)
+        r.maker = normalize_maker(r.maker, normalize_map)
 
-    # 3) 商检判定
-    sj_map = classify_sj_factories(raw, {}, settings.INSPECTION_FACTORIES)
+    # 3) 商检判定（DB factories.is_inspection_factory 优先，config 兜底）
+    sj_map = classify_sj_factories(raw, {}, load_inspection_factories())
 
     # 4) Container 落库（删除该 split_thread_id 的旧记录后重新插入）
     container_rows = _build_container_rows(raw, sj_map)
