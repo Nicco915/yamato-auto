@@ -18,12 +18,7 @@ var editingSkuId = null;          // SKU 主数据仅编辑
 
 /* ---------- 初始化 ---------- */
 function init() {
-    // 顶栏：注入「主数据维护」导航链接并高亮（ui.js 链接表固定，这里追加）
-    var bar = renderTopbar("");
-    var nav = bar.querySelector(".nav");
-    if (nav) {
-        nav.insertAdjacentHTML("beforeend", '<a href="/mappings" class="active">主数据维护</a>');
-    }
+    renderTopbar("mappings");  // 链接表已含主数据维护，直接高亮
     loadProducts();
     loadGroups();
     loadFactories();
