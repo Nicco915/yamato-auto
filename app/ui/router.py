@@ -4,6 +4,7 @@
 - GET  /、/dashboard        工作台页
 - GET  /chat                Agent 对话页
 - GET  /batch/{thread_id}   批次详情页
+- GET  /mappings            主数据维护页（产品映射 + 品名组）
 
 API（路由极薄，逻辑全在 app.api.service；全部 asyncio.to_thread 防阻塞）：
 - GET  /api/v1/batches              批次列表
@@ -67,6 +68,18 @@ async def chat_page() -> HTMLResponse:
 async def batch_page(thread_id: str) -> HTMLResponse:  # noqa: ARG001
     """批次详情页（前端从路径自取 thread_id）。"""
     return _read_page("batch.html")
+
+
+@router.get("/split/{split_thread_id}", response_class=HTMLResponse)
+async def split_page(split_thread_id: str) -> HTMLResponse:  # noqa: ARG001
+    """分票审核页（前端从路径自取 split_thread_id）。"""
+    return _read_page("split.html")
+
+
+@router.get("/mappings", response_class=HTMLResponse)
+async def mappings_page() -> HTMLResponse:
+    """主数据维护页（产品映射 + 品名组）。"""
+    return _read_page("mappings.html")
 
 
 # ---------- UI 专用 API ----------

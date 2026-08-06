@@ -351,6 +351,11 @@ _TOOL_CN = {
     "submit_review": "提交审核",
     "set_paths": "修改路径配置",
     "curate_kb": "排查知识库",
+    "start_split": "启动分票",
+    "confirm_split": "确认分票方案",
+    "reset_split": "重置分票",
+    "generate_declarations": "生成报关单",
+    "upsert_product_mapping": "维护产品映射",
 }
 
 

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>主数据维护 - 雅玛多单证自动化</title>
+<link rel="stylesheet" href="/ui/static/ui.css">
+<style>
+  /* 页面局部样式；通用组件全部来自 ui.css */
+  .mappings-page { max-width: 1200px; margin: 0 auto; padding: 0 16px 40px; }
+  .mappings-header { margin-top: 18px; }
+  .mappings-header h2 { font-size: 17px; font-weight: 700; margin: 0; }
+  .mp-toolbar {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 12px; flex-wrap: wrap;
+  }
+  .mp-toolbar .spacer { flex: 1; }
+  .mp-toolbar input[type="text"] { width: 260px; }
+  .mp-check { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #4b5563; }
+  .sj-mark { color: var(--ok); font-weight: 700; }
+  .member-hint { font-size: 12px; color: var(--muted); margin: 4px 0 6px; line-height: 1.6; }
+  #g-members { width: 100%; font-family: var(--font); }
+  .col-actions { white-space: nowrap; }
+  .col-actions .btn { margin-right: 6px; }
+</style>
+</head>
+<body>
+
+<div id="mappings-page" class="mappings-page">
+
+  <!-- 头部：面包屑 + 标题 -->
+  <div class="card mappings-header">
+    <div class="split-breadcrumb">
+      <a href="/">工作台</a> &rarr;
+      <span>主数据维护</span>
+    </div>
+    <h2>主数据维护</h2>
+  </div>
+
+  <!-- Tab 栏（复用 ui.css port-tabs 样式） -->
+  <div class="port-tabs" id="mp-tabs">
+    <button class="port-tab active" id="tab-products" onclick="switchTab('products')">产品映射</button>
+    <button class="port-tab" id="tab-groups" onclick="switchTab('groups')">品名组</button>
+  </div>
+
+  <!-- 产品映射 Tab -->
+  <div id="pane-products">
+    <div class="mp-toolbar">
+      <input id="p-q" type="text" placeholder="搜索品名 / 税号 / 供应商" onkeydown="if(event.key==='Enter')loadProducts()">
+      <button class="btn" onclick="loadProducts()">搜索</button>
+      <label class="mp-check">
+        <input id="p-incomplete" type="checkbox" onchange="loadProducts()"> 只看待完善
+      </label>
+      <span class="spacer"></span>
+      <button class="btn btn-primary" onclick="openProductModal(null)">新增映射</button>
+    </div>
+    <div class="card">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>品名</th>
+            <th>税号</th>
+            <th>供应商</th>
+            <th>商检</th>
+            <th>英文品名</th>
+            <th>单位代码</th>
+            <th>SKU</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="product-tbody">
+          <tr><td colspan="8" class="empty">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 品名组 Tab -->
+  <div id="pane-groups" style="display:none">
+    <div class="mp-toolbar">
+      <span class="muted" id="group-count"></span>
+      <span class="spacer"></span>
+      <button class="btn btn-primary" onclick="openGroupModal(null)">新增组</button>
+    </div>
+    <div id="group-list">
+      <p class="empty-hint">加载中…</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- 产品映射 编辑/新增 弹窗 -->
+<div id="product-modal" class="modal-mask" onclick="if(event.target===this)closeProductModal()">
+  <div class="modal">
+    <h3 id="pm-title">新增映射</h3>
+    <div class="field">
+      <label>中文品名 <span style="color:var(--err)">*</span></label>
+      <input id="pm-name" type="text" placeholder="如：烟灰缸">
+    </div>
+    <div class="field">
+      <label>税号</label>
+      <input id="pm-hs" type="text" placeholder="留空则标记为待完善">
+    </div>
+    <div class="field">
+      <label>供应商</label>
+      <input id="pm-supplier" type="text" placeholder="供应商报关全称，可留空">
+    </div>
+    <div class="field">
+      <label>商检</label>
+      <label class="mp-check" style="flex:1;text-align:left">
+        <input id="pm-inspection" type="checkbox"> 需要商检
+      </label>
+    </div>
+    <div class="field">
+      <label>英文品名</label>
+      <input id="pm-name-en" type="text" placeholder="清关用英文品名，可留空">
+    </div>
+    <div class="field">
+      <label>单位代码</label>
+      <input id="pm-unit" type="text" placeholder="计量单位代码（如 007），可留空">
+    </div>
+    <div class="field">
+      <label>SKU</label>
+      <input id="pm-sku" type="text" placeholder="关联 SKU 编码，可留空">
+    </div>
+    <div class="field">
+      <label>工厂 ID</label>
+      <input id="pm-factory" type="text" placeholder="关联工厂 ID，可留空">
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeProductModal()">取消</button>
+      <button id="pm-save" class="btn btn-primary" onclick="saveProduct()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 品名组 编辑/新增 弹窗 -->
+<div id="group-modal" class="modal-mask" onclick="if(event.target===this)closeGroupModal()">
+  <div class="modal">
+    <h3 id="gm-title">新增品名组</h3>
+    <div class="field">
+      <label>组名 <span style="color:var(--err)">*</span></label>
+      <input id="gm-name" type="text" placeholder="如：6件套 / 烟灰缸+支架">
+    </div>
+    <div class="field">
+      <label>类型 <span style="color:var(--err)">*</span></label>
+      <select id="gm-type" style="flex:1;padding:6px 9px;border:1px solid #cbd5e1;border-radius:5px;font-size:13px;font-family:var(--font)">
+        <option value="set_split">组套拆分（set_split）</option>
+        <option value="box_share">配对均分（box_share）</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>源品名 <span style="color:var(--err)">*</span></label>
+      <input id="gm-source" type="text" placeholder="总表中的源品名，如：烟灰缸">
+    </div>
+    <div class="field" style="align-items:flex-start">
+      <label style="padding-top:6px">成员 <span style="color:var(--err)">*</span></label>
+      <div style="flex:1">
+        <textarea id="gm-members" rows="6" placeholder="每行一个成员：品名,单价,单重"></textarea>
+        <div class="member-hint">
+          每行一个成员，格式：<span class="mono">品名,单价,单重</span>（顺序即显示顺序）。<br>
+          配对均分（box_share）单价留空：<span class="mono">品名,,单重</span>；单价/单重均可留空。
+        </div>
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeGroupModal()">取消</button>
+      <button id="gm-save" class="btn btn-primary" onclick="saveGroup()">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="/ui/static/ui.js"></script>
+<script src="/ui/static/mappings.js"></script>
+</body>
+</html>

@@ -126,6 +126,42 @@ var SESS_STATUS_MAP = {
   complete_manual: "人工完成"
 };
 
+/* ---- 分票 ---- */
+var splitExists = false;
+var splitThreadIdVal = null;   // split-{thread_id}
+var _batchData = null;         // 最近一次加载的批次数据（供 startSplit 取 final_output_path）
+
+async function checkSplitStatus() {
+  var sid = "split-" + threadId;
+  try {
+    await api("/api/v1/split/" + encodeURIComponent(sid) + "/proposal");
+    splitExists = true;
+    splitThreadIdVal = sid;
+  } catch(e) {
+    splitExists = false;
+    splitThreadIdVal = null;
+  }
+}
+
+async function startSplit() {
+  var btn = document.getElementById("btn-start-split");
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = "启动中…";
+  try {
+    var body = { thread_id: threadId };
+    if (_batchData && _batchData.final_output_path) {
+      body.source_file_path = _batchData.final_output_path;
+    }
+    var data = await api("/api/v1/split/start", { method: "POST", body: body });
+    location.href = "/split/" + encodeURIComponent(data.split_thread_id);
+  } catch(e) {
+    showToast("启动分票失败：" + e.message);
+    btn.disabled = false;
+    btn.textContent = "开始分票";
+  }
+}
+
 /* thread_id：取 /batch/ 之后部分 */
 var threadId = "";
 try {
@@ -168,6 +204,15 @@ function renderHead(d) {
     btns += '<a class="btn lbtn primary" href="/review?thread_id=' + encodeURIComponent(threadId) + '">去审核</a>';
   }
   btns += '<a class="btn lbtn" href="/chat?thread_id=' + encodeURIComponent(threadId) + '">Agent 对话</a>';
+
+  // 分票按钮
+  if (splitExists) {
+    btns += '<a class="btn lbtn primary" href="/split/' + encodeURIComponent(splitThreadIdVal) + '">查看分票</a>';
+  } else if (d.status === "completed") {
+    btns += '<button class="btn lbtn primary" id="btn-start-split" onclick="startSplit()">开始分票</button>';
+  } else {
+    btns += '<button class="btn lbtn" disabled title="批次处理完成后才能分票">开始分票</button>';
+  }
 
   return '<div class="card lcard">' +
     '<div class="head-title">' + _esc(threadId) + " " + badge(st[0], st[1]) + "</div>" +
@@ -435,6 +480,8 @@ async function load() {
   try {
     var d = await api("/api/v1/batches/" + encodeURIComponent(threadId));
     if (d && typeof d === "string") { try { d = JSON.parse(d); } catch (e) {} }
+    _batchData = d || {};
+    await checkSplitStatus();
     renderAll(d || {});
     if (shouldPoll(d)) startPolling();      // running/pending_review：启动 5s 自刷
   } catch (e) {

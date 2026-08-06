@@ -293,3 +293,252 @@ input::placeholder { color: #9ca3af; }
 /* ---------- 杂项 ---------- */
 .muted { color: var(--muted); }
 .mono { font-family: ui-monospace, Menlo, monospace; }
+
+/* ========== 分票审核页 ========== */
+
+/* 港口 Tab 栏 */
+.port-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 2px solid var(--border);
+  margin-bottom: 14px;
+  overflow-x: auto;
+}
+.port-tab {
+  padding: 8px 18px;
+  border: 0;
+  border-radius: 6px 6px 0 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  font-family: var(--font);
+  white-space: nowrap;
+}
+.port-tab:hover { color: var(--text); background: #f3f4f6; }
+.port-tab.active {
+  color: var(--primary);
+  background: #eff6ff;
+  border-bottom: 2px solid var(--primary);
+  font-weight: 600;
+}
+
+/* 左右双栏 */
+.split-layout {
+  display: flex;
+  gap: 16px;
+  min-height: 400px;
+}
+.split-left { flex: 2; min-width: 0; }
+.split-right { flex: 3; min-width: 0; }
+
+/* 柜类型分组头 */
+.container-group-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: #4b5563;
+  padding: 6px 0 4px;
+  margin-top: 8px;
+}
+.container-group-header:first-child { margin-top: 0; }
+
+/* 柜条目 */
+.container-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 4px;
+  background: #fff;
+  font-size: 13px;
+}
+.container-item.draggable {
+  cursor: grab;
+}
+.container-item.draggable:active { cursor: grabbing; }
+.container-item.dragging { opacity: 0.4; border-style: dashed; }
+.container-item.assigned {
+  opacity: 0.45;
+  background: #f9fafb;
+  border-color: #e5e7eb;
+}
+
+.assigned-mark {
+  font-size: 11px;
+  color: #9ca3af;
+  margin-left: auto;
+  white-space: nowrap;
+}
+.factory-summary {
+  font-size: 12px;
+  color: var(--muted);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 可拖拽柜条目（票卡片内） */
+.container-item-in-ticket {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 5px;
+  margin-bottom: 4px;
+  background: #fafafa;
+  font-size: 12px;
+  cursor: grab;
+}
+.container-item-in-ticket:active { cursor: grabbing; }
+.container-item-in-ticket.dragging { opacity: 0.35; }
+.container-item-in-ticket:hover { background: #f0f4ff; border-color: var(--primary); }
+
+.item-partial-note {
+  font-size: 11px;
+  color: var(--warn);
+  white-space: nowrap;
+}
+
+/* 票卡片 */
+.ticket-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.ticket-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+}
+.ticket-card-body {
+  padding: 8px 12px;
+  min-height: 36px;
+}
+.ticket-card-footer {
+  padding: 6px 12px;
+  border-top: 1px solid #fecaca;
+  background: #fef2f2;
+}
+.ticket-ticket-no {
+  font-weight: 700;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.ticket-meta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+/* 商检标签 */
+.sj-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.sj-badge-red { background: #dc2626; }
+.sj-badge-orange { background: #d97706; }
+
+/* 警告样式 */
+.warning-text { color: var(--err); font-size: 12px; line-height: 1.5; }
+.warning-icon { color: var(--warn); font-size: 15px; flex-shrink: 0; cursor: help; }
+
+/* 拖拽悬停高亮 */
+.drop-zone {
+  background: #e3f2fd !important;
+  border: 2px dashed var(--primary) !important;
+}
+
+/* 分票页面包屑 */
+.split-breadcrumb {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.split-breadcrumb a { color: var(--primary); text-decoration: none; }
+.split-breadcrumb a:hover { text-decoration: underline; }
+
+/* 警告统计徽标 */
+.warning-summary {
+  color: var(--err);
+  font-size: 13px;
+  font-weight: 600;
+  margin-left: 12px;
+}
+
+/* 空状态 */
+.empty-hint {
+  color: var(--muted);
+  text-align: center;
+  padding: 20px 0;
+  font-size: 13px;
+}
+
+/* 响应式：窄屏双栏转单栏 */
+@media (max-width: 900px) {
+  .split-layout { flex-direction: column; }
+  .split-left, .split-right { flex: none; width: 100%; }
+}
+
+/* ========== 主数据维护页（/mappings） ========== */
+
+/* 待完善行：整行黄色背景 */
+.row-incomplete { background: #fff8e1; }
+.row-incomplete:hover { background: #fff3cd !important; }
+
+/* 品名组类型标签 */
+.group-tag {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.tag-set { background: #dbeafe; color: #1d4ed8; }
+.tag-box { background: #ede9fe; color: #6d28d9; }
+
+/* 品名组卡片头 */
+.group-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 14px;
+}
+.group-card-header .spacer { flex: 1; }
+.group-card-header .btn { margin-left: 6px; }
+
+/* 主数据维护页文本域 */
+textarea {
+  padding: 6px 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 5px;
+  font-size: 13px;
+  font-family: var(--font);
+  background: #fff;
+  color: var(--text);
+  resize: vertical;
+}
+textarea:focus {
+  outline: 2px solid #93c5fd;
+  border-color: var(--primary);
+}
+textarea::placeholder { color: #9ca3af; }

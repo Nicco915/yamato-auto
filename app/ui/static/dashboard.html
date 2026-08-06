@@ -136,7 +136,12 @@
 "use strict";
 
 /* ================= 初始化 ================= */
-renderTopbar("dashboard");
+const _topbar = renderTopbar("dashboard");
+// 顶栏导航追加「主数据维护」入口（ui.js 链接表固定，此处页面级追加）
+_topbar.querySelector(".nav").insertAdjacentHTML(
+  "beforeend",
+  '<a href="/mappings">主数据维护</a>'
+);
 loadDefaults();
 refreshList(true);
 setInterval(autoRefresh, 10000);

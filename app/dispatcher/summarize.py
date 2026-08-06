@@ -228,6 +228,64 @@ def _sum_curate_kb(result: dict) -> dict:
     return {"message": str(message), "summary_lines": lines, "links": []}
 
 
+def _sum_start_split(result: dict) -> dict:
+    """start_split：已启动分票并挂起等待审核。"""
+    split_tid = result.get("split_thread_id", "")
+    tid = split_tid.replace("split-", "", 1) if split_tid.startswith("split-") else ""
+    message = result.get("message") or f"已启动分票 {split_tid}，等待人工审核。"
+    lines = []
+    if tid:
+        lines.append(f"上游批次: {tid}")
+    lines.append(f"split ID: {split_tid}")
+    links = [{"label": "去分票页", "href": f"/split/{split_tid}"}] if split_tid else []
+    return {"message": str(message), "summary_lines": lines, "links": links}
+
+
+def _sum_confirm_split(result: dict) -> dict:
+    """confirm_split：分票已确认落库。"""
+    split_tid = result.get("split_thread_id", "")
+    tid = split_tid.replace("split-", "", 1) if split_tid.startswith("split-") else ""
+    total = result.get("total_declarations", 0)
+    version = result.get("version", 1)
+    force = "（强制通过）" if result.get("force_confirmed") else ""
+    message = (f"批次 {tid} 分票已确认，共 {total} 票已写入数据库{force}。"
+               if tid else f"分票已确认，共 {total} 票已写入数据库{force}。")
+    lines = [f"版本: V{version}", f"票数: {total}"]
+    links = [{"label": "去分票页", "href": f"/split/{split_tid}"}] if split_tid else []
+    return {"message": message, "summary_lines": lines, "links": links}
+
+
+def _sum_reset_split(result: dict) -> dict:
+    """reset_split：已重置并重新生成推荐方案。"""
+    split_tid = result.get("split_thread_id", "")
+    version = result.get("version", 1)
+    message = result.get("message") or f"已重置分票方案，新版本 V{version}。"
+    lines = [f"新版本: V{version}"]
+    links = [{"label": "去分票页", "href": f"/split/{split_tid}"}] if split_tid else []
+    return {"message": str(message), "summary_lines": lines, "links": links}
+
+
+def _sum_generate_declarations(result: dict) -> dict:
+    """generate_declarations：报关单已生成。"""
+    split_tid = result.get("split_thread_id", "")
+    count = result.get("count", 0)
+    warnings = result.get("warnings") or []
+    message = result.get("message") or f"已生成 {count} 份报关单。"
+    lines = [f"报关单数: {count}"]
+    if warnings:
+        lines.append(f"警告: {len(warnings)} 条")
+    links = [{"label": "去分票页", "href": f"/split/{split_tid}"}] if split_tid else []
+    return {"message": str(message), "summary_lines": lines, "links": links}
+
+
+def _sum_upsert_product_mapping(result: dict) -> dict:
+    """upsert_product_mapping：产品映射已维护。"""
+    message = result.get("message") or "产品映射已更新。"
+    return {"message": str(message),
+            "summary_lines": [f"操作: {result.get('action', '更新')}"],
+            "links": [{"label": "主数据维护页", "href": "/mappings"}]}
+
+
 def _fallback(tool: str, result: dict) -> dict:
     """未知工具/异常兜底：一句"已执行" + result 前 5 个标量 key。"""
     try:
@@ -271,6 +329,16 @@ def summarize_applied(tool: str, args: dict | None, result: dict | None) -> dict
             return _sum_set_paths(result)
         if tool == "curate_kb":
             return _sum_curate_kb(result)
+        if tool == "start_split":
+            return _sum_start_split(result)
+        if tool == "confirm_split":
+            return _sum_confirm_split(result)
+        if tool == "reset_split":
+            return _sum_reset_split(result)
+        if tool == "generate_declarations":
+            return _sum_generate_declarations(result)
+        if tool == "upsert_product_mapping":
+            return _sum_upsert_product_mapping(result)
         return _fallback(tool, result)
     except Exception:  # noqa: BLE001 铁律：摘要失败绝不阻塞执行结果返回
         return _fallback(str(tool or ""), result if isinstance(result, dict) else {})
