@@ -6,11 +6,15 @@
    ============================================================ */
 
 /* ---------- 全局状态 ---------- */
-var activeTab = "products";       // products | groups
+var activeTab = "products";       // products | groups | factories | skus
 var products = [];                // 产品映射列表缓存
 var groups = [];                  // 品名组列表缓存
+var factories = [];               // 工厂列表缓存（含别名）
+var skus = [];                    // SKU 主数据列表缓存
 var editingProductId = null;      // null=新增
 var editingGroupId = null;        // null=新增
+var editingFactoryId = null;      // null=新增
+var editingSkuId = null;          // SKU 主数据仅编辑
 
 /* ---------- 初始化 ---------- */
 function init() {
@@ -22,16 +26,20 @@ function init() {
     }
     loadProducts();
     loadGroups();
+    loadFactories();
 }
 
 /* ---------- Tab 切换 ---------- */
 function switchTab(tab) {
     activeTab = tab;
-    document.getElementById("tab-products").className = "port-tab" + (tab === "products" ? " active" : "");
-    document.getElementById("tab-groups").className = "port-tab" + (tab === "groups" ? " active" : "");
-    document.getElementById("pane-products").style.display = tab === "products" ? "" : "none";
-    document.getElementById("pane-groups").style.display = tab === "groups" ? "" : "none";
+    var tabs = ["products", "groups", "factories", "skus"];
+    tabs.forEach(function (t) {
+        document.getElementById("tab-" + t).className = "port-tab" + (tab === t ? " active" : "");
+        document.getElementById("pane-" + t).style.display = tab === t ? "" : "none";
+    });
     if (tab === "groups") loadGroups();
+    if (tab === "factories") loadFactories();
+    if (tab === "skus") loadSkus();
 }
 
 /* ============================================================
@@ -356,11 +364,374 @@ async function deleteGroup(id) {
     }
 }
 
+/* ============================================================
+   工厂与别名
+   ============================================================ */
+
+async function loadFactories() {
+    try {
+        factories = await api("/api/v1/mappings/factories");
+        renderFactories();
+        renderSkuFactoryOptions();
+    } catch (e) {
+        toast("工厂列表加载失败：" + e.message, 4000);
+        document.getElementById("factory-list").innerHTML =
+            '<p class="empty-hint">加载失败</p>';
+    }
+}
+
+function findFactory(id) {
+    return factories.find(function (x) { return x.id === id; });
+}
+
+function renderFactories() {
+    var el = document.getElementById("factory-list");
+    document.getElementById("factory-count").textContent =
+        factories && factories.length ? "共 " + factories.length + " 家工厂" : "";
+    if (!factories || factories.length === 0) {
+        el.innerHTML = '<p class="empty-hint">暂无工厂，点右上角「新增工厂」创建</p>';
+        return;
+    }
+    el.innerHTML = factories.map(function (f) {
+        var shortHtml = f.short_name
+            ? '<span class="factory-shortname">短名：' + esc(f.short_name) + "</span>"
+            : '<span class="factory-shortname-missing">短名未设置</span>';
+        var aliases = f.aliases || [];
+        var aliasRows = aliases.map(function (a) {
+            return '<tr class="alias-row">'
+                + '<td><input type="text" value="' + esc(a.alias) + '" id="alias-text-' + a.id + '"'
+                + ' onchange="saveAlias(' + a.id + ')" style="width:100%"></td>'
+                + '<td style="white-space:nowrap">'
+                + '<label class="alias-use-check"><input type="checkbox" id="alias-folder-' + a.id + '"'
+                + (a.use_folder_match ? " checked" : "") + ' onchange="saveAlias(' + a.id + ')"> 文件夹匹配</label>'
+                + '<label class="alias-use-check"><input type="checkbox" id="alias-excel-' + a.id + '"'
+                + (a.use_excel_normalize ? " checked" : "") + ' onchange="saveAlias(' + a.id + ')"> Excel 归一</label>'
+                + "</td>"
+                + '<td class="col-actions"><button class="btn btn-sm" onclick="deleteAlias(' + a.id + ')">删除</button></td>'
+                + "</tr>";
+        }).join("");
+        var aliasTable = aliases.length
+            ? '<table class="table"><thead><tr><th>别名</th><th>用途</th><th>操作</th></tr></thead><tbody>'
+              + aliasRows + "</tbody></table>"
+            : '<p class="empty-hint" style="padding:8px 0">暂无别名</p>';
+        return '<div class="card">'
+            + '<div class="group-card-header">'
+            + "<strong>" + esc(f.factory_name) + "</strong>"
+            + shortHtml
+            + '<label class="toggle-label">商检工厂 '
+            + '<span class="toggle"><input type="checkbox"' + (f.is_inspection_factory ? " checked" : "")
+            + ' onchange="toggleInspection(' + f.id + ", this)\"><span class=\"slider\"></span></span>"
+            + "</label>"
+            + '<span class="muted">SKU ' + (f.sku_count || 0) + " 条</span>"
+            + '<span class="spacer"></span>'
+            + '<button class="btn btn-sm" onclick="openFactoryModal(' + f.id + ')">编辑</button>'
+            + '<button class="btn btn-sm" onclick="deleteFactory(' + f.id + ')">删除</button>'
+            + "</div>"
+            + aliasTable
+            + '<div class="alias-add-row">'
+            + '<input type="text" id="new-alias-' + f.id + '" placeholder="新别名（日文名 / 全称 / Excel 变体）">'
+            + '<label class="alias-use-check"><input type="checkbox" id="new-alias-folder-' + f.id + '" checked> 文件夹匹配</label>'
+            + '<label class="alias-use-check"><input type="checkbox" id="new-alias-excel-' + f.id + '"> Excel 归一</label>'
+            + '<button class="btn btn-sm" onclick="addAlias(' + f.id + ')">加别名</button>'
+            + "</div>"
+            + "</div>";
+    }).join("");
+}
+
+function openFactoryModal(id) {
+    editingFactoryId = id;
+    var f = id ? findFactory(id) : null;
+    document.getElementById("fm-title").textContent = f ? "编辑工厂" : "新增工厂";
+    document.getElementById("fm-name").value = f ? (f.factory_name || "") : "";
+    document.getElementById("fm-short").value = f ? (f.short_name || "") : "";
+    document.getElementById("fm-inspection").checked = f ? !!f.is_inspection_factory : false;
+    document.getElementById("factory-modal").classList.add("show");
+}
+
+function closeFactoryModal() {
+    document.getElementById("factory-modal").classList.remove("show");
+    editingFactoryId = null;
+}
+
+async function saveFactory() {
+    var name = document.getElementById("fm-name").value.trim();
+    if (!name) {
+        toast("请填写工厂规范名");
+        document.getElementById("fm-name").focus();
+        return;
+    }
+    var inspection = document.getElementById("fm-inspection").checked;
+    var old = editingFactoryId ? findFactory(editingFactoryId) : null;
+    if (old && !!old.is_inspection_factory !== inspection) {
+        if (!confirm("商检工厂标记影响后续批次分票判定，确认修改？")) return;
+    }
+    var body = {
+        factory_name: name,
+        short_name: document.getElementById("fm-short").value.trim() || null,
+        is_inspection_factory: inspection,
+    };
+    var btn = document.getElementById("fm-save");
+    btn.disabled = true;
+    btn.textContent = "保存中…";
+    try {
+        if (editingFactoryId) {
+            await api("/api/v1/mappings/factories/" + editingFactoryId, {
+                method: "PUT", body: body
+            });
+        } else {
+            await api("/api/v1/mappings/factories", {
+                method: "POST", body: body
+            });
+        }
+        toast("已保存");
+        closeFactoryModal();
+        loadFactories();
+    } catch (e) {
+        toast("保存失败：" + e.message, 4000);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "保存";
+    }
+}
+
+async function deleteFactory(id) {
+    var f = findFactory(id);
+    var label = f ? f.factory_name : ("id=" + id);
+    if (!confirm("确定删除工厂「" + label + "」？有 SKU 或别名关联时会被拒绝。")) return;
+    try {
+        await api("/api/v1/mappings/factories/" + id, { method: "DELETE" });
+        toast("已删除");
+        loadFactories();
+    } catch (e) {
+        toast("删除失败：" + e.message, 4000);
+    }
+}
+
+/* 商检工厂开关：改动前确认（影响后续批次分票判定），取消则还原 */
+async function toggleInspection(id, checkbox) {
+    var f = findFactory(id);
+    if (!f) return;
+    var next = checkbox.checked;
+    if (!confirm("商检工厂标记影响后续批次分票判定，确认" + (next ? "开启" : "关闭") + "「" + f.factory_name + "」的商检标记？")) {
+        checkbox.checked = !next;
+        return;
+    }
+    try {
+        await api("/api/v1/mappings/factories/" + id, {
+            method: "PUT",
+            body: {
+                factory_name: f.factory_name,
+                short_name: f.short_name || null,
+                is_inspection_factory: next,
+            }
+        });
+        toast("已" + (next ? "开启" : "关闭") + "商检工厂标记");
+        loadFactories();
+    } catch (e) {
+        checkbox.checked = !next;
+        toast("修改失败：" + e.message, 4000);
+    }
+}
+
+async function addAlias(factoryId) {
+    var input = document.getElementById("new-alias-" + factoryId);
+    var alias = input.value.trim();
+    if (!alias) {
+        toast("请填写别名");
+        input.focus();
+        return;
+    }
+    var body = {
+        alias: alias,
+        use_folder_match: document.getElementById("new-alias-folder-" + factoryId).checked,
+        use_excel_normalize: document.getElementById("new-alias-excel-" + factoryId).checked,
+    };
+    if (!body.use_folder_match && !body.use_excel_normalize) {
+        toast("文件夹匹配 / Excel 归一至少勾选一个用途");
+        return;
+    }
+    try {
+        await api("/api/v1/mappings/factories/" + factoryId + "/aliases", {
+            method: "POST", body: body
+        });
+        toast("已添加别名");
+        loadFactories();
+    } catch (e) {
+        toast("添加失败：" + e.message, 4000);
+    }
+}
+
+/* 别名行内编辑：文本或任一用途勾选变化时整体提交 */
+async function saveAlias(aliasId) {
+    var body = {
+        alias: document.getElementById("alias-text-" + aliasId).value.trim(),
+        use_folder_match: document.getElementById("alias-folder-" + aliasId).checked,
+        use_excel_normalize: document.getElementById("alias-excel-" + aliasId).checked,
+    };
+    if (!body.alias) {
+        toast("别名不能为空");
+        loadFactories();
+        return;
+    }
+    if (!body.use_folder_match && !body.use_excel_normalize) {
+        toast("文件夹匹配 / Excel 归一至少勾选一个用途");
+        loadFactories();
+        return;
+    }
+    try {
+        await api("/api/v1/mappings/aliases/" + aliasId, {
+            method: "PUT", body: body
+        });
+        toast("别名已保存");
+        loadFactories();
+    } catch (e) {
+        toast("保存失败：" + e.message, 4000);
+        loadFactories();
+    }
+}
+
+async function deleteAlias(aliasId) {
+    if (!confirm("确定删除该别名？删除后文件夹匹配 / Excel 归一化将不再识别它。")) return;
+    try {
+        await api("/api/v1/mappings/aliases/" + aliasId, { method: "DELETE" });
+        toast("已删除");
+        loadFactories();
+    } catch (e) {
+        toast("删除失败：" + e.message, 4000);
+    }
+}
+
+/* ============================================================
+   SKU 主数据
+   ============================================================ */
+
+/* 工厂下拉筛选选项（随工厂列表刷新，保留当前选中） */
+function renderSkuFactoryOptions() {
+    var sel = document.getElementById("s-factory");
+    if (!sel) return;
+    var current = sel.value;
+    var html = '<option value="">全部工厂</option>' + (factories || []).map(function (f) {
+        return '<option value="' + f.id + '">' + esc(f.short_name || f.factory_name) + "</option>";
+    }).join("");
+    sel.innerHTML = html;
+    sel.value = current;
+}
+
+async function loadSkus() {
+    var factoryId = document.getElementById("s-factory").value;
+    var q = document.getElementById("s-q").value.trim();
+    var url = "/api/v1/mappings/skus?";
+    if (factoryId) url += "factory_id=" + encodeURIComponent(factoryId) + "&";
+    if (q) url += "q=" + encodeURIComponent(q);
+    try {
+        skus = await api(url);
+        renderSkus();
+    } catch (e) {
+        toast("SKU 主数据加载失败：" + e.message, 4000);
+        document.getElementById("sku-tbody").innerHTML =
+            '<tr><td colspan="8" class="empty">加载失败</td></tr>';
+    }
+}
+
+function renderSkus() {
+    var tbody = document.getElementById("sku-tbody");
+    document.getElementById("sku-count").textContent =
+        skus && skus.length ? "共 " + skus.length + " 条" : "";
+    if (!skus || skus.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="empty">暂无数据</td></tr>';
+        return;
+    }
+    var dash = function (v) { return (v !== null && v !== undefined && v !== "") ? esc(v) : '<span class="muted">-</span>'; };
+    tbody.innerHTML = skus.map(function (k) {
+        var sj = k.inspection_required ? '<span class="sj-mark">✓</span>' : "";
+        return "<tr>"
+            + '<td class="mono"><strong>' + esc(k.sku_code) + "</strong></td>"
+            + "<td>" + dash(k.name_cn) + "</td>"
+            + "<td>" + dash(k.name_en) + "</td>"
+            + '<td class="mono">' + dash(k.hs_code) + "</td>"
+            + "<td>" + sj + "</td>"
+            + "<td>" + dash(k.unit_net_weight) + "</td>"
+            + "<td>" + dash(k.unit_gross_weight) + "</td>"
+            + '<td class="col-actions"><button class="btn btn-sm" onclick="openSkuModal(' + k.sku_id + ')">编辑</button></td>'
+            + "</tr>";
+    }).join("");
+}
+
+function openSkuModal(skuId) {
+    editingSkuId = skuId;
+    var k = skus.find(function (x) { return x.sku_id === skuId; });
+    if (!k) return;
+    document.getElementById("sm-title").textContent = "编辑 SKU 主数据";
+    document.getElementById("sm-code").value = k.sku_code || "";
+    document.getElementById("sm-name-cn").value = k.name_cn || "";
+    document.getElementById("sm-name-en").value = k.name_en || "";
+    document.getElementById("sm-hs").value = k.hs_code || "";
+    document.getElementById("sm-inspection").checked = !!k.inspection_required;
+    document.getElementById("sm-net").value = k.unit_net_weight != null ? String(k.unit_net_weight) : "";
+    document.getElementById("sm-gross").value = k.unit_gross_weight != null ? String(k.unit_gross_weight) : "";
+    document.getElementById("sku-modal").classList.add("show");
+}
+
+function closeSkuModal() {
+    document.getElementById("sku-modal").classList.remove("show");
+    editingSkuId = null;
+}
+
+/* 解析重量输入：留空 → null（下批次 Node4 重算）；非数字报错 */
+function parseWeight(inputId, label) {
+    var raw = document.getElementById(inputId).value.trim();
+    if (!raw) return null;
+    var v = parseFloat(raw);
+    if (isNaN(v) || v < 0) {
+        throw new Error(label + "必须是非负数字，或留空");
+    }
+    return v;
+}
+
+async function saveSku() {
+    if (!editingSkuId) return;
+    var net, gross;
+    try {
+        net = parseWeight("sm-net", "单件净重");
+        gross = parseWeight("sm-gross", "单件毛重");
+    } catch (e) {
+        toast(e.message, 3500);
+        return;
+    }
+    var body = {
+        name_cn: document.getElementById("sm-name-cn").value.trim() || null,
+        name_en: document.getElementById("sm-name-en").value.trim() || null,
+        hs_code: document.getElementById("sm-hs").value.trim() || null,
+        inspection_required: document.getElementById("sm-inspection").checked,
+        unit_net_weight: net,
+        unit_gross_weight: gross,
+    };
+    var btn = document.getElementById("sm-save");
+    btn.disabled = true;
+    btn.textContent = "保存中…";
+    try {
+        var result = await api("/api/v1/mappings/skus/" + editingSkuId, {
+            method: "PUT", body: body
+        });
+        var n = result && result.audited_fields ? result.audited_fields.length : 0;
+        toast(n > 0 ? "已保存，已记录留痕（" + n + " 个字段变更）" : "已保存（无字段变化）", 3500);
+        closeSkuModal();
+        loadSkus();
+    } catch (e) {
+        toast("保存失败：" + e.message, 4000);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "保存";
+    }
+}
+
 /* ---------- 键盘：Esc 关闭弹窗 ---------- */
 document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
     if (document.getElementById("product-modal").classList.contains("show")) closeProductModal();
     if (document.getElementById("group-modal").classList.contains("show")) closeGroupModal();
+    if (document.getElementById("factory-modal").classList.contains("show")) closeFactoryModal();
+    if (document.getElementById("sku-modal").classList.contains("show")) closeSkuModal();
 });
 
 /* ---------- 启动 ---------- */

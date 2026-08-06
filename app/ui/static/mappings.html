@@ -40,6 +40,8 @@
   <div class="port-tabs" id="mp-tabs">
     <button class="port-tab active" id="tab-products" onclick="switchTab('products')">产品映射</button>
     <button class="port-tab" id="tab-groups" onclick="switchTab('groups')">品名组</button>
+    <button class="port-tab" id="tab-factories" onclick="switchTab('factories')">工厂与别名</button>
+    <button class="port-tab" id="tab-skus" onclick="switchTab('skus')">SKU 主数据</button>
   </div>
 
   <!-- 产品映射 Tab -->
@@ -85,6 +87,50 @@
     </div>
     <div id="group-list">
       <p class="empty-hint">加载中…</p>
+    </div>
+  </div>
+
+  <!-- 工厂与别名 Tab -->
+  <div id="pane-factories" style="display:none">
+    <div class="mp-toolbar">
+      <span class="muted" id="factory-count"></span>
+      <span class="spacer"></span>
+      <button class="btn btn-primary" onclick="openFactoryModal(null)">新增工厂</button>
+    </div>
+    <div id="factory-list">
+      <p class="empty-hint">加载中…</p>
+    </div>
+  </div>
+
+  <!-- SKU 主数据 Tab -->
+  <div id="pane-skus" style="display:none">
+    <div class="mp-toolbar">
+      <select id="s-factory" onchange="loadSkus()" style="padding:6px 9px;border:1px solid #cbd5e1;border-radius:5px;font-size:13px;font-family:var(--font)">
+        <option value="">全部工厂</option>
+      </select>
+      <input id="s-q" type="text" placeholder="搜索 SKU / 品名" onkeydown="if(event.key==='Enter')loadSkus()">
+      <button class="btn" onclick="loadSkus()">搜索</button>
+      <span class="spacer"></span>
+      <span class="muted" id="sku-count"></span>
+    </div>
+    <div class="card">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>SKU</th>
+            <th>中文品名</th>
+            <th>英文品名</th>
+            <th>税号</th>
+            <th>商检</th>
+            <th>单件净重</th>
+            <th>单件毛重</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="sku-tbody">
+          <tr><td colspan="8" class="empty">加载中…</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 
@@ -167,6 +213,73 @@
     <div class="modal-actions">
       <button class="btn" onclick="closeGroupModal()">取消</button>
       <button id="gm-save" class="btn btn-primary" onclick="saveGroup()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 工厂 编辑/新增 弹窗 -->
+<div id="factory-modal" class="modal-mask" onclick="if(event.target===this)closeFactoryModal()">
+  <div class="modal">
+    <h3 id="fm-title">新增工厂</h3>
+    <div class="field">
+      <label>规范名 <span style="color:var(--err)">*</span></label>
+      <input id="fm-name" type="text" placeholder="工厂规范名（与单据一致的全称）">
+    </div>
+    <div class="field">
+      <label>中文短名</label>
+      <input id="fm-short" type="text" placeholder="如：中地 / 正达 / 贝来，可留空后补">
+    </div>
+    <div class="field">
+      <label>商检工厂</label>
+      <label class="mp-check" style="flex:1;text-align:left">
+        <input id="fm-inspection" type="checkbox"> 是商检工厂（影响后续批次分票判定）
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeFactoryModal()">取消</button>
+      <button id="fm-save" class="btn btn-primary" onclick="saveFactory()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- SKU 主数据 编辑 弹窗 -->
+<div id="sku-modal" class="modal-mask" onclick="if(event.target===this)closeSkuModal()">
+  <div class="modal">
+    <h3 id="sm-title">编辑 SKU 主数据</h3>
+    <div class="field">
+      <label>SKU</label>
+      <input id="sm-code" type="text" disabled>
+    </div>
+    <div class="field">
+      <label>中文品名</label>
+      <input id="sm-name-cn" type="text" placeholder="报关用中文品名，可留空">
+    </div>
+    <div class="field">
+      <label>英文品名</label>
+      <input id="sm-name-en" type="text" placeholder="清关用英文品名，可留空">
+    </div>
+    <div class="field">
+      <label>税号</label>
+      <input id="sm-hs" type="text" placeholder="HS 编码，可留空">
+    </div>
+    <div class="field">
+      <label>商检</label>
+      <label class="mp-check" style="flex:1;text-align:left">
+        <input id="sm-inspection" type="checkbox"> 需要商检
+      </label>
+    </div>
+    <div class="field">
+      <label>单件净重</label>
+      <input id="sm-net" type="text" placeholder="kg/件；留空则下批次重算">
+    </div>
+    <div class="field">
+      <label>单件毛重</label>
+      <input id="sm-gross" type="text" placeholder="kg/件；留空则下批次重算">
+    </div>
+    <div class="member-hint">所有改动逐字段留痕（何时 / 字段 / 旧值 / 新值）。</div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeSkuModal()">取消</button>
+      <button id="sm-save" class="btn btn-primary" onclick="saveSku()">保存</button>
     </div>
   </div>
 </div>

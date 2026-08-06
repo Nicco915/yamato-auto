@@ -196,3 +196,16 @@ class FactoryAlias(Base):
     use_folder_match = Column(Boolean, nullable=False, default=True)    # 用于文件夹匹配（原 alias_map）
     use_excel_normalize = Column(Boolean, nullable=False, default=False)  # 用于 Excel 归一化（原 NORMALIZE_MAP）
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+# SkuMasterAudit 表——SKU 主数据人工编辑留痕（review_audits 同级）
+# PUT /api/v1/mappings/skus/{id} 时逐字段 diff，每个有变化的字段写一条：
+# 何时（changed_at）/ 哪个 SKU（sku_code）/ 哪个字段（field）/ 旧值 / 新值。
+class SkuMasterAudit(Base):
+    __tablename__ = 'sku_master_audits'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sku_code = Column(String, nullable=False, index=True)
+    field = Column(String, nullable=False)        # 被改字段名
+    old_value = Column(String, nullable=True)
+    new_value = Column(String, nullable=True)
+    changed_at = Column(DateTime, server_default=func.now())

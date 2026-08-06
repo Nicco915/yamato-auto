@@ -10,6 +10,15 @@
 - POST   /api/v1/mappings/groups            新增组
 - PUT    /api/v1/mappings/groups/{id}       编辑组（成员整体替换）
 - DELETE /api/v1/mappings/groups/{id}       删除组
+- GET    /api/v1/mappings/factories         工厂列表（含 short_name/商检标记/别名数组/SKU 数量）
+- POST   /api/v1/mappings/factories         新增工厂
+- PUT    /api/v1/mappings/factories/{id}    编辑工厂（规范名/短名/商检标记）
+- DELETE /api/v1/mappings/factories/{id}    删除工厂（有 SKU 或别名关联时拒绝）
+- POST   /api/v1/mappings/factories/{id}/aliases  新增别名
+- PUT    /api/v1/mappings/aliases/{alias_id}      编辑别名（文本 + 两个用途开关）
+- DELETE /api/v1/mappings/aliases/{alias_id}      删除别名
+- GET    /api/v1/mappings/skus              SKU 主数据列表（?factory_id=&q= 模糊搜 SKU/品名）
+- PUT    /api/v1/mappings/skus/{sku_id}     编辑 SKU 主数据（逐字段 diff 写 sku_master_audits 留痕）
 """
 
 from __future__ import annotations
@@ -20,7 +29,15 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
-from app.db.models import ProductGroup, ProductGroupMember, ProductMapping
+from app.db.models import (
+    Factory,
+    FactoryAlias,
+    FactorySKU,
+    ProductGroup,
+    ProductGroupMember,
+    ProductMapping,
+    SkuMasterAudit,
+)
 from app.db.session import get_session
 from app.db.sync import sync_mapping_to_sku
 
@@ -58,6 +75,33 @@ class GroupUpsert(BaseModel):
     group_type: str                       # set_split | box_share
     source_name_cn: str
     members: list[GroupMemberIn] = []
+
+
+class FactoryUpsert(BaseModel):
+    """工厂新增/编辑（编辑为全量字段提交）。"""
+
+    factory_name: str
+    short_name: Optional[str] = None
+    is_inspection_factory: bool = False
+
+
+class AliasUpsert(BaseModel):
+    """工厂别名新增/编辑（编辑为全量字段提交）。"""
+
+    alias: str
+    use_folder_match: bool = True
+    use_excel_normalize: bool = False
+
+
+class SkuUpsert(BaseModel):
+    """SKU 主数据编辑（全量字段提交；单件净重/毛重允许留空=None，下批次 Node4 重算）。"""
+
+    name_cn: Optional[str] = None
+    name_en: Optional[str] = None
+    hs_code: Optional[str] = None
+    inspection_required: bool = False
+    unit_net_weight: Optional[float] = None
+    unit_gross_weight: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -331,3 +375,309 @@ def delete_group(group_id: int):
         s.delete(g)
         s.commit()
         return {"deleted": group_id}
+
+
+# ---------------------------------------------------------------------------
+# 工厂与别名
+# ---------------------------------------------------------------------------
+
+def _alias_dict(a: FactoryAlias) -> dict:
+    return {
+        "id": a.id,
+        "factory_id": a.factory_id,
+        "alias": a.alias,
+        "use_folder_match": bool(a.use_folder_match),
+        "use_excel_normalize": bool(a.use_excel_normalize),
+    }
+
+
+def _factory_dict(f: Factory, aliases: list[FactoryAlias], sku_count: int) -> dict:
+    return {
+        "id": f.factory_id,
+        "factory_name": f.factory_name,
+        "short_name": f.short_name,
+        "is_inspection_factory": bool(f.is_inspection_factory),
+        "aliases": [_alias_dict(a) for a in aliases],
+        "sku_count": sku_count,
+    }
+
+
+def _load_factory(s, factory_id: int) -> Factory:
+    f = s.get(Factory, factory_id)
+    if f is None:
+        raise HTTPException(status_code=404, detail=f"工厂不存在: id={factory_id}")
+    return f
+
+
+@router.get("/factories")
+def list_factories():
+    """工厂列表：含短名、商检标记、别名数组、SKU 数量。"""
+    with get_session() as s:
+        factories = s.query(Factory).order_by(Factory.factory_id).all()
+        result = []
+        for f in factories:
+            aliases = (
+                s.query(FactoryAlias)
+                .filter(FactoryAlias.factory_id == f.factory_id)
+                .order_by(FactoryAlias.id)
+                .all()
+            )
+            sku_count = (
+                s.query(FactorySKU)
+                .filter(FactorySKU.factory_id == f.factory_id)
+                .count()
+            )
+            result.append(_factory_dict(f, aliases, sku_count))
+        return result
+
+
+@router.post("/factories", status_code=201)
+def create_factory(req: FactoryUpsert):
+    """新增工厂。规范名唯一。"""
+    if _blank(req.factory_name):
+        raise HTTPException(status_code=400, detail="工厂规范名不能为空")
+    with get_session() as s:
+        name = req.factory_name.strip()
+        dup = s.query(Factory).filter(Factory.factory_name == name).first()
+        if dup is not None:
+            raise HTTPException(status_code=400, detail=f"工厂已存在: {name} (id={dup.factory_id})")
+        f = Factory(
+            factory_name=name,
+            short_name=(req.short_name or "").strip() or None,
+            is_inspection_factory=req.is_inspection_factory,
+        )
+        s.add(f)
+        s.commit()
+        s.refresh(f)
+        return _factory_dict(f, [], 0)
+
+
+@router.put("/factories/{factory_id}")
+def update_factory(factory_id: int, req: FactoryUpsert):
+    """编辑工厂：规范名/中文短名/商检工厂标记。短名留空即置 NULL（待补录）。"""
+    if _blank(req.factory_name):
+        raise HTTPException(status_code=400, detail="工厂规范名不能为空")
+    with get_session() as s:
+        f = _load_factory(s, factory_id)
+        name = req.factory_name.strip()
+        dup = (
+            s.query(Factory)
+            .filter(Factory.factory_name == name, Factory.factory_id != factory_id)
+            .first()
+        )
+        if dup is not None:
+            raise HTTPException(status_code=400, detail=f"工厂规范名已被占用: {name} (id={dup.factory_id})")
+        f.factory_name = name
+        f.short_name = (req.short_name or "").strip() or None
+        f.is_inspection_factory = req.is_inspection_factory
+        s.commit()
+        s.refresh(f)
+        aliases = (
+            s.query(FactoryAlias)
+            .filter(FactoryAlias.factory_id == factory_id)
+            .order_by(FactoryAlias.id)
+            .all()
+        )
+        sku_count = (
+            s.query(FactorySKU).filter(FactorySKU.factory_id == factory_id).count()
+        )
+        return _factory_dict(f, aliases, sku_count)
+
+
+@router.delete("/factories/{factory_id}")
+def delete_factory(factory_id: int):
+    """删除工厂：有 SKU 或别名关联时拒绝（400 说明原因）。"""
+    with get_session() as s:
+        f = _load_factory(s, factory_id)
+        sku_count = (
+            s.query(FactorySKU).filter(FactorySKU.factory_id == factory_id).count()
+        )
+        alias_count = (
+            s.query(FactoryAlias).filter(FactoryAlias.factory_id == factory_id).count()
+        )
+        if sku_count or alias_count:
+            parts = []
+            if sku_count:
+                parts.append(f"{sku_count} 条 SKU 主数据")
+            if alias_count:
+                parts.append(f"{alias_count} 条别名")
+            raise HTTPException(
+                status_code=400,
+                detail=f"工厂「{f.factory_name}」下仍有 {' 和 '.join(parts)}，请先清理关联后再删除",
+            )
+        s.delete(f)
+        s.commit()
+        return {"deleted": factory_id}
+
+
+@router.post("/factories/{factory_id}/aliases", status_code=201)
+def create_alias(factory_id: int, req: AliasUpsert):
+    """新增工厂别名（两个用途开关至少开一个）。"""
+    if _blank(req.alias):
+        raise HTTPException(status_code=400, detail="别名不能为空")
+    if not req.use_folder_match and not req.use_excel_normalize:
+        raise HTTPException(status_code=400, detail="文件夹匹配 / Excel 归一化至少勾选一个用途")
+    with get_session() as s:
+        _load_factory(s, factory_id)
+        alias = req.alias.strip()
+        dup = (
+            s.query(FactoryAlias)
+            .filter(FactoryAlias.factory_id == factory_id, FactoryAlias.alias == alias)
+            .first()
+        )
+        if dup is not None:
+            raise HTTPException(status_code=400, detail=f"该工厂下别名已存在: {alias} (id={dup.id})")
+        a = FactoryAlias(
+            factory_id=factory_id,
+            alias=alias,
+            use_folder_match=req.use_folder_match,
+            use_excel_normalize=req.use_excel_normalize,
+        )
+        s.add(a)
+        s.commit()
+        s.refresh(a)
+        return _alias_dict(a)
+
+
+@router.put("/aliases/{alias_id}")
+def update_alias(alias_id: int, req: AliasUpsert):
+    """编辑别名：文本 + 两个用途开关。"""
+    if _blank(req.alias):
+        raise HTTPException(status_code=400, detail="别名不能为空")
+    if not req.use_folder_match and not req.use_excel_normalize:
+        raise HTTPException(status_code=400, detail="文件夹匹配 / Excel 归一化至少勾选一个用途")
+    with get_session() as s:
+        a = s.get(FactoryAlias, alias_id)
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"别名不存在: id={alias_id}")
+        alias = req.alias.strip()
+        dup = (
+            s.query(FactoryAlias)
+            .filter(
+                FactoryAlias.factory_id == a.factory_id,
+                FactoryAlias.alias == alias,
+                FactoryAlias.id != alias_id,
+            )
+            .first()
+        )
+        if dup is not None:
+            raise HTTPException(status_code=400, detail=f"该工厂下别名已存在: {alias} (id={dup.id})")
+        a.alias = alias
+        a.use_folder_match = req.use_folder_match
+        a.use_excel_normalize = req.use_excel_normalize
+        s.commit()
+        s.refresh(a)
+        return _alias_dict(a)
+
+
+@router.delete("/aliases/{alias_id}")
+def delete_alias(alias_id: int):
+    """删除别名。"""
+    with get_session() as s:
+        a = s.get(FactoryAlias, alias_id)
+        if a is None:
+            raise HTTPException(status_code=404, detail=f"别名不存在: id={alias_id}")
+        s.delete(a)
+        s.commit()
+        return {"deleted": alias_id}
+
+
+# ---------------------------------------------------------------------------
+# SKU 主数据（可编辑 + 完整留痕）
+# ---------------------------------------------------------------------------
+
+def _sku_dict(k: FactorySKU) -> dict:
+    return {
+        "sku_id": k.sku_id,
+        "factory_id": k.factory_id,
+        "sku_code": k.sku_code,
+        "name_cn": k.name_cn,
+        "name_en": k.name_en,
+        "hs_code": k.hs_code,
+        "inspection_required": bool(k.inspection_required),
+        "unit_net_weight": float(k.unit_net_weight) if k.unit_net_weight is not None else None,
+        "unit_gross_weight": float(k.unit_gross_weight) if k.unit_gross_weight is not None else None,
+        "updated_at": k.updated_at.isoformat(sep=" ") if k.updated_at else None,
+    }
+
+
+@router.get("/skus")
+def list_skus(
+    factory_id: Optional[int] = Query(default=None),
+    q: Optional[str] = Query(default=None),
+):
+    """SKU 主数据列表：factory_id 精确筛选；q 模糊搜 SKU 编码/中文品名/英文品名。"""
+    with get_session() as s:
+        query = s.query(FactorySKU)
+        if factory_id is not None:
+            query = query.filter(FactorySKU.factory_id == factory_id)
+        if q and q.strip():
+            like = f"%{q.strip()}%"
+            query = query.filter(
+                (FactorySKU.sku_code.like(like))
+                | (FactorySKU.name_cn.like(like))
+                | (FactorySKU.name_en.like(like))
+            )
+        rows = query.order_by(FactorySKU.factory_id, FactorySKU.sku_code).all()
+        return [_sku_dict(k) for k in rows]
+
+
+# 可编辑字段 → 留痕字段名（与 SkuMasterAudit.field 对应）
+_SKU_EDITABLE_FIELDS = (
+    "name_cn",
+    "name_en",
+    "hs_code",
+    "inspection_required",
+    "unit_net_weight",
+    "unit_gross_weight",
+)
+
+
+def _audit_str(v) -> Optional[str]:
+    if v is None:
+        return None
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    return str(v)
+
+
+@router.put("/skus/{sku_id}")
+def update_sku(sku_id: int, req: SkuUpsert):
+    """编辑 SKU 主数据：逐字段 diff，有变化的字段各写一条 sku_master_audits。
+
+    单件净重/毛重允许留空（None）：每批次 Node4 重新计算，DB 值仅作比对参考。
+    返回 audited_fields 便于前端提示「已记录留痕」。
+    """
+    with get_session() as s:
+        k = s.get(FactorySKU, sku_id)
+        if k is None:
+            raise HTTPException(status_code=404, detail=f"SKU 主数据不存在: id={sku_id}")
+        new_values = {
+            "name_cn": (req.name_cn or "").strip() or None,
+            "name_en": (req.name_en or "").strip() or None,
+            "hs_code": (req.hs_code or "").strip() or None,
+            "inspection_required": req.inspection_required,
+            "unit_net_weight": req.unit_net_weight,
+            "unit_gross_weight": req.unit_gross_weight,
+        }
+        audited = []
+        for field in _SKU_EDITABLE_FIELDS:
+            old = getattr(k, field)
+            new = new_values[field]
+            if field in ("unit_net_weight", "unit_gross_weight"):
+                old = float(old) if old is not None else None
+            if old == new:
+                continue
+            s.add(
+                SkuMasterAudit(
+                    sku_code=k.sku_code,
+                    field=field,
+                    old_value=_audit_str(old),
+                    new_value=_audit_str(new),
+                )
+            )
+            setattr(k, field, new)
+            audited.append(field)
+        s.commit()
+        s.refresh(k)
+        return {**_sku_dict(k), "audited_fields": audited}
