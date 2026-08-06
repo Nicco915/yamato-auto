@@ -18,7 +18,12 @@ class RawItem(BaseModel):
     sku: str  # SHOHIN_CD
     net_weight: float | None  # 净重
     gross_weight: float | None  # 毛重
-    pcs: int | None  # SOTOBAKO_D_HACCHU_SU 件数
+    pcs: int | None  # SOTOBAKO_D_HACCHU_SU 箱数
+    # ---- 报关生成扩展字段（追加式，均有默认值，不影响分票构造调用） ----
+    name_cn: str = ""  # 中文品名（32 列）
+    qty_pieces: int | None = None  # 件数 D_HACCHU_SU（35 列）
+    amount: float | None = None  # 金额 KAKAKUKEI（51 列）
+    currency: str = ""  # 币制 TSUKA_MEI（47 列）
 
 
 class TicketItem(BaseModel):

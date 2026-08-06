@@ -15,7 +15,8 @@ def load_filled_excel(path: str | Path) -> list[RawItem]:
 
     按表头列名定位（列顺序变化不影响），所需列：
       KANRI_NO、MINATO_MEI_KJ、CONTAINER_MEI、MAKER_MEI_KJ、
-      SHOHIN_CD、净重、毛重、SOTOBAKO_D_HACCHU_SU
+      SHOHIN_CD、净重、毛重、SOTOBAKO_D_HACCHU_SU、
+      中文品名、D_HACCHU_SU、KAKAKUKEI、TSUKA_MEI（后 4 列供报关生成）
 
     表头在第 1 行，数据从第 2 行开始。跳过 KANRI_NO 为空的行。
     缺列时抛 ValueError。
@@ -23,6 +24,7 @@ def load_filled_excel(path: str | Path) -> list[RawItem]:
     REQUIRED = [
         "KANRI_NO", "MINATO_MEI_KJ", "CONTAINER_MEI", "MAKER_MEI_KJ",
         "SHOHIN_CD", "净重", "毛重", "SOTOBAKO_D_HACCHU_SU",
+        "中文品名", "D_HACCHU_SU", "KAKAKUKEI", "TSUKA_MEI",
     ]
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb.active
@@ -64,6 +66,10 @@ def load_filled_excel(path: str | Path) -> list[RawItem]:
             net_weight=num(ws.cell(row=row_idx, column=col["净重"]).value),
             gross_weight=num(ws.cell(row=row_idx, column=col["毛重"]).value),
             pcs=num(ws.cell(row=row_idx, column=col["SOTOBAKO_D_HACCHU_SU"]).value, as_int=True),
+            name_cn=text("中文品名"),
+            qty_pieces=num(ws.cell(row=row_idx, column=col["D_HACCHU_SU"]).value, as_int=True),
+            amount=num(ws.cell(row=row_idx, column=col["KAKAKUKEI"]).value),
+            currency=text("TSUKA_MEI"),
         ))
 
     wb.close()
