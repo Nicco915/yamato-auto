@@ -7,13 +7,16 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
+    Column,
     DateTime,
     ForeignKey,
     Integer,
+    JSON,
     Numeric,
     String,
     Text,
     UniqueConstraint,
+    func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -107,3 +110,35 @@ class DispatcherMemory(Base):
     recent_paths_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     operation_summary_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# Container 表——柜子维度信息
+class Container(Base):
+    __tablename__ = 'containers'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    batch_thread_id = Column(String, nullable=False, index=True)  # 上游批次 thread_id
+    kanri_no = Column(String, nullable=False)       # 虚拟柜号 KANRI_NO
+    port = Column(String, nullable=False)            # 港口 MINATO_MEI_KJ
+    container_type = Column(String, nullable=False)  # 箱型 CONTAINER_MEI
+    factories = Column(JSON, nullable=False)         # 柜内工厂列表
+    sj_factories = Column(JSON, nullable=False)      # 柜内商检工厂列表
+    row_count = Column(Integer, nullable=False)      # 柜内行数（用于货量比较）
+    created_at = Column(DateTime, server_default=func.now())
+
+
+# Declaration 表——票
+class Declaration(Base):
+    __tablename__ = 'declarations'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    split_thread_id = Column(String, nullable=False, index=True)  # 分票图 thread_id
+    ticket_no = Column(String, nullable=False)       # 票号：港口-序号（如「東京港-01」）
+    port = Column(String, nullable=False)            # 港口
+    container_type = Column(String, nullable=False)  # 箱型
+    items = Column(JSON, nullable=False)             # [{kanri_no, factory_filter, is_partial}]
+    sj_factories = Column(JSON, nullable=False)      # [{factory_name, inspection_required_sku_count}]
+    status = Column(String, nullable=False, default='pending')  # pending/confirmed/reset
+    version = Column(Integer, nullable=False, default=1)
+    force_confirmed = Column(Boolean, nullable=False, default=False)  # 是否强制通过
+    warnings = Column(JSON, nullable=True)           # 软校验警告 [{rule, message}]
+    created_at = Column(DateTime, server_default=func.now())
+    confirmed_at = Column(DateTime, nullable=True)

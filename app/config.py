@@ -2,6 +2,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 项目根目录（app/ 的上一级中的 app 包所在目录）
@@ -62,6 +63,24 @@ class Settings(BaseSettings):
     # ----- 业务阈值 -----
     weight_diff_warn_ratio: float = 0.05  # 与历史单重差异超过 5% 标记 Warning
     fuzzy_match_score_cutoff: float = 40.0  # rapidfuzz 匹配最低分
+
+    # ----- 商检与归一化 -----
+    # 商检工厂兜底名单（主数据 inspection_required 未补录时的兑底）
+    # env INSPECTION_FACTORIES 逗号分隔，默认贝来/正达
+    INSPECTION_FACTORIES: list[str] = Field(
+        default_factory=lambda: ["青島貝来", "Ｃ．正達工芸品"],
+        description="商检工厂兜底名单"
+    )
+
+    # 工厂名归一化映射
+    # env FACTORY_NORMALIZE_MAP JSON 字符串，如 '{"青島貝来国際貿易有限公司":"青島貝来","上海億鑽五金工具有限公司（青島）":"上海億鑽五金工具（青島）"}'
+    FACTORY_NORMALIZE_MAP: dict[str, str] = Field(
+        default_factory=lambda: {
+            "青島貝来国際貿易有限公司": "青島貝来",
+            "上海億鑽五金工具有限公司（青島）": "上海億鑽五金工具（青島）",
+        },
+        description="工厂名归一化映射表"
+    )
 
     # ----- 下游装箱单关键列名（日本买家标准模板）-----
     col_factory: str = "MAKER_MEI_KJ"   # 工厂名（日文/英文）
