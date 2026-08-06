@@ -283,9 +283,19 @@ function renderContainers() {
 
             var assignMark = assigned ? '<span class="assigned-mark">已分配</span>' : '';
 
+            // 柜级数值（M3 / 箱数），来自 proposal.container_stats
+            var stats = (proposal.container_stats || {})[c.kanri_no] || {};
+            var statParts = [];
+            if (stats.m3 !== null && stats.m3 !== undefined) statParts.push(esc(String(stats.m3)) + ' m³');
+            if (stats.pcs !== null && stats.pcs !== undefined) statParts.push(esc(String(stats.pcs)) + ' 箱');
+            var statsHtml = statParts.length
+                ? '<span class="container-stats">' + statParts.join(' / ') + '</span>'
+                : '';
+
             html += '<div class="' + cls + '" data-kanri="' + esc(c.kanri_no) + '">'
                 + '<span class="mono">' + esc(c.kanri_no) + '</span>'
                 + sjHtml
+                + statsHtml
                 + '<span class="factory-summary">' + factSummary + partialNote + '</span>'
                 + assignMark
                 + '</div>';

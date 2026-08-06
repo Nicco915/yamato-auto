@@ -43,6 +43,8 @@ def _collect_container_info(
                 sj_factories=set(),
                 row_count=0,
                 maker_row_counts=defaultdict(int),
+                m3=item.m3,          # 柜级属性，每行重复，取首行
+                pcs_total=0,         # 箱数合计（SOTOBAKO_D_HACCHU_SU）
             )
         c = raw_containers[k]
         c["makers"].add(item.maker)
@@ -50,6 +52,10 @@ def _collect_container_info(
             c["sj_factories"].add(item.maker)
         c["row_count"] += 1
         c["maker_row_counts"][item.maker] += 1
+        if c["m3"] is None and item.m3 is not None:
+            c["m3"] = item.m3
+        if item.pcs is not None:
+            c["pcs_total"] += item.pcs
         # 一柜恒属一港口一箱型
         if c["port"] != item.port:
             raise ValueError(
@@ -291,4 +297,14 @@ def propose(
     for port in port_order:
         port_groups.append(PortGroup(port=port, groups=port_tickets[port]))
 
-    return SplitProposal(status="pending_review", ports=port_groups)
+    # 柜级统计（供 UI 左栏展示 M3 / 箱数）
+    container_stats = {
+        c["kanri_no"]: {"m3": c["m3"], "pcs": c["pcs_total"]}
+        for c in containers
+    }
+
+    return SplitProposal(
+        status="pending_review",
+        ports=port_groups,
+        container_stats=container_stats,
+    )

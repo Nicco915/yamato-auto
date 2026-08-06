@@ -25,6 +25,7 @@ def load_filled_excel(path: str | Path) -> list[RawItem]:
         "KANRI_NO", "MINATO_MEI_KJ", "CONTAINER_MEI", "MAKER_MEI_KJ",
         "SHOHIN_CD", "净重", "毛重", "SOTOBAKO_D_HACCHU_SU",
         "中文品名", "D_HACCHU_SU", "KAKAKUKEI", "TSUKA_MEI",
+        "M3",
     ]
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb.active
@@ -70,6 +71,7 @@ def load_filled_excel(path: str | Path) -> list[RawItem]:
             qty_pieces=num(ws.cell(row=row_idx, column=col["D_HACCHU_SU"]).value, as_int=True),
             amount=num(ws.cell(row=row_idx, column=col["KAKAKUKEI"]).value),
             currency=text("TSUKA_MEI"),
+            m3=num(ws.cell(row=row_idx, column=col["M3"]).value),
         ))
 
     wb.close()

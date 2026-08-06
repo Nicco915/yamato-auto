@@ -24,6 +24,7 @@ class RawItem(BaseModel):
     qty_pieces: int | None = None  # 件数 D_HACCHU_SU（35 列）
     amount: float | None = None  # 金额 KAKAKUKEI（51 列）
     currency: str = ""  # 币制 TSUKA_MEI（47 列）
+    m3: float | None = None  # 体积 M3（14 列，柜级属性，每行重复）
 
 
 class TicketItem(BaseModel):
@@ -67,3 +68,5 @@ class SplitProposal(BaseModel):
     source_file: str = ""
     status: str = "pending_review"  # pending_review / confirmed / reset
     ports: list[PortGroup] = Field(default_factory=list)
+    # 柜级统计（供 UI 展示）：{kanri_no: {"m3": float|None, "pcs": int|None}}
+    container_stats: dict[str, dict] = Field(default_factory=dict)
