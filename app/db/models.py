@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     JSON,
@@ -142,3 +143,39 @@ class Declaration(Base):
     warnings = Column(JSON, nullable=True)           # 软校验警告 [{rule, message}]
     created_at = Column(DateTime, server_default=func.now())
     confirmed_at = Column(DateTime, nullable=True)
+
+
+# ProductMapping 表——报关产品映射（品名级/SKU 级）
+class ProductMapping(Base):
+    __tablename__ = 'product_mappings'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    product_name_cn = Column(String, nullable=False, index=True)   # 中文品名（主匹配键）
+    sku_code = Column(String, ForeignKey('factory_skus.sku_code'), nullable=True)   # SKU 级精确匹配
+    factory_id = Column(Integer, ForeignKey('factories.factory_id'), nullable=True)
+    hs_code = Column(String, nullable=True)              # 税号
+    supplier_name = Column(String, nullable=True)        # 供应商报关全称（如 青岛东基恒塑料包装有限公司）
+    inspection_required = Column(Boolean, nullable=False, default=False)  # 商检（产品级）
+    name_en = Column(String, nullable=True)              # 英文品名（产品组一）
+    unit_code = Column(String, nullable=True)            # 计量单位代码（自定义七，如 '007'）
+    is_incomplete = Column(Boolean, nullable=False, default=False)  # 待完善标记（Node5 反向生成时 True）
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+# ProductGroup 表——品名组（套装拆分/同箱分摊）
+class ProductGroup(Base):
+    __tablename__ = 'product_groups'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String, nullable=False)              # '6件套' / '3件套' / '烟灰缸+支架'
+    group_type = Column(String, nullable=False)        # 'set_split' | 'box_share'
+    source_name_cn = Column(String, nullable=False)    # 总表中的源品名（如 '6件套'、'烟灰缸'）
+
+
+# ProductGroupMember 表——品名组成员
+class ProductGroupMember(Base):
+    __tablename__ = 'product_group_members'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    group_id = Column(Integer, ForeignKey('product_groups.id'), nullable=False)
+    product_name_cn = Column(String, nullable=False)  # 组件品名
+    display_order = Column(Integer, nullable=False)   # 显示顺序，首行带箱数/毛重
+    split_price = Column(Float, nullable=True)        # set_split：组件单价 USD/套；box_share：NULL（金额平均分）
+    split_net_weight = Column(Float, nullable=True)   # 组件单件净重 kg/件
