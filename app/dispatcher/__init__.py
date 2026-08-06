@@ -65,6 +65,8 @@ _TOOL_CN = {
     "start_split": "启动分票",
     "confirm_split": "确认分票方案",
     "reset_split": "重置分票",
+    "generate_declarations": "生成报关单",
+    "upsert_product_mapping": "维护产品映射",
 }
 
 # 软挂起一轮窗口的确认/否定判定：strip + 小写后全串精确匹配（确定性

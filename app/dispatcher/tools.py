@@ -1425,6 +1425,220 @@ def _exec_reset_split(
 
 
 # ---------------------------------------------------------------------------
+# 报关工具（list_declaration_files 只读；generate/upsert_mapping 写）
+# ---------------------------------------------------------------------------
+
+def _fn_list_declaration_files(args: dict) -> dict:
+    """列出某批次已生成的报关单文件。返回自然语言列表。"""
+    try:
+        thread_id = args["thread_id"].strip()
+        split_thread_id = f"split-{thread_id}"
+
+        settings = get_settings()
+        out_dir = settings.output_dir_abs / "declarations" / split_thread_id
+
+        if not out_dir.is_dir():
+            return {"status": "empty",
+                    "message": "该批次尚未生成报关单"}
+
+        files = sorted(out_dir.glob("*.xlsx"))
+        if not files:
+            return {"status": "empty",
+                    "message": "该批次尚未生成报关单"}
+
+        lines = [f"{f.name}（{f.stat().st_size // 1024} KB）" for f in files]
+        header = f"批次 {thread_id} 已生成 {len(files)} 份报关单："
+        if len(lines) > 30:
+            # 按港口归类汇总展示
+            port_groups: dict[str, int] = {}
+            for f in files:
+                # 报关东京A.xlsx → 东京
+                stem = f.stem.replace("报关", "")
+                port = "".join(ch for ch in stem if not ch.isascii())
+                port_groups[port] = port_groups.get(port, 0) + 1
+            summary = "、".join(f"{p} {n} 份" for p, n in sorted(port_groups.items()))
+            return {"status": "ok",
+                    "message": f"{header}{summary}。",
+                    "total": len(files)}
+
+        return {"status": "ok",
+                "message": header + "\n" + "\n".join(lines),
+                "total": len(files)}
+    except Exception as e:
+        return _err(e)
+
+
+def _preview_generate_declarations(args: dict) -> dict:
+    """generate_declarations 预览：校验分票已确认 + 展示发票号规则。"""
+    try:
+        thread_id = (args.get("thread_id") or "").strip()
+        invoice_number = (args.get("invoice_number") or "").strip()
+
+        warnings: list[str] = []
+        if not thread_id:
+            warnings.append("thread_id 为空")
+        if not invoice_number:
+            warnings.append("invoice_number（发票号码段）为空")
+
+        lines = [f"批次: {thread_id}",
+                 f"发票号码段: {invoice_number or '（未提供）'}",
+                 "发票号规则: YIL + 港口字母 + 号码段"
+                 "（如 YILT656=东京、YILN656=名古屋）"]
+
+        if thread_id:
+            split_thread_id = f"split-{thread_id}"
+            from app.db.models import Declaration
+            from app.db.session import get_session
+            with get_session() as sess:
+                confirmed = sess.query(Declaration).filter(
+                    Declaration.split_thread_id == split_thread_id,
+                    Declaration.status == "confirmed",
+                ).count()
+            if confirmed == 0:
+                warnings.append("该批次分票方案尚未确认，请先在分票页确认")
+            else:
+                lines.append(f"已确认票数: {confirmed}")
+
+        summary = (f"确认为批次 {thread_id} 生成报关单？"
+                   f"发票号码段 {invoice_number or '（未提供）'}")
+        return _preview(summary, lines, warnings)
+    except Exception as e:
+        return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
+
+
+def _exec_generate_declarations(
+    args: dict,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """generate_declarations 执行：调 declare.service 生成全部报关单。"""
+    try:
+        thread_id = (args.get("thread_id") or "").strip()
+        invoice_number = (args.get("invoice_number") or "").strip()
+
+        # 二次校验
+        if not thread_id:
+            return {"error": "thread_id 为空"}
+        if not invoice_number:
+            return {"error": "invoice_number（发票号码段）为空"}
+
+        split_thread_id = f"split-{thread_id}"
+
+        from app.db.models import Declaration
+        from app.db.session import get_session
+        with get_session() as sess:
+            confirmed = sess.query(Declaration).filter(
+                Declaration.split_thread_id == split_thread_id,
+                Declaration.status == "confirmed",
+            ).count()
+        if confirmed == 0:
+            return {"error": "该批次分票方案尚未确认，请先在分票页确认"}
+
+        from app.declare.service import generate_declarations
+        result = generate_declarations(split_thread_id, invoice_number)
+
+        count = result.get("count", 0)
+        warnings = result.get("warnings") or []
+        warn_text = f"，{len(warnings)} 条警告" if warnings else ""
+        return {
+            "status": "generated",
+            "split_thread_id": split_thread_id,
+            "count": count,
+            "warnings": warnings,
+            "message": (
+                f"批次 {thread_id} 的 {count} 份报关单已生成{warn_text}，"
+                f"可在分票页或批次页下载。"
+            ),
+        }
+    except ValueError as e:
+        return {"error": str(e)}
+    except Exception as e:
+        return _err(e)
+
+
+def _preview_upsert_product_mapping(args: dict) -> dict:
+    """upsert_product_mapping 预览：展示将写入的映射字段。"""
+    try:
+        name = (args.get("product_name_cn") or "").strip()
+        warnings: list[str] = []
+        if not name:
+            warnings.append("product_name_cn（中文品名）为空")
+            return _preview("无法维护产品映射", [], warnings)
+
+        # 判断新增还是更新
+        from app.db.models import ProductMapping
+        from app.db.session import get_session
+        with get_session() as sess:
+            existing = sess.query(ProductMapping).filter(
+                ProductMapping.product_name_cn == name).first()
+        action = "更新" if existing else "新增"
+
+        field_labels = [
+            ("hs_code", "税号"), ("supplier_name", "供应商"),
+            ("inspection_required", "需商检"), ("name_en", "英文品名"),
+            ("unit_code", "计量单位代码"),
+        ]
+        lines = [f"品名: {name}", f"操作: {action}"]
+        for key, label in field_labels:
+            v = args.get(key)
+            if v is not None and v != "":
+                lines.append(f"{label}: {v}")
+
+        summary = f"确认{action}品名「{name}」的产品映射？"
+        return _preview(summary, lines, warnings)
+    except Exception as e:
+        return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
+
+
+def _exec_upsert_product_mapping(
+    args: dict,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """upsert_product_mapping 执行：按品名查有则更新无则插入，必要时回填 SKU。"""
+    try:
+        name = (args.get("product_name_cn") or "").strip()
+        if not name:
+            return {"error": "product_name_cn（中文品名）为空"}
+
+        from app.db.models import ProductMapping
+        from app.db.session import get_session
+        from app.db.sync import sync_mapping_to_sku
+
+        updatable = ("hs_code", "supplier_name", "inspection_required",
+                     "name_en", "unit_code", "sku_code")
+
+        with get_session() as sess:
+            mapping = sess.query(ProductMapping).filter(
+                ProductMapping.product_name_cn == name).first()
+            action = "更新"
+            if mapping is None:
+                mapping = ProductMapping(product_name_cn=name)
+                sess.add(mapping)
+                action = "新增"
+
+            for key in updatable:
+                if key in args and args[key] is not None and args[key] != "":
+                    setattr(mapping, key, args[key])
+
+            # 关键字段补齐则清待完善标记；税号仍空则标记待完善
+            mapping.is_incomplete = not bool(mapping.hs_code)
+
+            sess.flush()
+            synced = sync_mapping_to_sku(sess, mapping)
+            sess.commit()
+
+        hs_text = f"税号 {mapping.hs_code}" if mapping.hs_code else "税号未填"
+        sj_text = "需商检" if mapping.inspection_required else "无需商检"
+        sync_text = f"，已同步 {synced} 条 SKU 主数据" if synced else ""
+        return {
+            "status": "ok",
+            "action": action,
+            "message": f"品名「{name}」的映射已{action}（{hs_text}，{sj_text}）{sync_text}。",
+        }
+    except Exception as e:
+        return _err(e)
+
+
+# ---------------------------------------------------------------------------
 # 工具注册表
 # ---------------------------------------------------------------------------
 
@@ -1822,6 +2036,67 @@ TOOLS: dict[str, Tool] = {
         risk="write",
         preview=_preview_reset_split,
         execute=_exec_reset_split,
+    ),
+
+    # ---- 报关工具（只读 + 写）----
+    "list_declaration_files": Tool(
+        name="list_declaration_files",
+        description="列出某批次已生成的报关单文件（文件名+大小）。"
+                    "操作员问“报关单生成了吗”“生成了哪些报关单”时使用；"
+                    "超 30 份时按港口汇总。",
+        parameters={
+            "type": "object",
+            "properties": {"thread_id": _THREAD_ID_PROP},
+            "required": ["thread_id"],
+        },
+        risk="read",
+        func=_fn_list_declaration_files,
+    ),
+    "generate_declarations": Tool(
+        name="generate_declarations",
+        description="按已确认的分票方案生成全部报关单（xlsx）。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。"
+                    "必须提供 invoice_number（发票号码段，如 656），"
+                    "操作员没给时要先追问。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "thread_id": _THREAD_ID_PROP,
+                "invoice_number": {
+                    "type": "string",
+                    "description": "发票号码段（人工提供），如 '656'；"
+                                   "完整发票号自动拼为 YIL+港口字母+号码段",
+                },
+            },
+            "required": ["thread_id", "invoice_number"],
+        },
+        risk="write",
+        preview=_preview_generate_declarations,
+        execute=_exec_generate_declarations,
+    ),
+    "upsert_product_mapping": Tool(
+        name="upsert_product_mapping",
+        description="新增或更新产品映射（中文品名→税号/供应商/商检/英文品名/计量单位代码）。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。"
+                    "大批量维护引导操作员去主数据维护页。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "product_name_cn": {
+                    "type": "string",
+                    "description": "中文品名（必填，主匹配键）",
+                },
+                "hs_code": {"type": "string", "description": "税号（HS 编码）"},
+                "supplier_name": {"type": "string", "description": "供应商报关全称"},
+                "inspection_required": {"type": "boolean", "description": "是否需要商检"},
+                "name_en": {"type": "string", "description": "英文品名"},
+                "unit_code": {"type": "string", "description": "计量单位代码（如 007）"},
+            },
+            "required": ["product_name_cn"],
+        },
+        risk="write",
+        preview=_preview_upsert_product_mapping,
+        execute=_exec_upsert_product_mapping,
     ),
 }
 

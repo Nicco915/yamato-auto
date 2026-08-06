@@ -265,6 +265,27 @@ def _sum_reset_split(result: dict) -> dict:
     return {"message": str(message), "summary_lines": lines, "links": links}
 
 
+def _sum_generate_declarations(result: dict) -> dict:
+    """generate_declarations：报关单已生成。"""
+    split_tid = result.get("split_thread_id", "")
+    count = result.get("count", 0)
+    warnings = result.get("warnings") or []
+    message = result.get("message") or f"已生成 {count} 份报关单。"
+    lines = [f"报关单数: {count}"]
+    if warnings:
+        lines.append(f"警告: {len(warnings)} 条")
+    links = [{"label": "去分票页", "href": f"/split/{split_tid}"}] if split_tid else []
+    return {"message": str(message), "summary_lines": lines, "links": links}
+
+
+def _sum_upsert_product_mapping(result: dict) -> dict:
+    """upsert_product_mapping：产品映射已维护。"""
+    message = result.get("message") or "产品映射已更新。"
+    return {"message": str(message),
+            "summary_lines": [f"操作: {result.get('action', '更新')}"],
+            "links": [{"label": "主数据维护页", "href": "/mappings"}]}
+
+
 def _fallback(tool: str, result: dict) -> dict:
     """未知工具/异常兜底：一句"已执行" + result 前 5 个标量 key。"""
     try:
@@ -314,6 +335,10 @@ def summarize_applied(tool: str, args: dict | None, result: dict | None) -> dict
             return _sum_confirm_split(result)
         if tool == "reset_split":
             return _sum_reset_split(result)
+        if tool == "generate_declarations":
+            return _sum_generate_declarations(result)
+        if tool == "upsert_product_mapping":
+            return _sum_upsert_product_mapping(result)
         return _fallback(tool, result)
     except Exception:  # noqa: BLE001 铁律：摘要失败绝不阻塞执行结果返回
         return _fallback(str(tool or ""), result if isinstance(result, dict) else {})
