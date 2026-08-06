@@ -16,9 +16,7 @@ from pathlib import Path
 # 保证能 import app 包（脚本位于 app/scripts/ 下）
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import openpyxl  # noqa: E402
-
-from app.db.models import ProductGroup, ProductGroupMember, ProductMapping  # noqa: E402
+from app.db.models import ProductGroup, ProductGroupMember  # noqa: E402
 from app.db.session import get_session  # noqa: E402
 
 XLSX_PATH = Path("/Users/nz/Downloads/yamato/96/报关匹配东京.xlsx")
@@ -64,63 +62,14 @@ GROUPS = [
 ]
 
 
-def _norm(value):
-    """单元格归一：None/空白 → None，其余 strip 后转 str。"""
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text or text == "(空白)":
-        return None
-    return text
-
-
 def import_mappings(session) -> int:
     """读 Sheet1，按 (产品, 供应商) 去重后 upsert product_mappings。返回写入条数。"""
-    wb = openpyxl.load_workbook(XLSX_PATH, read_only=True, data_only=True)
-    ws = wb["Sheet1"]
-    rows = list(ws.iter_rows(values_only=True))
-    wb.close()
+    from app.declare.mapping_import import parse_mapping_rows, upsert_mappings
 
-    seen: dict[tuple[str, str | None], dict] = {}
-    for row in rows[1:]:  # 跳过表头
-        product, hs_code, supplier, inspection, name_en, unit_code = (list(row) + [None] * 6)[:6]
-        product = _norm(product)
-        if not product:
-            continue
-        supplier = _norm(supplier)
-        key = (product, supplier)
-        if key in seen:
-            continue
-        seen[key] = {
-            "product_name_cn": product,
-            "hs_code": _norm(hs_code),
-            "supplier_name": supplier,
-            "inspection_required": _norm(inspection) == "商检",
-            "name_en": _norm(name_en),
-            "unit_code": _norm(unit_code),
-        }
-
-    count = 0
-    for data in seen.values():
-        existing = (
-            session.query(ProductMapping)
-            .filter(
-                ProductMapping.product_name_cn == data["product_name_cn"],
-                ProductMapping.supplier_name.is_(None)
-                if data["supplier_name"] is None
-                else ProductMapping.supplier_name == data["supplier_name"],
-            )
-            .first()
-        )
-        if existing:
-            existing.hs_code = data["hs_code"]
-            existing.inspection_required = data["inspection_required"]
-            existing.name_en = data["name_en"]
-            existing.unit_code = data["unit_code"]
-        else:
-            session.add(ProductMapping(**data))
-        count += 1
-    return count
+    rows = parse_mapping_rows(XLSX_PATH)
+    created, updated = upsert_mappings(session, rows)
+    print(f"  映射: 新增 {created}，更新 {updated}")
+    return created + updated
 
 
 def import_groups(session) -> int:

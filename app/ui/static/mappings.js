@@ -167,6 +167,27 @@ async function deleteProduct(id) {
     }
 }
 
+/* Excel 批量导入（.xlsx，列：产品|税号|供应商|商检|产品组一|自定义七） */
+async function importProducts(input) {
+    var file = input.files && input.files[0];
+    input.value = "";  // 允许重复选同一文件
+    if (!file) return;
+    if (!confirm("将从「" + file.name + "」导入产品映射（按品名+供应商去重，已有记录会更新）。继续？")) return;
+    var fd = new FormData();
+    fd.append("file", file);
+    try {
+        var resp = await fetch("/api/v1/mappings/products/import", {
+            method: "POST", body: fd
+        });
+        var data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || ("HTTP " + resp.status));
+        toast("导入完成：新增 " + data.created + " 条，更新 " + data.updated + " 条", 4000);
+        loadProducts();
+    } catch (e) {
+        toast("导入失败：" + e.message, 4000);
+    }
+}
+
 /* ============================================================
    品名组
    ============================================================ */

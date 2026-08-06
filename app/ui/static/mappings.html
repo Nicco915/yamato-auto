@@ -51,6 +51,8 @@
         <input id="p-incomplete" type="checkbox" onchange="loadProducts()"> 只看待完善
       </label>
       <span class="spacer"></span>
+      <input id="p-import-file" type="file" accept=".xlsx" style="display:none" onchange="importProducts(this)">
+      <button class="btn" onclick="document.getElementById('p-import-file').click()">Excel 导入</button>
       <button class="btn btn-primary" onclick="openProductModal(null)">新增映射</button>
     </div>
     <div class="card">

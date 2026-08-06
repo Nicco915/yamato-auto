@@ -82,6 +82,7 @@ function renderTopbar(active) {
   const links = [
     { key: "dashboard", text: "工作台", href: "/" },
     { key: "chat", text: "Agent对话", href: "/chat" },
+    { key: "mappings", text: "主数据维护", href: "/mappings" },
   ];
   const navHtml = links
     .map(

@@ -14,9 +14,10 @@
 
 from __future__ import annotations
 
+import io
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 from app.db.models import ProductGroup, ProductGroupMember, ProductMapping
@@ -187,6 +188,32 @@ def delete_product(product_id: int):
         s.delete(m)
         s.commit()
         return {"deleted": product_id}
+
+
+@router.post("/products/import")
+async def import_products(file: UploadFile):
+    """Excel 批量导入产品映射（与 scripts/import_product_mappings.py 同逻辑）。
+
+    接受 .xlsx 上传（Sheet1 或首个 sheet：产品|税号|供应商|商检|产品组一|自定义七），
+    按 (品名, 供应商) 幂等 upsert。返回 {created, updated, total}。
+    """
+    from app.declare.mapping_import import parse_mapping_rows, upsert_mappings
+
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="只支持 .xlsx 文件")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="文件为空")
+    try:
+        rows = parse_mapping_rows(io.BytesIO(content))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Excel 解析失败: {e}")
+    if not rows:
+        raise HTTPException(status_code=400, detail="未解析到任何映射行（检查表头与列顺序）")
+    with get_session() as s:
+        created, updated = upsert_mappings(s, rows)
+        s.commit()
+    return {"created": created, "updated": updated, "total": created + updated}
 
 
 # ---------------------------------------------------------------------------
