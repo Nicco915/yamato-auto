@@ -25,6 +25,7 @@ from app.api import service
 from app.logging_config import _takeover_uvicorn, setup_logging
 from app.review.router import configure_review
 from app.review.router import router as review_router
+from app.split.router import router as split_router
 from app.ui.router import router as ui_router
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,9 @@ configure_review()
 # UI 包：工作台/批次详情/对话页 + UI 专用 API（/api/v1/batches 等）
 app.include_router(ui_router)
 # UI 共享静态资产（ui.css / ui.js）
+
+# 分票 API：启动/查看/确认/重置（与提取图共用 checkpoints.db，split- 前缀区分）
+app.include_router(split_router)
 app.mount(
     "/ui/static",
     StaticFiles(directory=Path(__file__).resolve().parents[1] / "ui" / "static"),
