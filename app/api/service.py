@@ -16,7 +16,7 @@ import sqlite3
 import tempfile
 import threading
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -157,6 +157,80 @@ _known_running: set[str] = set()      # 进程级已知在跑的批次
 # 后台预提取线程每次状态变化即原子重写进度 JSON（tmp → rename，与 session
 # 原子写模式一致），UI 批次端点原样带出给对话页轮询渲染——纯确定性数据，
 # 不过 LLM。进度是辅助设施：写文件失败只记日志，绝不影响预提取本身。
+
+def _write_batch_state(
+    batch_id: str,
+    status: str,
+    state: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> None:
+    """写入批次状态文件 output/{batch_id}/batch_state.json（关键状态转换时调用）。
+
+    写入时机：批次启动（running）、Node5 挂起（pending_review）、
+    Node7 完成（completed）、异常（error）。
+    写文件失败只记日志，绝不影响跑图。
+    """
+    try:
+        settings = get_settings()
+        batch_dir = settings.batch_output_dir(batch_id)
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        state_path = batch_dir / "batch_state.json"
+
+        # 读取已有状态（合并 timestamps）
+        existing: dict[str, Any] = {}
+        if state_path.exists():
+            try:
+                existing = json.loads(state_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+
+        new_state: dict[str, Any] = {
+            "batch_id": batch_id,
+            "status": status,
+            "updated_at": now,
+        }
+
+        # timestamps：started_at 仅在首次写入或 running 时设置
+        if "started_at" not in existing or status == "running":
+            new_state["started_at"] = now
+        else:
+            new_state["started_at"] = existing.get("started_at")
+        new_state["completed_at"] = now if status == "completed" else existing.get("completed_at")
+
+        # 工厂信息（从 state 提取）
+        if state:
+            total_set = set((state.get("downstream_requirements") or {}).keys())
+            pending_set = set(state.get("pending_factories") or [])
+            new_state["factories"] = {
+                "total": sorted(total_set),
+                "done": sorted(total_set - pending_set),
+                "pending": sorted(pending_set),
+                "current": (state.get("current_factory_data") or {}).get("factory_name"),
+                "deferred": [
+                    d.get("factory_name", "") for d in (state.get("deferred_factories") or [])
+                ],
+            }
+            # 输出路径
+            output: dict[str, str] = {}
+            if state.get("final_output_path"):
+                output["containers"] = state["final_output_path"]
+            output["declarations_dir"] = str(settings.batch_declarations_dir(batch_id))
+            new_state["output"] = output
+        else:
+            new_state["factories"] = existing.get("factories", {})
+            new_state["output"] = existing.get("output", {})
+
+        if error:
+            new_state["error"] = error
+
+        state_path.write_text(
+            json.dumps(new_state, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:  # noqa: BLE001 状态文件是辅助设施，写失败不影响主流程
+        logger.exception("[batch_state] 写入批次状态文件失败 batch_id=%s", batch_id)
+
 
 def _preextract_progress_path(thread_id: str) -> Path:
     """预提取进度文件路径：SESSIONS_DIR/_preextract_progress_{安全tag}.json。"""
@@ -434,22 +508,31 @@ def run_until_interrupt(
         initial_state["batch_id"] = thread_id
         _archive_sessions_for_new_batch(thread_id)
         snap = graph.get_state(_config(thread_id))
+        _write_batch_state(thread_id, "running", state=initial_state)
 
         emit = _make_progress_emitter(on_progress, seed=initial_state)
-        for event in graph.stream(initial_state, _config(thread_id), stream_mode="updates"):
-            emit(event)
-            if "__interrupt__" in event:
-                payload = event["__interrupt__"][0].value
-                # 首次 interrupt 后启动后台预提取：
-                # 工厂 A 挂起等审核 → 后台线程开始提取工厂 B、C、D…
-                _start_pre_extraction(thread_id)
-                return {
-                    "status": "pending_human_review",
-                    "thread_id": thread_id,
-                    "review_data": payload,
-                }
+        try:
+            for event in graph.stream(initial_state, _config(thread_id), stream_mode="updates"):
+                emit(event)
+                if "__interrupt__" in event:
+                    payload = event["__interrupt__"][0].value
+                    # 首次 interrupt 后启动后台预提取：
+                    # 工厂 A 挂起等审核 → 后台线程开始提取工厂 B、C、D…
+                    _start_pre_extraction(thread_id)
+                    # 从 checkpoint 读取当前 state 写入批次状态
+                    current = graph.get_state(_config(thread_id))
+                    _write_batch_state(thread_id, "pending_review", state=current.values)
+                    return {
+                        "status": "pending_human_review",
+                        "thread_id": thread_id,
+                        "review_data": payload,
+                    }
+        except Exception as e:  # noqa: BLE001
+            _write_batch_state(thread_id, "error", error=str(e))
+            raise
 
         final = graph.get_state(_config(thread_id))
+        _write_batch_state(thread_id, "completed", state=final.values)
         return {
             "status": "completed",
             "thread_id": thread_id,
@@ -482,24 +565,31 @@ def resume_order(thread_id: str, resume_data: dict,
 
         # 恢复执行，直到下一个 interrupt（多工厂循环时）或 END
         emit = _make_progress_emitter(on_progress, seed=state.values)
-        for event in graph.stream(
-            Command(resume=resume_data), _config(thread_id), stream_mode="updates"
-        ):
-            emit(event)
-            if "__interrupt__" in event:
-                payload = event["__interrupt__"][0].value
-                # 每次 interrupt 后继续后台预提取剩余工厂
-                # （工厂 B 审核中 → 后台提取 C、D…）
-                _start_pre_extraction(thread_id)
-                result = {
-                    "status": "pending_human_review",
-                    "thread_id": thread_id,
-                    "review_data": payload,
-                }
-                _write_audit(prepared, result.get("status"))
-                return result
+        try:
+            for event in graph.stream(
+                Command(resume=resume_data), _config(thread_id), stream_mode="updates"
+            ):
+                emit(event)
+                if "__interrupt__" in event:
+                    payload = event["__interrupt__"][0].value
+                    # 每次 interrupt 后继续后台预提取剩余工厂
+                    # （工厂 B 审核中 → 后台提取 C、D…）
+                    _start_pre_extraction(thread_id)
+                    current = graph.get_state(_config(thread_id))
+                    _write_batch_state(thread_id, "pending_review", state=current.values)
+                    result = {
+                        "status": "pending_human_review",
+                        "thread_id": thread_id,
+                        "review_data": payload,
+                    }
+                    _write_audit(prepared, result.get("status"))
+                    return result
+        except Exception as e:  # noqa: BLE001
+            _write_batch_state(thread_id, "error", error=str(e))
+            raise
 
         final = graph.get_state(_config(thread_id))
+        _write_batch_state(thread_id, "completed", state=final.values)
         result = {
             "status": "success",
             "message": "数据已成功落库并写入下游表格",
