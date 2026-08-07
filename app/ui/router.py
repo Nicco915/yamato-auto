@@ -12,6 +12,9 @@ API（路由极薄，逻辑全在 app.api.service；全部 asyncio.to_thread 防
 - POST /api/v1/batches/precheck     重复处理预检（422 装箱单解析失败）
 - GET  /api/v1/batches/{thread_id}  批次详情（404 不存在）
 - DELETE /api/v1/batches/{thread_id} 删除过往批次（404 不存在 / 409 进行中）
+- PATCH /api/v1/batches/{thread_id}/paths  更新批次路径配置（404 不存在）
+- POST /api/v1/batches/{thread_id}/rerun   完全重跑批次（404 不存在）
+- POST /api/v1/batches/{thread_id}/add-factories  补充工厂（400 失败）
 - GET  /api/v1/usage                全局 LLM 用量（scope=process_lifetime）
 - GET  /api/v1/config/defaults      路径默认值 + 单重预警阈值
 """
@@ -109,6 +112,17 @@ class PrecheckRequest(BaseModel):
     factory_names: Optional[list[str]] = None
 
 
+class UpdateBatchPathsRequest(BaseModel):
+    """更新批次路径配置请求：所有字段可选，仅传入要修改的项。
+
+    reset_checkpoint=True 时清除已有 checkpoint，使批次从 Node1 重新执行。
+    """
+
+    downstream_file_path: Optional[str] = None
+    upstream_root: Optional[str] = None
+    reset_checkpoint: bool = False
+
+
 @router.get("/api/v1/batches")
 async def list_batches():
     """批次列表：checkpoint 只读枚举 + 状态/进度推导。"""
@@ -176,6 +190,42 @@ async def delete_batch(thread_id: str):
         raise HTTPException(status_code=404, detail=str(e)) from e
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@router.patch("/api/v1/batches/{thread_id}/paths")
+async def update_batch_paths_endpoint(thread_id: str, req: UpdateBatchPathsRequest):
+    """更新批次路径配置，可选重置 checkpoint。"""
+    try:
+        result = await asyncio.to_thread(
+            service.update_batch_paths,
+            thread_id,
+            req.downstream_file_path,
+            req.upstream_root,
+            req.reset_checkpoint,
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.post("/api/v1/batches/{thread_id}/rerun")
+async def rerun_batch_endpoint(thread_id: str):
+    """完全重跑批次：清空 containers/，重置 checkpoint，从 Node1 重新执行。"""
+    try:
+        result = await asyncio.to_thread(service.rerun_batch, thread_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+
+
+@router.post("/api/v1/batches/{thread_id}/add-factories")
+async def add_factories_endpoint(thread_id: str):
+    """补充工厂：重新解析装箱单，增量合并 pending_factories，继续执行。"""
+    try:
+        result = await asyncio.to_thread(service.add_factories_to_batch, thread_id)
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.get("/api/v1/usage")
