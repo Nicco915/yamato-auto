@@ -523,6 +523,187 @@ async def dispatcher_last_operation(session_id: str):
                 "thread_id": None, "factory": None}
 
 
+# ---------- 调度 Agent 会话管理（CRUD + 左侧 sidebar）----------
+
+class CreateSessionRequest(BaseModel):
+    """创建新会话请求体。"""
+    title: str | None = None
+    pinned_thread_id: str | None = None
+
+
+class UpdateSessionRequest(BaseModel):
+    """更新会话请求体（仅传需要改的字段）。"""
+    title: str | None = None
+    pinned_thread_id: str | None = None
+
+
+@app.get("/api/v1/dispatcher/sessions")
+async def list_dispatcher_sessions():
+    """列出所有会话，按 updated_at DESC 排序（左侧 sidebar 数据源）。"""
+    try:
+        from app.db.models import ChatSession as _ChatSessionOrm
+        from app.db.session import get_session as _get_db_session
+
+        with _get_db_session() as db:
+            rows = (db.query(_ChatSessionOrm)
+                    .order_by(_ChatSessionOrm.updated_at.desc())
+                    .all())
+            return [
+                {
+                    "session_id": r.session_id,
+                    "title": r.title,
+                    "pinned_thread_id": r.pinned_thread_id,
+                    "updated_at": r.updated_at.timestamp() if r.updated_at else None,
+                    "created_at": r.created_at.timestamp() if r.created_at else None,
+                    "has_pending": r.pending_action_json is not None,
+                }
+                for r in rows
+            ]
+    except Exception:
+        logger.exception("[HTTP] dispatcher/sessions 列表异常")
+        return []
+
+
+@app.post("/api/v1/dispatcher/sessions")
+async def create_dispatcher_session(request: CreateSessionRequest):
+    """创建新会话（session_id 由服务端 UUID 生成）。"""
+    import uuid
+    from app.db.models import ChatSession as _ChatSessionOrm
+    from app.db.session import get_session as _get_db_session
+
+    session_id = str(uuid.uuid4())
+    try:
+        with _get_db_session() as db:
+            row = _ChatSessionOrm(
+                session_id=session_id,
+                title=request.title,
+                pinned_thread_id=request.pinned_thread_id,
+            )
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            return {
+                "session_id": row.session_id,
+                "title": row.title,
+                "pinned_thread_id": row.pinned_thread_id,
+                "updated_at": row.updated_at.timestamp(),
+                "created_at": row.created_at.timestamp(),
+            }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"创建会话失败: {exc}")
+
+
+@app.get("/api/v1/dispatcher/sessions/{session_id}")
+async def get_dispatcher_session(session_id: str):
+    """获取单个会话详情（含消息历史 + 工具审计流水 + pending_action）。"""
+    try:
+        from app.db.models import (ChatSession as _ChatSessionOrm,
+                                   ChatMessage as _ChatMessageOrm,
+                                   ChatToolHistory as _ChatToolHistoryOrm)
+        from app.db.session import get_session as _get_db_session
+
+        with _get_db_session() as db:
+            row = db.get(_ChatSessionOrm, session_id)
+            if not row:
+                raise HTTPException(status_code=404, detail="会话不存在")
+
+            messages = (db.query(_ChatMessageOrm)
+                        .filter(_ChatMessageOrm.session_id == session_id)
+                        .order_by(_ChatMessageOrm.ts.asc())
+                        .all())
+            tools = (db.query(_ChatToolHistoryOrm)
+                     .filter(_ChatToolHistoryOrm.session_id == session_id)
+                     .order_by(_ChatToolHistoryOrm.ts.asc())
+                     .all())
+
+            pending = None
+            if row.pending_action_json:
+                try:
+                    pending = json.loads(row.pending_action_json)
+                except json.JSONDecodeError:
+                    pending = None
+
+            return {
+                "session_id": row.session_id,
+                "title": row.title,
+                "pinned_thread_id": row.pinned_thread_id,
+                "messages": [
+                    {"role": m.role, "content": m.content, "ts": m.ts}
+                    for m in messages
+                ],
+                "tool_history": [
+                    {"tool": t.tool, "args_summary": t.args_summary,
+                     "result_summary": t.result_summary,
+                     "confirmed": t.confirmed, "ts": t.ts}
+                    for t in tools
+                ],
+                "pending_action": pending,
+            }
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("[HTTP] dispatcher/sessions/{id} 详情异常")
+        raise HTTPException(status_code=500, detail="获取会话详情失败")
+
+
+@app.patch("/api/v1/dispatcher/sessions/{session_id}")
+async def update_dispatcher_session(session_id: str, request: UpdateSessionRequest):
+    """更新会话（title / pinned_thread_id）。"""
+    try:
+        from app.db.models import ChatSession as _ChatSessionOrm
+        from app.db.session import get_session as _get_db_session
+
+        with _get_db_session() as db:
+            row = db.get(_ChatSessionOrm, session_id)
+            if not row:
+                raise HTTPException(status_code=404, detail="会话不存在")
+
+            if request.title is not None:
+                row.title = request.title
+            if request.pinned_thread_id is not None:
+                row.pinned_thread_id = request.pinned_thread_id
+            db.commit()
+            db.refresh(row)
+
+            return {
+                "session_id": row.session_id,
+                "title": row.title,
+                "pinned_thread_id": row.pinned_thread_id,
+            }
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("[HTTP] dispatcher/sessions/{id} 更新异常")
+        raise HTTPException(status_code=500, detail="更新会话失败")
+
+
+@app.delete("/api/v1/dispatcher/sessions/{session_id}")
+async def delete_dispatcher_session(session_id: str):
+    """删除会话（cascade 删除 messages + tool_history）。"""
+    try:
+        from app.db.models import ChatSession as _ChatSessionOrm
+        from app.db.session import get_session as _get_db_session
+
+        with _get_db_session() as db:
+            row = db.get(_ChatSessionOrm, session_id)
+            if not row:
+                raise HTTPException(status_code=404, detail="会话不存在")
+            db.delete(row)
+            db.commit()
+
+        # 内存 dict 也清（若有）
+        from app.dispatcher import sessions as _sessions
+        with _sessions._SESSIONS_LOCK:
+            _sessions._SESSIONS.pop(session_id, None)
+
+        return {"deleted": session_id}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("[HTTP] dispatcher/sessions/{id} 删除异常")
+        raise HTTPException(status_code=500, detail="删除会话失败")
+
+
 # ---------- 调度 Agent 对话历史（W3：切页刷新恢复对话）----------
 
 # pending_action 回传白名单：绝不回传 args（submit_review 的 items 巨大，
@@ -536,7 +717,7 @@ async def dispatcher_history(session_id: str = ""):
     """拉取对话历史 + 活着的待确认操作 + 待处理的文件选择（前端切页/刷新后恢复对话用）。
 
     - session_id 空 / 超长（>128）→ 400；
-    - peek_session 只读不创建、不续 TTL：peek 不到 → 200 {"found": false, ...}；
+    - peek_session 只读不创建、不续 TTL：peek 不到则从 DB 兜底；
     - found：返回 history + 裁剪后 pending_action（白名单字段，绝不回传 args）；
       pending 超 ACTION_TTL_SEC 顺手 clear_pending 清尸，按 None 返回；
     - 同时返回 pending_file_selection（如有），供前端恢复文件浏览器模态框；
@@ -552,38 +733,77 @@ async def dispatcher_history(session_id: str = ""):
         from app.dispatcher import sessions as _sessions
         from app.dispatcher.loop import ACTION_TTL_SEC
 
+        # 先 peek 内存（快路径）
         sess = _sessions.peek_session(session_id)
-        if sess is None:
+        if sess is not None:
+            pending = None
+            action = sess.pending_action
+            if isinstance(action, dict):
+                age = time.time() - float(action.get("created_at", 0) or 0)
+                if age > ACTION_TTL_SEC:
+                    # 陈旧 pending 顺手清尸：恢复了也不能执行，不给前端假希望
+                    _sessions.clear_pending(sess)
+                else:
+                    pending = {k: action.get(k) for k in _PENDING_ACTION_KEYS}
+
+            # 文件选择挂起状态（TTL 同 ACTION_TTL_SEC）
+            fs_pending = None
+            fs = sess.pending_file_selection
+            if isinstance(fs, dict):
+                age = time.time() - float(fs.get("created_at", 0) or 0)
+                if age > ACTION_TTL_SEC:
+                    _sessions.clear_file_selection_request(sess)
+                else:
+                    fs_pending = {
+                        "type": fs.get("type", "dir"),
+                        "extensions": fs.get("extensions"),
+                        "title": fs.get("title"),
+                    }
+
+            return {"found": True, "history": list(sess.history),
+                    "pending_action": pending,
+                    "pending_file_selection": fs_pending}
+
+        # 内存 miss：从 DB 兜底（重启后恢复 / 进程内 TTL 过期但 DB 仍在）
+        try:
+            from app.db.models import (ChatSession as _ChatSessionOrm,
+                                       ChatMessage as _ChatMessageOrm)
+            from app.db.session import get_session as _get_db_session
+
+            with _get_db_session() as db:
+                row = db.get(_ChatSessionOrm, session_id)
+                if not row:
+                    return {"found": False, "history": [],
+                            "pending_action": None,
+                            "pending_file_selection": None}
+
+                messages = (db.query(_ChatMessageOrm)
+                            .filter(_ChatMessageOrm.session_id == session_id)
+                            .order_by(_ChatMessageOrm.ts.asc())
+                            .all())
+                history = [{"role": m.role, "content": m.content} for m in messages]
+
+                pending = None
+                if row.pending_action_json:
+                    try:
+                        action = json.loads(row.pending_action_json)
+                        age = time.time() - float(action.get("created_at", 0) or 0)
+                        if age <= ACTION_TTL_SEC:
+                            pending = {k: action.get(k) for k in _PENDING_ACTION_KEYS}
+                        else:
+                            # 陈旧 pending 清 DB
+                            row.pending_action_json = None
+                            db.commit()
+                    except json.JSONDecodeError:
+                        pass
+
+                return {"found": True, "history": history,
+                        "pending_action": pending,
+                        "pending_file_selection": None}
+        except Exception:
+            logger.exception("[HTTP] dispatcher/history DB 兜底异常")
             return {"found": False, "history": [], "pending_action": None,
                     "pending_file_selection": None}
-
-        pending = None
-        action = sess.pending_action
-        if isinstance(action, dict):
-            age = time.time() - float(action.get("created_at", 0) or 0)
-            if age > ACTION_TTL_SEC:
-                # 陈旧 pending 顺手清尸：恢复了也不能执行，不给前端假希望
-                _sessions.clear_pending(sess)
-            else:
-                pending = {k: action.get(k) for k in _PENDING_ACTION_KEYS}
-
-        # 文件选择挂起状态（TTL 同 ACTION_TTL_SEC）
-        fs_pending = None
-        fs = sess.pending_file_selection
-        if isinstance(fs, dict):
-            age = time.time() - float(fs.get("created_at", 0) or 0)
-            if age > ACTION_TTL_SEC:
-                _sessions.clear_file_selection_request(sess)
-            else:
-                fs_pending = {
-                    "type": fs.get("type", "dir"),
-                    "extensions": fs.get("extensions"),
-                    "title": fs.get("title"),
-                }
-
-        return {"found": True, "history": list(sess.history),
-                "pending_action": pending,
-                "pending_file_selection": fs_pending}
     except HTTPException:
         raise
     except Exception:  # noqa: BLE001 历史拉取是辅助，绝不让页面加载 500
