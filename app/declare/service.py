@@ -158,7 +158,10 @@ def generate_declarations(split_thread_id: str, invoice_number: str) -> dict:
     out_dir = declarations_dir(split_thread_id)
     out_dir.mkdir(parents=True, exist_ok=True)
     for old in out_dir.glob("*.xlsx"):
-        old.unlink()
+        try:
+            old.unlink()
+        except OSError as e:
+            logger.warning("清理旧报关单文件失败 %s: %s", old.name, e)
 
     # ---- 4. 逐票生成（港口内按 ticket_no 顺序编字母 A/B/...） ----
     generated: list[str] = []

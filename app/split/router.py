@@ -229,7 +229,7 @@ def reset_split(split_thread_id: str):
     batch_id = split_thread_id.removeprefix("split-")
     decl_dir = get_settings().batch_declarations_dir(batch_id) / split_thread_id
     if decl_dir.exists():
-        shutil.rmtree(decl_dir)
+        shutil.rmtree(decl_dir, ignore_errors=True)
         logger.info("reset_split: 已清理报关单目录 %s", decl_dir)
 
     has_interrupt = any(t.interrupts for t in snap.tasks)

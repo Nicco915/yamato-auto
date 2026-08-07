@@ -272,7 +272,7 @@ def rerun_batch(
     containers_dir = settings.batch_containers_dir(batch_id)
     if containers_dir.exists():
         import shutil
-        shutil.rmtree(containers_dir)
+        shutil.rmtree(containers_dir, ignore_errors=True)
         logger.info("[rerun] 已清空 containers 目录: %s", containers_dir)
 
     # 重置 checkpoint
