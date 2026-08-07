@@ -143,7 +143,18 @@ def run_dispatch_react(message: str, session: DispatcherSession, *,
         _emit_final(on_progress, _FALLBACK_TEXT)
         return {"status": "ok", "message": _FALLBACK_TEXT}
 
-    # ---- 结果映射（优先级：soft_confirm → pending → clarify → 正常终复）----
+    # ---- 结果映射（优先级：soft_confirm → file_selection → pending → clarify → 正常终复）----
+
+    # UI 文件选择已挂起：request_file_selection 存了 pending_file_selection，
+    # 等用户在界面选择后由入口注入为新消息（不进 LLM 当前轮）
+    if collector.file_selection_request:
+        fs_req = collector.file_selection_request
+        sessions.record_turn(session, message,
+                             f"等待用户选择路径（{fs_req['type']}）")
+        _emit_final(on_progress, fs_req.get("title") or "请在界面上选择路径")
+        return {"status": "pending_file_selection",
+                "file_selection": fs_req,
+                "message": fs_req.get("title") or "请在界面上选择路径"}
 
     # 黄灯反问已布防：request_clarification 存了 soft_pending，
     # 等操作员一轮内答复（由入口短路消费，不进 LLM）

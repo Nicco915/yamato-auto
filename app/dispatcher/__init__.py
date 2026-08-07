@@ -235,8 +235,50 @@ def _last_thread_id(session_id: str | None) -> str | None:
         return None
 
 
+def _handle_file_selection_response(file_path: str, session_id: str | None, *,
+                                     phase: int, on_progress) -> dict:
+    """处理用户在界面选择的文件/目录路径。
+
+    注入为新用户消息让 Agent 看到，清除 pending_file_selection 状态。
+    如果没有 pending 状态（超时或无效），返回错误。
+    """
+    session = (_sessions.get_session(session_id) if session_id
+               else _sessions.DispatcherSession())
+    pending = session.pending_file_selection
+
+    if not pending:
+        # 没有挂起的文件选择请求，忽略
+        reply = "（未找到待处理的文件选择请求，可能已超时或已处理）"
+        if on_progress:
+            on_progress({"type": "final", "message": reply})
+        return {"status": "ok", "message": reply}
+
+    # 清除挂起状态
+    _sessions.clear_file_selection_request(session)
+
+    # 根据类型生成用户消息
+    fs_type = pending.get("type", "路径")
+    title = pending.get("title", "")
+    user_msg = f"（用户通过文件浏览器选择了{title or '路径'}）：{file_path}"
+
+    # 记录到历史并让 Agent 继续
+    if _engine() == "react":
+        from app.dispatcher import react_engine as _react_engine
+        result = _react_engine.run_dispatch_react(
+            user_msg, session, phase=phase, session_id=session_id,
+            on_progress=on_progress)
+    else:
+        # legacy 引擎走旧循环
+        result = run_dispatch(user_msg, session, phase=phase,
+                              session_id=session_id, on_progress=on_progress)
+
+    if session_id:
+        result["session_id"] = session_id
+    return result
+
+
 def handle_message(message: str, session_id: str | None = None, *, phase: int = 2,
-                   on_progress=None) -> dict:
+                   on_progress=None, file_selection: str | None = None) -> dict:
     """对话主入口（确认前）。session_id 缺省为临时会话（不落进程内会话表）。
 
     session_id 提供时：
@@ -246,7 +288,16 @@ def handle_message(message: str, session_id: str | None = None, *, phase: int = 
 
     on_progress 可选回调：fn({"type": "llm_thinking"|"tool_call"|"tool_result"|
     "tool_error"|"pending_confirmation"|"final", ...})，用于 SSE 流式推送。
+
+    file_selection 用户通过界面选择的文件/目录路径（与 message 互斥，
+    优先级更高）——request_file_selection 工具挂起后用户选择完成时走此分支，
+    路径注入为新用户消息让 Agent 看到。
     """
+    # ---- 文件选择回复（UI 交互结果注入为新消息）----
+    if file_selection is not None:
+        return _handle_file_selection_response(
+            file_selection, session_id, phase=phase, on_progress=on_progress)
+
     if not message or not message.strip():
         return {"status": "error", "message": "message 不能为空"}
     session = (_sessions.get_session(session_id) if session_id

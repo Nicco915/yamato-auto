@@ -160,11 +160,15 @@ class DispatcherChatRequest(BaseModel):
     两段式：先发 message，调度循环调只读工具直接回答；遇到写操作返回
     pending_confirmation（action 信封 kind="dispatcher_tool"）；
     确认后带 confirm=true（action 可省略——服务端 session 留存优先）执行。
+
+    文件选择：request_file_selection 工具挂起后，用户通过界面选择文件/目录，
+    前端发 file_selection 字段（路径字符串），Agent 在下一轮看到所选路径。
     """
     session_id: Optional[str] = None            # 会话标识（服务端留存 pending action）
     message: Optional[str] = None               # 自然语言指令（确认前）
     confirm: bool = False
     action: Optional[Dict[str, Any]] = None     # 无 session 时的降级回传
+    file_selection: Optional[str] = None        # 用户通过文件浏览器选择的路径
 
 
 # ---------- 路由 ----------
@@ -366,8 +370,8 @@ async def dispatcher_chat_stream(request: DispatcherChatRequest):
             },
         )
 
-    if not request.message:
-        raise HTTPException(status_code=400, detail="message 不能为空")
+    if not request.message and request.file_selection is None:
+        raise HTTPException(status_code=400, detail="message 或 file_selection 不能同时为空")
 
     # asyncio.Queue 线程安全：同步 on_progress 回调 → queue.put() → 异步 get()
     progress_queue: asyncio.Queue = asyncio.Queue()
@@ -381,15 +385,27 @@ async def dispatcher_chat_stream(request: DispatcherChatRequest):
 
     async def event_generator():
         """异步生成器：从队列取事件 → SSE 格式输出。"""
-        # 先在后台线程启动 dispatch
-        task = asyncio.create_task(
-            asyncio.to_thread(
-                dispatcher.handle_message,
-                request.message,
-                request.session_id,
-                on_progress=on_progress,
+        # 文件选择回复走独立分支（与 message/confirm 互斥）
+        if request.file_selection is not None:
+            task = asyncio.create_task(
+                asyncio.to_thread(
+                    dispatcher.handle_message,
+                    "",  # message 为空，file_selection 优先
+                    request.session_id,
+                    on_progress=on_progress,
+                    file_selection=request.file_selection,
+                )
             )
-        )
+        else:
+            # 先在后台线程启动 dispatch
+            task = asyncio.create_task(
+                asyncio.to_thread(
+                    dispatcher.handle_message,
+                    request.message,
+                    request.session_id,
+                    on_progress=on_progress,
+                )
+            )
 
         # 逐个推送进度事件
         while True:
@@ -434,6 +450,11 @@ async def dispatcher_chat_stream(request: DispatcherChatRequest):
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
             return
+
+        # 文件选择挂起：推送 file_selection_request 事件（前端弹出浏览器）
+        if result.get("status") == "pending_file_selection":
+            fs = result.get("file_selection", {})
+            yield f"data: {json.dumps({'type': 'file_selection_request', **fs}, ensure_ascii=False)}\n\n"
 
         yield f"data: {json.dumps({'type': 'done', **result}, ensure_ascii=False)}\n\n"
 
@@ -512,12 +533,13 @@ _PENDING_ACTION_KEYS = ("tool", "summary", "preview_lines",
 
 @app.get("/api/v1/dispatcher/history")
 async def dispatcher_history(session_id: str = ""):
-    """拉取对话历史 + 活着的待确认操作（前端切页/刷新后恢复对话用）。
+    """拉取对话历史 + 活着的待确认操作 + 待处理的文件选择（前端切页/刷新后恢复对话用）。
 
     - session_id 空 / 超长（>128）→ 400；
     - peek_session 只读不创建、不续 TTL：peek 不到 → 200 {"found": false, ...}；
     - found：返回 history + 裁剪后 pending_action（白名单字段，绝不回传 args）；
       pending 超 ACTION_TTL_SEC 顺手 clear_pending 清尸，按 None 返回；
+    - 同时返回 pending_file_selection（如有），供前端恢复文件浏览器模态框；
     - 任何意外异常兜底返回 found:false，绝不 500（页面加载不能挂）。
     """
     try:
@@ -532,7 +554,8 @@ async def dispatcher_history(session_id: str = ""):
 
         sess = _sessions.peek_session(session_id)
         if sess is None:
-            return {"found": False, "history": [], "pending_action": None}
+            return {"found": False, "history": [], "pending_action": None,
+                    "pending_file_selection": None}
 
         pending = None
         action = sess.pending_action
@@ -544,10 +567,26 @@ async def dispatcher_history(session_id: str = ""):
             else:
                 pending = {k: action.get(k) for k in _PENDING_ACTION_KEYS}
 
+        # 文件选择挂起状态（TTL 同 ACTION_TTL_SEC）
+        fs_pending = None
+        fs = sess.pending_file_selection
+        if isinstance(fs, dict):
+            age = time.time() - float(fs.get("created_at", 0) or 0)
+            if age > ACTION_TTL_SEC:
+                _sessions.clear_file_selection_request(sess)
+            else:
+                fs_pending = {
+                    "type": fs.get("type", "dir"),
+                    "extensions": fs.get("extensions"),
+                    "title": fs.get("title"),
+                }
+
         return {"found": True, "history": list(sess.history),
-                "pending_action": pending}
+                "pending_action": pending,
+                "pending_file_selection": fs_pending}
     except HTTPException:
         raise
     except Exception:  # noqa: BLE001 历史拉取是辅助，绝不让页面加载 500
         logger.exception("[HTTP] dispatcher/history 拉取异常，降级 found:false")
-        return {"found": False, "history": [], "pending_action": None}
+        return {"found": False, "history": [], "pending_action": None,
+                "pending_file_selection": None}
