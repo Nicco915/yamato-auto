@@ -452,7 +452,7 @@ def run_until_interrupt(
             initial_state["factory_filter"] = factory_filter
         if factory_alias_overrides:
             initial_state["factory_alias_overrides"] = factory_alias_overrides
-
+        initial_state["batch_id"] = thread_id
         # 方案A：新批次启动前归档上一批次遗留的 sessions/*.json。
         # 守卫：该 thread_id 已有 checkpoint state（重跑/异常重启续跑）时
         # 跳过归档——此时 sessions/ 里很可能就是本批次正在用的缓存，不能清。
