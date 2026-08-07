@@ -99,6 +99,7 @@ def start_split(req: StartSplitRequest):
         "source_file_path": req.source_file_path,
         "split_thread_id": split_thread_id,
     }
+    initial_state["batch_id"] = req.thread_id  # 父批次 ID
 
     for event in graph.stream(initial_state, cfg, stream_mode="updates"):
         if "__interrupt__" in event:
