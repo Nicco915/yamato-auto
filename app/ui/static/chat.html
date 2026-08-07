@@ -406,6 +406,13 @@ function handleSSEEvent(event) {
       break;
     }
 
+    case "file_selection_request": {
+      // Agent 请求用户选择文件/目录，弹出文件浏览器
+      finishProgress(event.title || "请在界面上选择路径");
+      openChatFileBrowser(event.type, event.extensions, event.title);
+      break;
+    }
+
     case "final":
       finishProgress(event.message || "（无回复内容）");
       break;
@@ -850,6 +857,171 @@ function renderApplied(data, tid) {
   scrollBottom();
 }
 
+/* ================= 文件浏览器（Agent 请求用户选择文件/目录） ================= */
+let _chatFsType = 'dir';       // 选择类型：file 或 dir
+let _chatFsExtensions = null;  // 扩展名过滤
+let _chatFsCurrentPath = null; // 当前浏览路径
+let _chatFsTitle = '选择路径'; // 浏览器标题
+
+function openChatFileBrowser(type, extensions, title) {
+  _chatFsType = type || 'dir';
+  _chatFsExtensions = extensions || null;
+  _chatFsTitle = title || '选择路径';
+  _chatFsCurrentPath = null;
+  document.getElementById('chat-fb-modal').style.display = 'flex';
+  document.getElementById('chat-fb-title').textContent = _chatFsTitle;
+  // 文件选择模式下隐藏"选择此路径"按钮（用户直接点击文件）
+  document.getElementById('chat-fb-select-dir').style.display =
+    (_chatFsType === 'dir') ? '' : 'none';
+  chatFbLoad(null);
+}
+
+function closeChatFileBrowser() {
+  document.getElementById('chat-fb-modal').style.display = 'none';
+}
+
+async function chatFbLoad(path) {
+  const params = new URLSearchParams();
+  if (path) params.set('path', path);
+  params.set('type', _chatFsType);
+  if (_chatFsExtensions) params.set('extensions', _chatFsExtensions);
+
+  try {
+    const res = await fetch('/api/v1/files/browse?' + params);
+    if (!res.ok) {
+      alert('加载失败: ' + await res.text());
+      return;
+    }
+    const data = await res.json();
+    _chatFsCurrentPath = data.current_path;
+
+    document.getElementById('chat-fb-path').textContent = data.current_path || '请选择盘符';
+    document.getElementById('chat-fb-up').disabled = !data.parent_path;
+
+    // Windows 盘符列表
+    const drivesDiv = document.getElementById('chat-fb-drives');
+    if (data.drives && data.drives.length > 0) {
+      drivesDiv.style.display = 'block';
+      drivesDiv.innerHTML = data.drives.map(function(d) {
+        return '<button onclick="chatFbLoad(\'' + d + '\')" style="margin:2px;padding:4px 10px;cursor:pointer">' + d + '</button>';
+      }).join('');
+    } else {
+      drivesDiv.style.display = 'none';
+    }
+
+    // 目录内容列表
+    const entriesDiv = document.getElementById('chat-fb-entries');
+    if (!data.entries || data.entries.length === 0) {
+      entriesDiv.innerHTML = '<p style="color:#9ca3af;text-align:center;padding:20px">空目录</p>';
+    } else {
+      entriesDiv.innerHTML = data.entries.map(function(e) {
+        const icon = e.is_dir ? '📁' : '📄';
+        const selectable = (_chatFsType === 'dir' && e.is_dir) || (_chatFsType === 'file' && !e.is_dir);
+        const baseStyle = 'padding:6px 8px;border-bottom:1px solid #f0f1f3;';
+        const cursorStyle = selectable ? 'cursor:pointer;background:#f0f9ff;' : 'cursor:default;';
+        const safePath = e.path.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        let onclick = '';
+        if (e.is_dir) {
+          onclick = "chatFbLoad('" + safePath + "')";
+        } else if (selectable) {
+          onclick = "chatFbSelectFile('" + safePath + "')";
+        }
+        const sizeHtml = (!e.is_dir && e.size)
+          ? '<span style="float:right;color:#9ca3af;font-size:12px">' + (e.size / 1024).toFixed(1) + ' KB</span>'
+          : '';
+        return '<div onclick="' + onclick + '" style="' + baseStyle + cursorStyle + '">'
+          + '<span style="margin-right:8px">' + icon + '</span>'
+          + '<span>' + e.name + '</span>'
+          + sizeHtml
+          + '</div>';
+      }).join('');
+    }
+  } catch (err) {
+    alert('加载失败: ' + err.message);
+  }
+}
+
+function chatFbNavigateUp() {
+  if (_chatFsCurrentPath) {
+    const parent = _chatFsCurrentPath.split(/[\\/]/).slice(0, -1).join('/') || '/';
+    chatFbLoad(parent);
+  }
+}
+
+function chatFbSelectFile(path) {
+  // 直接发送文件选择结果
+  sendFileSelection(path);
+}
+
+function chatFbSelectDir() {
+  // 选择当前目录
+  if (_chatFsCurrentPath) {
+    sendFileSelection(_chatFsCurrentPath);
+  }
+}
+
+async function sendFileSelection(path) {
+  closeChatFileBrowser();
+  // 显示用户选择的消息
+  addUserMsg('已选择: ' + path);
+
+  sending = true;
+  $("inp").disabled = true;
+  $("btn-send").disabled = true;
+
+  try {
+    const resp = await fetch("/api/v1/dispatcher/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionId,
+        file_selection: path,
+      }),
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => "未知错误");
+      throw new Error(resp.status + " " + errText);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop();
+
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line || !line.startsWith("data: ")) continue;
+        const jsonStr = line.slice(6);
+        let event;
+        try { event = JSON.parse(jsonStr); } catch (e) { continue; }
+        handleSSEEvent(event);
+      }
+    }
+  } catch (e) {
+    if (progressBubble) {
+      progressBubble.innerHTML = '<span style="color:#dc2626">请求失败：' + escHtml(e.message) + '</span>';
+      progressBubble.classList.remove('progress-bubble');
+      progressBubble = null;
+    } else {
+      addAgentText("请求失败：" + e.message);
+    }
+  } finally {
+    sending = false;
+    $("inp").disabled = false;
+    $("btn-send").disabled = false;
+    $("inp").focus();
+    scrollBottom();
+  }
+}
+
 /* ================= 输入事件 ================= */
 $("btn-send").onclick = send;
 $("inp").addEventListener("keydown", (e) => {
@@ -871,6 +1043,33 @@ $("btn-new-session").onclick = () => {
   addAgentText("已开始新会话，之前的对话上下文不再带入。");
   $("inp").focus();
 };
+
+/* ================= 文件浏览器模态框 HTML ================= */
+/* 动态注入到页面底部 */
+(function() {
+  const modal = document.createElement('div');
+  modal.id = 'chat-fb-modal';
+  modal.style.cssText = 'display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);z-index:9999;align-items:center;justify-content:center';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:8px;width:600px;max-height:80vh;display:flex;flex-direction:column">
+      <div style="padding:12px 16px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center">
+        <h3 id="chat-fb-title" style="margin:0;font-size:16px">选择路径</h3>
+        <button onclick="closeChatFileBrowser()" style="border:none;background:none;font-size:20px;cursor:pointer">×</button>
+      </div>
+      <div style="padding:8px 16px;border-bottom:1px solid #e5e7eb;font-size:13px">
+        <span id="chat-fb-path" style="font-family:monospace;word-break:break-all"></span>
+        <button id="chat-fb-up" onclick="chatFbNavigateUp()" style="margin-left:8px;padding:2px 8px;font-size:12px">⬆ 上级</button>
+      </div>
+      <div id="chat-fb-drives" style="padding:8px 16px;display:none;border-bottom:1px solid #e5e7eb"></div>
+      <div id="chat-fb-entries" style="flex:1;overflow-y:auto;padding:8px 16px"></div>
+      <div style="padding:12px 16px;border-top:1px solid #e5e7eb;text-align:right">
+        <button onclick="closeChatFileBrowser()" style="padding:6px 14px;margin-right:8px;cursor:pointer">取消</button>
+        <button id="chat-fb-select-dir" onclick="chatFbSelectDir()" style="padding:6px 14px;background:#2563eb;color:#fff;border:none;border-radius:4px;cursor:pointer">选择此路径</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+})();
 
 /* ================= 初始化 ================= */
 renderTopbar("chat");
@@ -934,6 +1133,12 @@ async function loadHistory() {
           message: pa.summary,
           factory_scan: pa.factory_scan,
         });
+      }
+
+      // 恢复活着的文件选择请求：弹出文件浏览器
+      const fs = data.pending_file_selection;
+      if (fs && fs.type) {
+        openChatFileBrowser(fs.type, fs.extensions, fs.title);
       }
       return;  // 已有历史，不再播开场白
     }
