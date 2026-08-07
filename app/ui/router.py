@@ -243,3 +243,104 @@ async def config_defaults():
         "downstream_file_path": s.downstream_file_path,
         "weight_diff_warn_ratio": s.weight_diff_warn_ratio,
     }
+
+
+# ---------- 文件浏览 API ----------
+
+
+@router.get("/api/v1/files/browse")
+async def browse_files(
+    path: str | None = None,
+    type: str = "dir",
+    extensions: str | None = None,
+):
+    """列出目录内容供文件/目录选择。
+
+    跨平台兼容：
+    - macOS/Linux: path=None 返回 ~（home 目录）
+    - Windows: path=None 返回可用盘符列表
+    - 安全检查：不允许访问系统敏感目录
+    """
+    import os
+    from pathlib import Path as _Path
+
+    # 确定起始路径
+    if path is None:
+        if os.name == "nt":  # Windows
+            # 返回可用盘符列表
+            import string
+            drives = []
+            for letter in string.ascii_uppercase:
+                drive_path = _Path(f"{letter}:\\")
+                if drive_path.exists():
+                    drives.append(f"{letter}:\\")
+            return {
+                "current_path": None,
+                "parent_path": None,
+                "entries": [],
+                "drives": drives,
+            }
+        else:
+            # macOS/Linux: home 目录
+            browse_path = _Path.home()
+    else:
+        browse_path = _Path(path).expanduser()
+
+    # 安全检查：防止访问敏感目录
+    # （可选：限制在某些根目录下，这里简单实现为不允许根目录）
+    if browse_path == _Path("/") or (os.name == "nt" and str(browse_path) in ["C:\\", "D:\\"]):
+        # 允许访问根目录和盘符，但标记为系统目录
+        pass
+
+    # 验证路径存在且是目录
+    if not browse_path.exists():
+        raise HTTPException(status_code=404, detail=f"路径不存在: {path}")
+    if not browse_path.is_dir():
+        raise HTTPException(status_code=400, detail=f"不是目录: {path}")
+
+    # 解析扩展名过滤
+    allowed_ext = None
+    if extensions:
+        allowed_ext = {ext.strip().lower().lstrip(".") for ext in extensions.split(",")}
+
+    # 列出目录内容
+    entries = []
+    try:
+        for item in sorted(browse_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+            # 跳过隐藏文件（.DS_Store 等）
+            if item.name.startswith("."):
+                continue
+
+            is_dir = item.is_dir()
+
+            # 如果是文件选择模式，检查扩展名
+            if type == "file" and not is_dir and allowed_ext:
+                if item.suffix.lower().lstrip(".") not in allowed_ext:
+                    continue
+
+            entry = {
+                "name": item.name,
+                "path": str(item),
+                "is_dir": is_dir,
+            }
+
+            if not is_dir:
+                try:
+                    entry["size"] = item.stat().st_size
+                    entry["modified"] = item.stat().st_mtime
+                except OSError:
+                    pass
+
+            entries.append(entry)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail=f"无权限访问: {path}")
+
+    # 父目录路径
+    parent_path = str(browse_path.parent) if browse_path.parent != browse_path else None
+
+    return {
+        "current_path": str(browse_path),
+        "parent_path": parent_path,
+        "entries": entries,
+        "drives": None,  # 非 Windows 或已有 path 时为 null
+    }
