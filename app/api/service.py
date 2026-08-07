@@ -432,15 +432,8 @@ def run_until_interrupt(
         if factory_alias_overrides:
             initial_state["factory_alias_overrides"] = factory_alias_overrides
         initial_state["batch_id"] = thread_id
-        # 方案A：新批次启动前归档上一批次遗留的 sessions/*.json。
-        # 守卫：该 thread_id 已有 checkpoint state（重跑/异常重启续跑）时
-        # 跳过归档——此时 sessions/ 里很可能就是本批次正在用的缓存，不能清。
+        _archive_sessions_for_new_batch(thread_id)
         snap = graph.get_state(_config(thread_id))
-        if snap.values:
-            logger.info("[会话归档] 批次 %s 已有 checkpoint state（重跑/续跑场景），"
-                        "跳过归档", thread_id)
-        else:
-            _archive_sessions_for_new_batch(thread_id)
 
         emit = _make_progress_emitter(on_progress, seed=initial_state)
         for event in graph.stream(initial_state, _config(thread_id), stream_mode="updates"):
