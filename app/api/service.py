@@ -158,6 +158,37 @@ _known_running: set[str] = set()      # 进程级已知在跑的批次
 # 原子写模式一致），UI 批次端点原样带出给对话页轮询渲染——纯确定性数据，
 # 不过 LLM。进度是辅助设施：写文件失败只记日志，绝不影响预提取本身。
 
+
+def _write_batch_config(batch_id: str, config: dict[str, Any]) -> None:
+    """写入批次配置文件 output/{batch_id}/batch_config.json。
+
+    配置内容：thread_id、路径、创建时间、最后运行时间、运行次数。
+    写文件失败只记日志，绝不影响主流程。
+    """
+    try:
+        settings = get_settings()
+        batch_dir = settings.batch_output_dir(batch_id)
+        batch_dir.mkdir(parents=True, exist_ok=True)
+        config_path = batch_dir / "batch_config.json"
+        config_path.write_text(
+            json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("[batch_config] 写入批次配置文件失败 batch_id=%s", batch_id)
+
+
+def _read_batch_config(batch_id: str) -> dict[str, Any] | None:
+    """读取批次配置文件，不存在或损坏时返回 None。"""
+    try:
+        settings = get_settings()
+        config_path = settings.batch_output_dir(batch_id) / "batch_config.json"
+        if not config_path.exists():
+            return None
+        return json.loads(config_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def _write_batch_state(
     batch_id: str,
     status: str,
@@ -1342,6 +1373,18 @@ def create_batch(
                                  on_progress=on_progress)
     if skipped:
         result["skipped_processed"] = skipped
+
+    # 写入批次配置
+    now = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    batch_config = {
+        "thread_id": thread_id,
+        "downstream_file_path": str(d_path),
+        "upstream_root": str(u_path),
+        "created_at": now,
+        "last_run_at": now,
+        "run_count": 1,
+    }
+    _write_batch_config(thread_id, batch_config)
     return result
 
 
