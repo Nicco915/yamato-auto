@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
@@ -19,6 +20,7 @@ from langgraph.graph import START
 from langgraph.types import Command
 from pydantic import BaseModel
 
+from app.config import get_settings
 from app.declare.service import declarations_dir, generate_declarations
 from app.split.graph import get_split_graph
 
@@ -222,6 +224,13 @@ def reset_split(split_thread_id: str):
         split_thread_id,
         snap.values.get("status", "unknown"),
     )
+
+    # 清理已生成的报关单文件（DB 记录由 persist_split 清理，文件在这里清理）
+    batch_id = split_thread_id.removeprefix("split-")
+    decl_dir = get_settings().batch_declarations_dir(batch_id) / split_thread_id
+    if decl_dir.exists():
+        shutil.rmtree(decl_dir)
+        logger.info("reset_split: 已清理报关单目录 %s", decl_dir)
 
     has_interrupt = any(t.interrupts for t in snap.tasks)
 
