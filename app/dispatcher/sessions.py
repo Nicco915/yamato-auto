@@ -43,7 +43,8 @@ class DispatcherSession:
     """单会话状态：对话历史 + 待确认写操作信封 + 工具调用审计流水。"""
 
     __slots__ = ("history", "pending_action", "tool_history", "updated_at",
-                 "current_slots", "current_target_tool", "soft_pending")
+                 "current_slots", "current_target_tool", "soft_pending",
+                 "pending_file_selection")
 
     def __init__(self) -> None:
         # 发给 LLM 的精简历史：{"role": "user"/"assistant", "content": str}
@@ -60,6 +61,10 @@ class DispatcherSession:
         # Triage 黄灯区软挂起（一轮有效）：
         # {"target_tool": str, "slots": dict, "question": str, "armed": True}
         self.soft_pending: dict | None = None
+        # UI 文件选择挂起：request_file_selection 工具触发后等待用户选择
+        # {"type": "file"|"dir", "extensions": str|None, "title": str|None,
+        #  "created_at": float}
+        self.pending_file_selection: dict | None = None
 
 
 _SESSIONS: dict[str, DispatcherSession] = {}
@@ -171,3 +176,20 @@ def set_soft_pending(session: DispatcherSession, tool: str, slots: dict,
 def clear_soft_pending(session: DispatcherSession) -> None:
     """清空黄灯区软挂起（软确认提升 / 软否定 / 换话题时调用）。"""
     session.soft_pending = None
+
+
+def set_file_selection_request(session: DispatcherSession, *,
+                                file_type: str, extensions: str | None = None,
+                                title: str | None = None) -> None:
+    """写入 UI 文件选择挂起（request_file_selection 工具触发后）。"""
+    session.pending_file_selection = {
+        "type": file_type,
+        "extensions": extensions,
+        "title": title,
+        "created_at": time.time(),
+    }
+
+
+def clear_file_selection_request(session: DispatcherSession) -> None:
+    """清空 UI 文件选择挂起（用户已选择或取消后调用）。"""
+    session.pending_file_selection = None

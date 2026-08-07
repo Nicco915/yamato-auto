@@ -81,6 +81,7 @@ class RequestCollector:
     references: list = field(default_factory=list)   # ask_guide 命中的知识条目引用
     clarify_text: str | None = None                  # preview blocked 转的 clarify 文案
     soft_confirm_question: str | None = None         # request_clarification 生成的反问文案
+    file_selection_request: dict | None = None       # request_file_selection 请求参数
 
 
 # ---------------------------------------------------------------------------
@@ -340,6 +341,66 @@ def _wrap_write_shadow(tool: Tool, session: DispatcherSession,
 
 
 # ---------------------------------------------------------------------------
+# UI 工具包装（risk="ui"）：硬停 react 循环，等用户在界面交互
+# ---------------------------------------------------------------------------
+
+def _wrap_ui_tool(tool: Tool, session: DispatcherSession,
+                  session_id: str | None, collector: RequestCollector,
+                  on_progress: Callable[[dict], None] | None) -> Callable:
+    """UI 工具闭包：存 pending 状态 + 硬停 react 循环，等用户在界面交互。
+
+    与写影子工具类似用 return_direct 硬停，但不走确认门——
+    用户交互的结果（如文件路径）作为新用户消息在下一轮进入对话历史，
+    Agent 自然看到并继续推理。
+    """
+
+    def _run(**kwargs):
+        tool_call_id = kwargs.pop("tool_call_id", "")
+        args = {k: v for k, v in kwargs.items() if v is not None}
+
+        if on_progress:
+            on_progress({"type": "tool_call", "tool": tool.name,
+                         "args_summary": _args_summary(args)})
+
+        if tool.name == "request_file_selection":
+            file_type = args.get("type", "dir")
+            extensions = args.get("extensions")
+            title = args.get("title", "选择路径")
+
+            # 存 pending 状态
+            sessions.set_file_selection_request(
+                session, file_type=file_type,
+                extensions=extensions, title=title)
+            collector.file_selection_request = {
+                "type": file_type,
+                "extensions": extensions,
+                "title": title,
+            }
+
+            sessions.record_tool(
+                session, tool=tool.name,
+                args_summary=_args_summary(args),
+                result_summary=f"待用户选择 ({file_type})", confirmed=None)
+            debug_log.log_event("file_selection_requested",
+                                session_id=session_id,
+                                file_type=file_type,
+                                extensions=extensions, title=title)
+            logger.info("UI 工具挂起等待用户选择 | 工具=%s | type=%s",
+                        tool.name, file_type)
+
+            msg_text = f"请在界面上选择{title}（类型: {file_type}）"
+            if extensions:
+                msg_text += f"，仅限 {extensions} 格式"
+            return Command(update={"messages": [
+                ToolMessage(content=msg_text, tool_call_id=tool_call_id),
+            ]})
+
+        return f"未知的 UI 工具：{tool.name}"
+
+    return _run
+
+
+# ---------------------------------------------------------------------------
 # request_clarification：黄灯反问重建（仅 phase>=2 暴露）
 # ---------------------------------------------------------------------------
 
@@ -474,6 +535,19 @@ def build_tools(session: DispatcherSession, session_id: str | None,
                 name=tool.name,
                 description=tool.description,
                 args_schema=_json_schema_to_model(tool.name, tool.parameters),
+            )
+        elif tool.risk == "ui":
+            # UI 工具：硬停 react 循环，等用户在界面交互
+            lc_tool = StructuredTool.from_function(
+                func=_wrap_ui_tool(tool, session, session_id,
+                                   collector, on_progress),
+                name=tool.name,
+                description=tool.description,
+                args_schema=_json_schema_to_model(
+                    tool.name, tool.parameters,
+                    extra_fields={"tool_call_id": (
+                        Annotated[str, InjectedToolCallId], ...)}),
+                return_direct=True,  # 硬停，等用户交互
             )
         else:
             lc_tool = StructuredTool.from_function(

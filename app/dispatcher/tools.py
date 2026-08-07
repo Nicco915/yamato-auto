@@ -27,10 +27,11 @@ class Tool:
     name: str
     description: str            # 中文，写给 LLM 的选用依据
     parameters: dict            # JSON Schema（LLM tools 定义 / 代码校验 / 测试断言共用）
-    risk: str                   # "read" | "write"
+    risk: str                   # "read" | "write" | "ui"
     func: Callable | None = None      # 只读工具执行函数：func(args: dict) -> dict
     preview: Callable | None = None   # 写工具：preview(args) -> {"summary", "lines", "warnings"}
     execute: Callable | None = None   # 写工具：confirm 后执行 execute(args, on_progress=None) -> dict，内部二次校验
+    # risk="ui" 工具无 func/preview/execute，由 lc_tools 特殊处理
 
 
 # ---------------------------------------------------------------------------
@@ -1873,6 +1874,39 @@ TOOLS: dict[str, Tool] = {
         func=_fn_list_directory,
     ),
 
+    # ---- UI 交互工具（risk="ui"，由前端渲染交互组件）----
+    "request_file_selection": Tool(
+        name="request_file_selection",
+        description="请求用户在界面上手动选择文件或文件夹路径。"
+                    "调用后前端会弹出文件浏览器模态框，用户选择的路径会作为"
+                    "新用户消息返回，Agent 可在下一轮看到所选路径。"
+                    "适用场景：Agent 不确定用户的文件路径、需要用户确认文件位置等。"
+                    "参数：type('file' 或 'dir'，选择类型)、"
+                    "extensions(扩展名过滤，如 'xlsx,xls'，仅 type='file' 时有效)、"
+                    "title(浏览器标题，可选)。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": ["file", "dir"],
+                    "description": "选择类型：file=选文件，dir=选文件夹",
+                },
+                "extensions": {
+                    "type": "string",
+                    "description": "扩展名过滤（逗号分隔，如 'xlsx,xls'）；仅 type='file' 时有效",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "文件浏览器标题（可选），如 '选择上游工厂文件夹'",
+                },
+            },
+            "required": ["type"],
+        },
+        risk="ui",
+        # UI 工具无 func/preview/execute，由 lc_tools 特殊处理
+    ),
+
     # ---- 二期写工具（preview + execute，loop 拦截走确认门）----
     "create_batch": Tool(
         name="create_batch",
@@ -2229,10 +2263,10 @@ TOOLS: dict[str, Tool] = {
 # ---------------------------------------------------------------------------
 
 def visible_tools(phase: int = 1) -> list[Tool]:
-    """按阶段返回可见工具：phase=1 只读工具；phase=2 全部（含写工具）。"""
+    """按阶段返回可见工具：phase=1 只读+UI 工具；phase=2 全部（含写工具）。"""
     if phase >= 2:
         return list(TOOLS.values())
-    return [t for t in TOOLS.values() if t.risk == "read"]
+    return [t for t in TOOLS.values() if t.risk in ("read", "ui")]
 
 
 def openai_tool_defs(phase: int = 1) -> list[dict]:
