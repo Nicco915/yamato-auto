@@ -51,10 +51,13 @@ def _apply_write_format(cell) -> None:
 
 
 def _ensure_output_copy(state: AgentState) -> Path:
-    """确保 output/ 下存在原件副本；已存在则复用（多工厂循环写同一个文件）。"""
+    """确保 output/{batch_id}/containers/ 下存在原件副本；已存在则复用。"""
     settings = get_settings()
+    batch_id = state.get("batch_id") or "unknown"
+    out_dir = settings.batch_containers_dir(batch_id)
+    out_dir.mkdir(parents=True, exist_ok=True)
     src = Path(state["downstream_file_path"])
-    dst = settings.output_dir_abs / f"{src.stem}_filled{src.suffix}"
+    dst = out_dir / f"{src.stem}_filled{src.suffix}"
     if not dst.exists():
         shutil.copy2(src, dst)
         logger.info("[Node6] 已复制原件到 %s（绝不覆盖原件）", dst)
