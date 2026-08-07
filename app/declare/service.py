@@ -6,7 +6,7 @@
    product_mappings → 映射索引、product_groups + members → 品名组配置；
 2. 读 split 图 state 拿 source_file_path → load_filled_excel → 归一化 + 商检判定；
 3. 每票 rows_for_ticket → aggregate_ticket → fill_declaration 写文件；
-4. 输出 app/output/declarations/{split_thread_id}/，重跑先清空旧 xlsx（幂等）。
+4. 输出 output/{batch_id}/declarations/{split_thread_id}/，重跑先清空旧 xlsx（幂等）。
 """
 
 from __future__ import annotations
@@ -46,8 +46,12 @@ TEMPLATE_PATH = (
 
 
 def declarations_dir(split_thread_id: str) -> Path:
-    """该分票任务的报关单输出目录（app/output/declarations/{split_thread_id}/）。"""
-    return get_settings().output_dir_abs / "declarations" / split_thread_id
+    """该分票任务的报关单输出目录（output/{batch_id}/declarations/{split_thread_id}/）。
+
+    batch_id 从 split_thread_id 反推：去掉 "split-" 前缀（约定 split-{父批次}）。
+    """
+    batch_id = split_thread_id.removeprefix("split-")
+    return get_settings().batch_declarations_dir(batch_id) / split_thread_id
 
 
 def _source_file_from_graph(split_thread_id: str) -> str:
