@@ -12,7 +12,6 @@ import contextlib
 import json
 import logging
 import os
-import re
 import sqlite3
 import tempfile
 import threading
@@ -159,29 +158,9 @@ _known_running: set[str] = set()      # 进程级已知在跑的批次
 # 原子写模式一致），UI 批次端点原样带出给对话页轮询渲染——纯确定性数据，
 # 不过 LLM。进度是辅助设施：写文件失败只记日志，绝不影响预提取本身。
 
-# thread_id 是用户可输入的批次号，拼文件名前过滤路径分隔符等危险字符
-# （防目录穿越）：只保留字母数字、中日韩字符、-_.，其余替换为 _
-_PROGRESS_TAG_UNSAFE = re.compile(
-    r"[^0-9A-Za-z一-鿿぀-ヿ가-힯._-]")
-
-
-def _safe_path_tag(text: str) -> str:
-    """把用户可输入的批次号过滤为安全的文件/目录名片段（防目录穿越）。
-
-    预提取进度文件、会话归档目录共用同一套过滤规则。
-    """
-    tag = _PROGRESS_TAG_UNSAFE.sub("_", text)
-    # 收缩连续下划线，并移除残留的 ..（防 .. 穿越到父目录）
-    while ".." in tag:
-        tag = tag.replace("..", "_")
-    while "__" in tag:
-        tag = tag.replace("__", "_")
-    return tag
-
-
 def _preextract_progress_path(thread_id: str) -> Path:
     """预提取进度文件路径：SESSIONS_DIR/_preextract_progress_{安全tag}.json。"""
-    return SESSIONS_DIR / f"_preextract_progress_{_safe_path_tag(thread_id)}.json"
+    return SESSIONS_DIR / f"_preextract_progress_{get_settings().safe_path_tag(thread_id)}.json"
 
 
 class _PreExtractProgress:
@@ -396,7 +375,7 @@ def _archive_sessions_for_new_batch(thread_id: str) -> int:
         if not files:
             return 0
 
-        dest_dir = SESSIONS_DIR / _ARCHIVE_DIR_NAME / _safe_path_tag(thread_id)
+        dest_dir = SESSIONS_DIR / _ARCHIVE_DIR_NAME / get_settings().safe_path_tag(thread_id)
         dest_dir.mkdir(parents=True, exist_ok=True)
         moved = 0
         for src in files:
