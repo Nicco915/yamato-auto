@@ -7,10 +7,21 @@ import shutil
 from pathlib import Path
 
 import openpyxl
+from openpyxl.styles import Border, Side
 
 from app.declare.aggregator import DetailRow
 
 DETAIL_START_ROW = 18  # 明细从第 18 行起（第 17 行为表头）
+
+# 写入单元格格式：四周细边框（2026-08-04 用户定，与 writer.py 的 WRITE_BORDER 一致）
+_THIN_SIDE = Side(style="thin")
+WRITE_BORDER = Border(left=_THIN_SIDE, right=_THIN_SIDE,
+                      top=_THIN_SIDE, bottom=_THIN_SIDE)
+
+
+def _apply_write_border(cell) -> None:
+    """写入单元格加四周细边框；字体/填充保留原设置。"""
+    cell.border = WRITE_BORDER
 
 
 def fill_declaration(
@@ -49,27 +60,26 @@ def fill_declaration(
         ws["F16"] = set_subtotal[0]
         ws["G16"] = set_subtotal[1]
 
-    # TODO: 明细行/汇总行目前使用默认样式；如需与样本一致，可复制第 17 行
-    # （表头行）的字体/边框到明细与汇总区域。
+    # TODO: 明细行/汇总行的字体可后续复制第 17 行表头样式；边框已统一细线
     r = DETAIL_START_ROW
     for row in rows:
-        ws.cell(row=r, column=1, value=row.seq)
-        ws.cell(row=r, column=2, value=row.name_cn)
+        c = ws.cell(row=r, column=1, value=row.seq);        _apply_write_border(c)
+        c = ws.cell(row=r, column=2, value=row.name_cn);    _apply_write_border(c)
         if row.cartons is not None:
-            ws.cell(row=r, column=3, value=row.cartons)
+            c = ws.cell(row=r, column=3, value=row.cartons); _apply_write_border(c)
         if row.pieces is not None:
-            ws.cell(row=r, column=4, value=row.pieces)
-        ws.cell(row=r, column=5, value=row.currency or "USD")
+            c = ws.cell(row=r, column=4, value=row.pieces);  _apply_write_border(c)
+        c = ws.cell(row=r, column=5, value=row.currency or "USD"); _apply_write_border(c)
         if row.amount is not None:
-            ws.cell(row=r, column=6, value=row.amount)
+            c = ws.cell(row=r, column=6, value=row.amount); _apply_write_border(c)
         if row.net is not None:
-            ws.cell(row=r, column=7, value=row.net)
+            c = ws.cell(row=r, column=7, value=row.net);    _apply_write_border(c)
         if row.gross is not None:
-            ws.cell(row=r, column=8, value=row.gross)
+            c = ws.cell(row=r, column=8, value=row.gross);  _apply_write_border(c)
         if row.inspection:
-            ws.cell(row=r, column=9, value="商检")
+            c = ws.cell(row=r, column=9, value="商检");      _apply_write_border(c)
         if row.unit_code:
-            ws.cell(row=r, column=10, value=row.unit_code)
+            c = ws.cell(row=r, column=10, value=row.unit_code); _apply_write_border(c)
         r += 1
 
     # 空 1 行后写两行式汇总；总箱数/净重/毛重 = 各行非 None 值求和
@@ -81,15 +91,15 @@ def fill_declaration(
     total_gross = sum(x.gross for x in rows if x.gross is not None)
 
     # JPY 行（无金额列）
-    ws.cell(row=r, column=3, value=total_cartons)
-    ws.cell(row=r, column=4, value=total_pieces)
-    ws.cell(row=r, column=5, value="JPY")
-    ws.cell(row=r, column=7, value=total_net)
-    ws.cell(row=r, column=8, value=total_gross)
+    c = ws.cell(row=r, column=3, value=total_cartons); _apply_write_border(c)
+    c = ws.cell(row=r, column=4, value=total_pieces);  _apply_write_border(c)
+    c = ws.cell(row=r, column=5, value="JPY");         _apply_write_border(c)
+    c = ws.cell(row=r, column=7, value=total_net);     _apply_write_border(c)
+    c = ws.cell(row=r, column=8, value=total_gross);   _apply_write_border(c)
     r += 1
     # USD 行（仅金额）
-    ws.cell(row=r, column=5, value="USD")
-    ws.cell(row=r, column=6, value=total_amount)
+    c = ws.cell(row=r, column=5, value="USD");         _apply_write_border(c)
+    c = ws.cell(row=r, column=6, value=total_amount);  _apply_write_border(c)
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     wb.save(out_path)
