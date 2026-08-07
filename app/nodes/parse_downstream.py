@@ -20,16 +20,27 @@ from app.state import AgentState
 
 logger = logging.getLogger(__name__)
 
+__all__ = ["parse_downstream_file", "parse_downstream"]
 
-def parse_requirements(
+
+def parse_downstream_file(
     file_path: str,
 ) -> tuple[dict[str, list[str]], dict[str, dict[str, list[int]]]]:
     """解析下游装箱明细表 → (requirements, row_map) 纯函数（不依赖 state）。
 
-    Node1 与预扫/预检共用：
-    - requirements: {工厂名: [SKU, ...]}（按出现顺序去重）；
-    - row_map: {工厂名: {SKU: [Excel 行号, ...]}}（openpyxl 行号 = idx + 2），
-      供 Node6 精准写回单元格。
+    可被 Node1、add_factories_to_batch 等复用。
+
+    Args:
+        file_path: 装箱单 Excel 文件路径。
+
+    Returns:
+        (requirements, row_map)
+        - requirements: {工厂名: [SKU, ...]}（按出现顺序去重）
+        - row_map: {工厂名: {SKU: [Excel 行号, ...]}}（openpyxl 行号 = idx + 2）
+
+    Raises:
+        FileNotFoundError: 文件不存在
+        Exception: pandas 解析失败时原样抛出
     """
     settings = get_settings()
 
@@ -58,19 +69,23 @@ def parse_requirements(
     return requirements, row_map
 
 
+# 向后兼容别名：其他模块（dispatcher/tools.py, api/service.py）仍通过此名导入
+parse_requirements = parse_downstream_file
+
+
 def parse_downstream(state: AgentState) -> dict:
     settings = get_settings()
     file_path = state.get("downstream_file_path") or settings.downstream_file_path
 
-    requirements, row_map = parse_requirements(file_path)
+    requirements, row_map = parse_downstream_file(file_path)
 
-    pending = list(requirements.keys())
-    # 调试/冒烟测试：只处理指定工厂
+    # 处理 factory_filter（如果有）
     factory_filter = state.get("factory_filter")
     if factory_filter:
-        allow = set(factory_filter)
-        pending = [f for f in pending if f in allow]
+        requirements = {k: v for k, v in requirements.items() if k in factory_filter}
+        row_map = {k: v for k, v in row_map.items() if k in factory_filter}
 
+    pending = list(requirements.keys())
     logger.info("[Node1] 本次队列 %d 个", len(pending))
 
     return {
