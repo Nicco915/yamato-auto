@@ -189,6 +189,188 @@ def _read_batch_config(batch_id: str) -> dict[str, Any] | None:
         return None
 
 
+def update_batch_paths(
+    batch_id: str,
+    downstream_file_path: str | None = None,
+    upstream_root: str | None = None,
+    reset_checkpoint: bool = False,
+) -> dict[str, Any]:
+    """更新批次路径配置，可选重置 checkpoint。
+
+    Args:
+        batch_id: 批次号
+        downstream_file_path: 新装箱单路径（None=不改）
+        upstream_root: 新工厂文件夹路径（None=不改）
+        reset_checkpoint: 是否重置 checkpoint（下次执行用新路径）
+
+    Returns:
+        {"updated": True/False, "config": {...}, "checkpoint_reset": True/False}
+
+    Raises:
+        ValueError: 批次不存在或路径无效
+    """
+    config = _read_batch_config(batch_id)
+    if config is None:
+        raise ValueError(f"批次不存在: {batch_id}")
+
+    # 更新路径
+    if downstream_file_path:
+        d_path = Path(downstream_file_path).expanduser()
+        if not d_path.is_file():
+            raise ValueError(f"下游装箱单路径不存在或不是文件: {downstream_file_path}")
+        config["downstream_file_path"] = str(d_path)
+    if upstream_root:
+        u_path = Path(upstream_root).expanduser()
+        if not u_path.is_dir():
+            raise ValueError(f"上游工厂文件夹路径不存在或不是目录: {upstream_root}")
+        config["upstream_root"] = str(u_path)
+
+    _write_batch_config(batch_id, config)
+
+    checkpoint_reset = False
+    if reset_checkpoint:
+        from langgraph.graph import START
+        graph = get_graph()
+        cfg = _config(batch_id)
+        update = {}
+        if downstream_file_path:
+            update["downstream_file_path"] = config["downstream_file_path"]
+        if upstream_root:
+            update["upstream_root"] = config["upstream_root"]
+        graph.update_state(cfg, update, as_node=START)
+        checkpoint_reset = True
+
+    return {
+        "updated": True,
+        "config": config,
+        "checkpoint_reset": checkpoint_reset,
+    }
+
+
+def rerun_batch(
+    batch_id: str,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict[str, Any]:
+    """完全重跑批次：清空 containers/，重置 checkpoint，从 Node1 重新执行。
+
+    Args:
+        batch_id: 批次号
+        on_progress: 进度回调
+
+    Returns:
+        run_until_interrupt 的返回值
+
+    Raises:
+        ValueError: 批次不存在
+    """
+    config = _read_batch_config(batch_id)
+    if config is None:
+        raise ValueError(f"批次不存在: {batch_id}")
+
+    # 清空 containers/ 目录
+    settings = get_settings()
+    containers_dir = settings.batch_containers_dir(batch_id)
+    if containers_dir.exists():
+        import shutil
+        shutil.rmtree(containers_dir)
+        logger.info("[rerun] 已清空 containers 目录: %s", containers_dir)
+
+    # 重置 checkpoint
+    from langgraph.graph import START
+    graph = get_graph()
+    cfg = _config(batch_id)
+    graph.update_state(
+        cfg,
+        {
+            "downstream_file_path": config["downstream_file_path"],
+            "upstream_root": config["upstream_root"],
+            "batch_id": batch_id,
+        },
+        as_node=START,
+    )
+
+    # 更新配置中的运行信息
+    config["last_run_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    config["run_count"] = config.get("run_count", 0) + 1
+    _write_batch_config(batch_id, config)
+
+    # 重新执行
+    return run_until_interrupt(
+        thread_id=batch_id,
+        downstream_file_path=config["downstream_file_path"],
+        upstream_root=config["upstream_root"],
+        on_progress=on_progress,
+    )
+
+
+def add_factories_to_batch(
+    batch_id: str,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict[str, Any]:
+    """补充工厂：重新解析装箱单，增量合并 pending_factories，继续执行。
+
+    Args:
+        batch_id: 批次号
+        on_progress: 进度回调
+
+    Returns:
+        {"added": int, "factories": [...], "status": "..."}
+
+    Raises:
+        ValueError: 批次不存在或无新工厂
+    """
+    from app.nodes.parse_downstream import parse_downstream_file
+
+    config = _read_batch_config(batch_id)
+    if config is None:
+        raise ValueError(f"批次不存在: {batch_id}")
+
+    # 解析装箱单
+    new_requirements, new_row_map = parse_downstream_file(config["downstream_file_path"])
+
+    # 读取当前 checkpoint state
+    graph = get_graph()
+    cfg = _config(batch_id)
+    snap = graph.get_state(cfg)
+    if not snap.values:
+        raise ValueError(f"批次 {batch_id} 无 checkpoint state")
+
+    existing_requirements = snap.values.get("downstream_requirements", {})
+    existing_row_map = snap.values.get("downstream_row_map", {})
+
+    # 找新工厂
+    new_factories = set(new_requirements.keys()) - set(existing_requirements.keys())
+    if not new_factories:
+        return {"added": 0, "factories": [], "message": "没有新工厂"}
+
+    # 合并
+    merged_requirements = {**existing_requirements, **{k: new_requirements[k] for k in new_factories}}
+    merged_row_map = {**existing_row_map, **{k: new_row_map[k] for k in new_factories}}
+    merged_pending = list(snap.values.get("pending_factories", [])) + list(new_factories)
+
+    # 更新 state
+    graph.update_state(
+        cfg,
+        {
+            "downstream_requirements": merged_requirements,
+            "downstream_row_map": merged_row_map,
+            "pending_factories": merged_pending,
+        },
+        as_node=NODE2,
+    )
+
+    # 继续执行
+    for event in graph.stream(None, cfg, stream_mode="updates"):
+        pass  # 进度回调可选
+
+    final = graph.get_state(cfg)
+    return {
+        "added": len(new_factories),
+        "factories": sorted(new_factories),
+        "status": final.values.get("validation_status", "unknown"),
+    }
+
+
 def _write_batch_state(
     batch_id: str,
     status: str,
