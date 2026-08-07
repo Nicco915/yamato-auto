@@ -515,7 +515,15 @@ async function fbLoad(path) {
 
 function fbNavigateUp() {
   if (_fbCurrentPath) {
-    const parent = _fbCurrentPath.split(/[\\/]/).slice(0, -1).join('/') || '/';
+    // 跨平台：同时处理 / 和 \ 分隔符
+    const parts = _fbCurrentPath.split(/[\\/]/).filter(Boolean);
+    parts.pop();
+    // Windows 盘符路径（如 C:）需要保留冒号
+    let parent = parts.join('/');
+    if (parent && parent.match(/^[A-Za-z]:$/)) {
+      parent = parent + '/';
+    }
+    if (!parent) parent = '/';
     fbLoad(parent);
   }
 }

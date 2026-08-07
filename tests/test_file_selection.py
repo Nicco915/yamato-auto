@@ -188,6 +188,27 @@ def test_file_selection_ttl_expired():
     print("  ✓ test_file_selection_ttl_expired")
 
 
+def test_cross_platform_pathlib():
+    """验证 pathlib.Path 跨平台路径处理（macOS 测试 Windows 风格路径）。"""
+    from pathlib import Path, PurePosixPath, PureWindowsPath
+
+    # 测试路径解析（使用 PureWindowsPath 避免平台依赖）
+    win_path = PureWindowsPath("C:/Users/test/Documents")
+    assert str(win_path) == "C:\\Users\\test\\Documents"
+    assert win_path.parent == PureWindowsPath("C:\\Users\\test")
+
+    # 测试 pathlib.Path 在当前平台的行为
+    posix_path = PurePosixPath("/Users/test/Documents")
+    assert str(posix_path) == "/Users/test/Documents"
+    assert str(posix_path.parent) == "/Users/test"
+
+    # 验证 expanduser 在不同平台都能工作
+    home_path = Path.home()
+    assert home_path.is_absolute()
+
+    print("  ✓ test_cross_platform_pathlib")
+
+
 # ---------------------------------------------------------------------------
 # 主入口
 # ---------------------------------------------------------------------------
@@ -202,6 +223,7 @@ def main():
         test_handle_message_file_selection_with_pending,
         test_history_returns_file_selection_state,
         test_file_selection_ttl_expired,
+        test_cross_platform_pathlib,
     ]
 
     print(f"\n=== 文件选择功能测试（{len(tests)} 个用例）===\n")

@@ -943,7 +943,15 @@ async function chatFbLoad(path) {
 
 function chatFbNavigateUp() {
   if (_chatFsCurrentPath) {
-    const parent = _chatFsCurrentPath.split(/[\\/]/).slice(0, -1).join('/') || '/';
+    // 跨平台：同时处理 / 和 \ 分隔符
+    const parts = _chatFsCurrentPath.split(/[\\/]/).filter(Boolean);
+    parts.pop();
+    // Windows 盘符路径（如 C:）需要保留冒号
+    let parent = parts.join('/');
+    if (parent && parent.match(/^[A-Za-z]:$/)) {
+      parent = parent + '/';
+    }
+    if (!parent) parent = '/';
     chatFbLoad(parent);
   }
 }
