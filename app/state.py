@@ -33,6 +33,8 @@ class AgentState(TypedDict, total=False):
     # 批次级工厂名对照（W5）：预扫确认时用户给出的「仅本次生效」结果，
     # {装箱单工厂名: 上游文件夹名}，不落盘；Node2 匹配的最高优先档
     factory_alias_overrides: Optional[Dict[str, str]]
+    # 批次号（= thread_id），用于输出文件分目录 {output}/{batch_id}/containers|declarations/
+    batch_id: str
 
     # ----- Node1 产物 -----
     downstream_requirements: Dict[str, List[str]]  # {工厂名: [SKU, ...]}

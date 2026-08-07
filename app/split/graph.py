@@ -32,6 +32,7 @@ class SplitState(TypedDict, total=False):
 
     # ---- 输入参数 ----
     split_thread_id: str          # 分票图 thread_id，建议 "split-{批次thread_id}"
+    batch_id: str                 # 父批次 thread_id，报关单输出路径 {output}/{batch_id}/declarations/
     source_file_path: str         # 批次 filled Excel 的 final_output_path
 
     # ---- Node 1 产物 ----

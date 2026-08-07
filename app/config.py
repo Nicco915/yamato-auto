@@ -1,5 +1,6 @@
 """全局配置：pydantic-settings 读取 .env，集中管理路径与模型参数。"""
 from functools import lru_cache
+import re
 from pathlib import Path
 
 from pydantic import Field
@@ -8,6 +9,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # 项目根目录（app/ 的上一级中的 app 包所在目录）
 # 本文件位于 <project>/app/app/config.py，项目根 = parents[1]
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+# 批次号/目录名片段安全化正则（从 api/service.py 的 _safe_path_tag 平移，避免循环导入）
+_PROGRESS_TAG_UNSAFE = re.compile(r"[^0-9A-Za-z一-鿿぀-ヿ가-힯._-]")
 
 
 class Settings(BaseSettings):
@@ -111,6 +116,39 @@ class Settings(BaseSettings):
     @property
     def alias_map_abs(self) -> Path:
         return self.resolve(self.alias_map_path)
+
+    # ----- 批次级输出路径工具 -----
+    # 把 output/ 按批次号分目录，内部按 containers/ declarations/ 二级分类；
+    # safe_path_tag 把用户可输入的批次号过滤为安全目录名片段（防目录穿越）。
+    # 注：逻辑从 api/service.py 的 _safe_path_tag 平移至此，避免循环导入。
+
+    @staticmethod
+    def safe_path_tag(text: str) -> str:
+        """把用户可输入的批次号过滤为安全的文件/目录名片段（防目录穿越）。
+
+        - 非安全字符（保留 0-9A-Za-z/汉字/假名/谚文/._-）替换为 _
+        - 收缩连续下划线
+        - 消除 .. 防止目录穿越
+        """
+        tag = _PROGRESS_TAG_UNSAFE.sub("_", text)
+        # 先收缩 ..（防 .. 穿越到父目录），再收缩连续下划线
+        while ".." in tag:
+            tag = tag.replace("..", "_")
+        while "__" in tag:
+            tag = tag.replace("__", "_")
+        return tag
+
+    def batch_output_dir(self, batch_id: str) -> Path:
+        """批次级输出根目录：{output_dir}/{batch_id}/"""
+        return self.output_dir_abs / self.safe_path_tag(batch_id)
+
+    def batch_containers_dir(self, batch_id: str) -> Path:
+        """装箱单输出目录：{output_dir}/{batch_id}/containers/"""
+        return self.batch_output_dir(batch_id) / "containers"
+
+    def batch_declarations_dir(self, batch_id: str) -> Path:
+        """报关单输出目录：{output_dir}/{batch_id}/declarations/"""
+        return self.batch_output_dir(batch_id) / "declarations"
 
 
 @lru_cache
