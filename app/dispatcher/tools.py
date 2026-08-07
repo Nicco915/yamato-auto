@@ -160,6 +160,98 @@ def _fn_get_usage(args: dict) -> dict:
         return _err(e)
 
 
+def _fn_list_directory(args: dict) -> dict:
+    """列出目录内容，供 Agent 引导用户选择路径。
+
+    参数：
+    - path: 目录路径（可选，默认 home 目录）
+    - type: "file" 或 "dir"（选择类型，用于过滤显示）
+    - extensions: 文件扩展名过滤（如 "xlsx,xls"，逗号分隔）
+
+    返回：
+    {
+        "current_path": "/absolute/path",
+        "parent_path": "/parent/path" | None,
+        "entries": [
+            {"name": "folder", "path": "/full/path", "is_dir": true},
+            {"name": "file.xlsx", "path": "/full/path", "is_dir": false, "size": 12345},
+            ...
+        ],
+        "drives": ["C:\\", "D:\\"] | null  # Windows 盘符列表
+    }
+    """
+    import os
+    import string as _string
+
+    path = args.get("path")
+    type_filter = args.get("type", "dir")
+    extensions = args.get("extensions")
+
+    # 确定起始路径
+    if path is None:
+        if os.name == "nt":  # Windows
+            drives = []
+            for letter in _string.ascii_uppercase:
+                drive_path = Path(f"{letter}:\\")
+                if drive_path.exists():
+                    drives.append(f"{letter}:\\")
+            return {
+                "current_path": None,
+                "parent_path": None,
+                "entries": [],
+                "drives": drives,
+                "message": "Windows 系统，请选择盘符",
+            }
+        else:
+            browse_path = Path.home()
+    else:
+        browse_path = Path(path).expanduser()
+
+    # 验证路径
+    if not browse_path.exists():
+        return {"error": f"路径不存在: {path}"}
+    if not browse_path.is_dir():
+        return {"error": f"不是目录: {path}"}
+
+    # 解析扩展名
+    allowed_ext = None
+    if extensions:
+        allowed_ext = {ext.strip().lower().lstrip(".") for ext in extensions.split(",")}
+
+    # 列出内容
+    entries = []
+    try:
+        for item in sorted(browse_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+            if item.name.startswith("."):
+                continue
+
+            is_dir = item.is_dir()
+
+            if type_filter == "file" and not is_dir and allowed_ext:
+                if item.suffix.lower().lstrip(".") not in allowed_ext:
+                    continue
+
+            entry = {"name": item.name, "path": str(item), "is_dir": is_dir}
+            if not is_dir:
+                try:
+                    entry["size"] = item.stat().st_size
+                except OSError:
+                    pass
+            entries.append(entry)
+    except PermissionError:
+        return {"error": f"无权限访问: {path}"}
+
+    parent_path = str(browse_path.parent) if browse_path.parent != browse_path else None
+
+    return {
+        "current_path": str(browse_path),
+        "parent_path": parent_path,
+        "entries": entries[:100],  # 限制返回数量，避免过多
+        "drives": None,
+        "total": len(entries),
+    }
+
+
 def _ask_guide_wrapper(args: dict) -> dict:
     """操作指导问答（延迟 import guide.py，guide.py 可能尚未实现）。"""
     try:
@@ -1748,6 +1840,37 @@ TOOLS: dict[str, Tool] = {
         },
         risk="read",
         func=lambda args: _ask_guide_wrapper(args),  # 延迟 import guide.py
+    ),
+
+    "list_directory": Tool(
+        name="list_directory",
+        description="列出目录内容，用于引导用户选择文件/文件夹路径。"
+                    "Agent 可用此工具探索文件系统，帮助用户定位要处理的文件。"
+                    "参数：path(目录路径，可选，默认为 home 目录；Windows 下不传则返回盘符列表)、"
+                    "type('file' 或 'dir'，选择过滤类型)、"
+                    "extensions(扩展名过滤，如 'xlsx,xls'，逗号分隔)。"
+                    "返回目录内容列表（最多 100 条），含 name/path/is_dir/size 等字段。"
+                    "跳过隐藏文件（以 . 开头）。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "要列出的目录路径（可选）；Windows 下不传则返回盘符列表供用户选择",
+                },
+                "type": {
+                    "type": "string",
+                    "enum": ["file", "dir"],
+                    "description": "过滤类型：file=只显示文件，dir=只显示目录；不传默认 dir",
+                },
+                "extensions": {
+                    "type": "string",
+                    "description": "扩展名过滤（逗号分隔，如 'xlsx,xls'）；仅当 type='file' 时生效",
+                },
+            },
+        },
+        risk="read",
+        func=_fn_list_directory,
     ),
 
     # ---- 二期写工具（preview + execute，loop 拦截走确认门）----
