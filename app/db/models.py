@@ -2,6 +2,9 @@
 
 - factories: 工厂主表
 - factory_skus: SKU 主数据子表（多语言品名 / HS 编码 / 单件重量沉淀）
+- chat_sessions: 调度 Agent 会话清单（左侧 sidebar，支持 pin 批次、标题、待确认操作信封）
+- chat_messages: 调度 Agent 对话内容（user/assistant 消息流水，按 ts 排序）
+- chat_tool_history: 调度 Agent 工具调用审计流水（含确认状态：NULL=只读/0=拒/1=批）
 """
 from datetime import datetime
 
@@ -11,6 +14,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     JSON,
     Numeric,
@@ -209,3 +213,79 @@ class SkuMasterAudit(Base):
     old_value = Column(String, nullable=True)
     new_value = Column(String, nullable=True)
     changed_at = Column(DateTime, server_default=func.now())
+
+
+# ─────────────────────────────────────────────────────────────
+# 调度 Agent 会话持久化（Session 管理方案）
+# ─────────────────────────────────────────────────────────────
+
+class ChatSession(Base):
+    """调度 Agent 会话清单：左侧 sidebar 条目，支持 pin 批次、标题、待确认操作信封。
+
+    session_id 沿用前端 crypto.randomUUID() 生成；
+    pinned_thread_id 可选，操作员在 sidebar pin 当前批次方便回查；
+    pending_action_json 存放待确认操作信封（同一时刻最多一个，session 删则 pending 清）。
+    """
+
+    __tablename__ = "chat_sessions"
+
+    session_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    pinned_thread_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    pending_action_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    # 关系
+    messages: Mapped[list["ChatMessage"]] = relationship(back_populates="session", cascade="all, delete-orphan")
+    tool_history: Mapped[list["ChatToolHistory"]] = relationship(back_populates="session", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_chat_sessions_updated", updated_at.desc()),
+    )
+
+
+class ChatMessage(Base):
+    """调度 Agent 对话内容：user / assistant 消息流水，按 ts 排序。
+
+    ts 为 Unix timestamp（Float），用于精确排序与 hydrate 恢复。
+    """
+
+    __tablename__ = "chat_messages"
+    __table_args__ = (
+        Index("idx_chat_messages_session_ts", "session_id", "ts"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(
+        String(255), ForeignKey("chat_sessions.session_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String(20), nullable=False)  # user / assistant
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    ts: Mapped[float] = mapped_column(Float, nullable=False)
+
+    session: Mapped["ChatSession"] = relationship(back_populates="messages")
+
+
+class ChatToolHistory(Base):
+    """调度 Agent 工具调用审计流水：记录每次 tool call 的工具名、参数摘要、结果摘要与确认状态。
+
+    confirmed: NULL=只读工具（无需确认），0=操作员拒绝，1=操作员批准。
+    """
+
+    __tablename__ = "chat_tool_history"
+    __table_args__ = (
+        Index("idx_chat_tool_history_session_ts", "session_id", "ts"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(
+        String(255), ForeignKey("chat_sessions.session_id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    tool: Mapped[str] = mapped_column(String(100), nullable=False)
+    args_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confirmed: Mapped[int | None] = mapped_column(Integer, nullable=True)  # None=只读, 0=拒, 1=批
+    ts: Mapped[float] = mapped_column(Float, nullable=False)
+
+    session: Mapped["ChatSession"] = relationship(back_populates="tool_history")
