@@ -386,6 +386,7 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
                     "factory_scan": preview.get("factory_scan"),
                 }
                 session.pending_action = action
+                sessions.persist_pending(session)
                 logger.info(
                     "确认门拦截写工具 | 工具=%s | 参数=%s | 预览摘要=%s",
                     name, _log_args_summary(args),
