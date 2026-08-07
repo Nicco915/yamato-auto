@@ -1,5 +1,10 @@
 """提取 Agent 对话式路径配置（生产人工指令通道）。
 
+.. deprecated::
+    本模块功能已并入调度 Agent 的 set_paths Tool（见 app/dispatcher/tools.py）。
+    路由 `/api/v1/agent/chat` 保留为兼容入口，但不再扩展新特性。
+    新业务请走 `/api/v1/dispatcher/chat`。
+
 2026-07-28 用户授权：生产环境下操作员可与提取 Agent 对话，允许它直接修改
 路径配置。流程（LLM 只解析不做决策，决策永远属于人工）：
 
