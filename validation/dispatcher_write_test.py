@@ -36,6 +36,8 @@ from pathlib import Path
 
 os.environ.setdefault("EXTRACTION_MOCK", "1")
 os.environ["DISPATCHER_MOCK"] = "1"
+# 测试用例故意用空 tmpdir 当 upstream_root（仅验证流程状态），跳过工厂目录校验
+os.environ["FACTORY_DIR_STRICT"] = "0"
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(APP_ROOT))

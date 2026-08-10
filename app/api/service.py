@@ -1493,6 +1493,26 @@ def create_batch(
     u_path = Path(upstream).expanduser()
     if not u_path.is_dir():
         raise ValueError(f"上游工厂文件夹路径不存在或不是目录: {upstream}")
+    # 加固：上游目录必须能匹配到至少 1 个工厂（用 W5 prescan 干跑一遍），
+    # 否则下游 12 个工厂会全部 no_folder_matched，浪费算力且用户看到一堆 0 SKU 错误。
+    # 默认生产开启；测试场景（空 tmpdir）可设 FACTORY_DIR_STRICT=0 跳过。
+    if os.environ.get("FACTORY_DIR_STRICT", "1") == "1":
+        try:
+            _scan = prescan_factory_aliases(
+                downstream_file_path=str(d_path), upstream_root=str(u_path))
+            _resolved = _scan.get("resolved") or {}
+            _candidates = _scan.get("candidates") or {}
+            _unmatched = _scan.get("unmatched") or []
+            _total = len(_resolved) + len(_candidates) + len(_unmatched)
+            if _total > 0 and not _resolved:
+                raise ValueError(
+                    f"上游路径下未匹配到任何工厂文件夹: {upstream}"
+                    f"（检查路径是否少带 /工厂 等子目录名？例如 83/工厂 而不是 83）")
+        except ValueError:
+            raise
+        except Exception:
+            # 装箱单解析失败 / W5 异常 → 软警告，不阻断（交给 dispatcher preview 兜底）
+            pass
 
     # W4b：skip_processed 实时重算差集（不沿用预览结论，防 TTL 内竞态）；
     # 显式 factory_filter 优先（互斥语义）
