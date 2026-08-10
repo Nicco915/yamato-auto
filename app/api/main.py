@@ -452,9 +452,16 @@ async def dispatcher_chat_stream(request: DispatcherChatRequest):
             return
 
         # 文件选择挂起：推送 file_selection_request 事件（前端弹出浏览器）
+        # 注意：必须把 fs 的字段放在 fs_type/fs_extensions/fs_title 下，避免
+        # 覆盖 SSE 事件本身的 type 字段（前端按 event.type 路由）
         if result.get("status") == "pending_file_selection":
             fs = result.get("file_selection", {})
-            yield f"data: {json.dumps({'type': 'file_selection_request', **fs}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({
+                'type': 'file_selection_request',
+                'fs_type': fs.get('type'),
+                'fs_extensions': fs.get('extensions'),
+                'fs_title': fs.get('title'),
+            }, ensure_ascii=False)}\n\n"
 
         yield f"data: {json.dumps({'type': 'done', **result}, ensure_ascii=False)}\n\n"
 

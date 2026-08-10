@@ -581,8 +581,9 @@ function handleSSEEvent(event) {
 
     case "file_selection_request": {
       // Agent 请求用户选择文件/目录，弹出文件浏览器
-      finishProgress(event.title || "请在界面上选择路径");
-      openChatFileBrowser(event.type, event.extensions, event.title);
+      // 后端把 fs 字段嵌套为 fs_type/fs_extensions/fs_title（避免覆盖 type）
+      finishProgress(event.fs_title || "请在界面上选择路径");
+      openChatFileBrowser(event.fs_type, event.fs_extensions, event.fs_title);
       break;
     }
 
