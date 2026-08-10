@@ -1,6 +1,6 @@
 # 供应链单证自动化 — 项目进度总览
 
-> 最后更新：2026-08-10（Session 增强：标题/搜索/徽章/置顶/日期分组，见 6.19 节）
+> 最后更新：2026-08-10（每批次独立缓存结构，见 6.20 节）
 > 设计文档：`../agent设计/`（第一/二/三阶段、api接口以及异步机制、人工审核界面设计、提取agent背景prompt）
 
 ## 1. 项目目标
@@ -41,6 +41,7 @@
 | 后台预提取：审核不阻塞识别 | ✅ 完成 | 图首次 interrupt 后 daemon 线程逐个预提取剩余工厂，Node3 缓存命中短路跳过 LLM（见第 6.12 节） |
 | Session 管理：对话持久化 + 会话列表 | ✅ 完成 | DB 落库 3 新表（chat_sessions/messages/tool_history）+ 5 CRUD 端点 + UI sidebar + 重启恢复 + pending_action 持久化，10+1 端到端验证通过（见第 6.18 节） |
 | Session 增强：标题/搜索/徽章/置顶/分组 | ✅ 完成 | 自动标题 + LLM 摘要 + 搜索 + 批次状态徽章 + ⭐ 置顶 + 日期分组，9 项端到端验证通过（见第 6.19 节） |
+| 每批次独立缓存结构 | ✅ 完成 | sessions/{batch_safe}/{factory}.json 替代扁平 {factory}.json，跨批次完全隔离；audited 限本批次；review_audits 历史保留（见 6.20 节） |
 
 ## 4. 提取引擎（app/extraction/）
 
@@ -1074,6 +1075,63 @@ app/db/models.py            |   4 +       （is_pinned + title_source 列）
 app/dispatcher/sessions.py  |  64 +++++++  （_auto_title + _maybe_llm_title）
 app/ui/static/chat.html     | 200 ++++++++++++++++++------  （搜索+分组+徽章+置顶+排序）
 ```
+
+## 6.20 每批次独立缓存结构（2026-08-10 用户定）
+
+**动机**：之前 `sessions/{factory}.json` 扁平按工厂名命名、无批次维度，
+新批次启动要做归档（方案 A）才能不沿用旧 session；W4b 预检还要回看
+`_archive/` 最新归档（方案 A 配套）。两层都做对了，但「跨批次记忆 + 新批次沿用」
+这个组合在实际使用中误伤了「换 `upstream_root` 开新批次」的场景——同工厂名
+命中旧 session，缓存污染无任何提示。
+
+**决策**：每批次独立 session 目录 `data/sessions/{safe(batch_id)}/`，跨批次
+完全隔离；audited 也限本批次；review_audits 表历史保留（跨批次可追溯，但
+「已审核」语义只对本批次生效）。
+
+### 数据布局
+
+```
+data/sessions/
+├── {batch_id_safe}/                  ← 每批次独立
+│   ├── 中地.json
+│   └── 青島XD.json
+└── _orphan/                          ← 迁移兜底（老扁平文件一次性搬入）
+
+output/
+├── {batch_id_safe}_filled.xlsx
+├── {batch_id_safe}/
+└── _history/
+    └── {batch_id_safe}/
+        ├── r1_{ts}/run/              ← 第 1 次 rerun 前的产物快照
+        └── r2_{ts}/run/
+```
+
+### 关键改动
+
+| 层 | 之前 | 现在 |
+|---|---|---|
+| session 落点 | `sessions/{factory}.json` 扁平 | `sessions/{safe(batch_id)}/{factory}.json` |
+| 启动归档（方案 A） | 移到 `_archive/{batch}/` | 退役，改为 `mkdir` 本批次目录 |
+| W4b 预检 | 全局 `sessions` + `_archive` 回看 | 仅本批次目录 |
+| audited 判定 | 全局 approved | `review_audits WHERE thread_id=? AND approved=true` |
+| Node3 缓存 | 同 factory 复用 | `_try_load_cached_session(batch_id, factory, upstream_root)` |
+| rerun | 清空 `containers/` | 整批次归档到 `_history/{batch}/r{N}_{ts}/`，sessions 清空 |
+| retry_factory | 原状态保留 | 单 session.json 删 |
+
+### 设计要点
+
+- **批次隔离即防误伤**：换 `upstream_root`（或换一套工厂文件夹）开新批次时，
+  新批次号 → 新目录，绝不命中旧 session——「跨批次记忆」语义彻底收敛。
+- **review_audits 跨批次保留**：`master.db` 表不按批次分表，已审核记录全量
+  留作审计；只是「audited」判定（驱动跳过重审的开关）按 `thread_id` 过滤。
+- **迁移兜底**：老的扁平 `sessions/{factory}.json` 自动搬到 `_orphan/`，
+  不丢数据，审计可查。
+- **rerun 不污染**：整批次归档到 `_history/{batch}/r{N}_{ts}/`，原目录
+  清空重建——下次跑图从干净状态开始，回归原 bug 时一键 diff 历史快照。
+
+### 关联 commit
+
+- (commit hashes 占位，由主进程填)
 
 ## 7. 关键设计决策记录
 
