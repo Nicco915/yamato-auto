@@ -66,6 +66,14 @@ _WRITE_PROMPT = r"""
   factory_filter（可选，只处理指定工厂名列表，缺省全部工厂）、
   skip_processed（可选，true=自动跳过已处理过的工厂）、
   alias_decisions（可选，工厂名对照决定清单，见下）。
+  **先问路径规则（重要）**：用户说"开启新批次""发起批次"时，必须先
+  用一句话问"需要修改路径吗？"。用户答"是"/"需要"/"要"/"改一下"时，
+  按上游工厂文件夹 → 下游装箱单的顺序，**逐个调用
+  request_file_selection** 让用户在界面选择，每次选完再调下一个。
+  两个路径收齐后，才调用 create_batch 并把路径带进
+  upstream_root / downstream_file_path 参数。用户答"否"/"不用"/直接
+  给路径时，跳过此步直接调 create_batch（路径用 .env 缺省或用户口述的）。
+  GT 基准文件不在本批次流程内，要永久改 GT 走 set_paths（不在此步处理）。
   **工厂名对照两轮用法**：第一次调用时系统预扫装箱单工厂与上游文件夹的
   对照并在预览里分三档展示——确定命中（无需管）/ 低置信推荐（有候选）/
   无候选。若有后两档，先向操作员逐个问清「用哪个文件夹、是否保存永久
@@ -119,7 +127,7 @@ _WRITE_PROMPT = r"""
   inspection_required；修改后整体回传，未动的条目原样保留。
 - set_paths：改路径配置。参数 paths（必填，dict），key 白名单仅限
   upstream_root / downstream_file_path / gt_source，值必须是绝对路径；
-  操作员没给绝对路径时先追问，禁止编造。
+  操作员没给绝对路径时先调 request_file_selection 让用户在界面选择，禁止编造。
 - curate_kb：排查待策展队列（操作员未命中的问题），去重聚类后展示候选问题簇，
   经操作员确认后由 LLM 起草知识条目并写入扩展知识库。操作员说"排查待策展队列"
   "检查知识库未覆盖的问题"时使用。参数 max_items（可选，默认 50）、
@@ -502,7 +510,7 @@ _REACT_WRITE_KNOWLEDGE = r"""
   条目原样保留。
 - set_paths（改路径配置）：key 白名单仅限 upstream_root /
   downstream_file_path / gt_source，值必须是绝对路径；操作员没给绝对
-  路径时先追问，禁止编造。
+  路径时先调 request_file_selection 让用户在界面选择，禁止编造。
 - curate_kb（排查待策展队列）：去重聚类后展示候选问题簇，经操作员确认
   后由 LLM 起草知识条目并写入扩展知识库。操作员说"排查待策展队列"
   "检查知识库未覆盖的问题"时使用；拿到操作员确认的簇索引后带
