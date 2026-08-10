@@ -98,6 +98,29 @@ def _ensure_session_row(session_id: str) -> None:
         logger.warning("_ensure_session_row 失败: %s", exc)
 
 
+def _auto_title(session_id: str, msg: str) -> None:
+    """首条用户消息截断 30 字自动生成标题（仅当 DB 中 title 为空时）。"""
+    if not session_id or not msg or not msg.strip():
+        return
+    try:
+        # 截断逻辑：中文按字符，英文按空格边界
+        if len(msg) <= 30:
+            title = msg.strip()
+        elif msg[30] == " " or msg[29] == " ":
+            title = msg[:30].rstrip()
+        else:
+            title = msg[:30].rstrip() + "…"
+
+        with _get_db_session() as db:
+            row = db.get(_ChatSessionOrm, session_id)
+            if row and not row.title:
+                row.title = title
+                row.title_source = "auto"
+                db.commit()
+    except Exception as exc:
+        logger.warning("_auto_title 失败 | session=%s | %s", session_id, exc)
+
+
 def _hydrate_from_db(session_id: str) -> DispatcherSession | None:
     """从 DB 加载会话（内存 miss 时兜底）。
 
@@ -232,6 +255,10 @@ def record_turn(session: DispatcherSession, user_msg: str, agent_msg: str) -> No
                 db.commit()
         except Exception as exc:  # noqa: BLE001 DB 失败不阻塞主流程
             logger.warning("record_turn DB 写穿失败: %s", exc)
+    # 自动标题：首条用户消息截断生成（异步，不阻塞主流程已无法——
+    # record_turn 本身是同步的，_auto_title 内部 try/except 兜底）
+    if session.session_id and user_msg:
+        _auto_title(session.session_id, user_msg)
 
 
 def record_tool(session: DispatcherSession, tool: str, args_summary: str,

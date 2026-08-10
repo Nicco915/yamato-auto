@@ -535,6 +535,7 @@ class UpdateSessionRequest(BaseModel):
     """更新会话请求体（仅传需要改的字段）。"""
     title: str | None = None
     pinned_thread_id: str | None = None
+    is_pinned: bool | None = None  # 置顶标记
 
 
 @app.get("/api/v1/dispatcher/sessions")
@@ -553,6 +554,8 @@ async def list_dispatcher_sessions():
                     "session_id": r.session_id,
                     "title": r.title,
                     "pinned_thread_id": r.pinned_thread_id,
+                    "is_pinned": r.is_pinned,
+                    "title_source": r.title_source,
                     "updated_at": r.updated_at.timestamp() if r.updated_at else None,
                     "created_at": r.created_at.timestamp() if r.created_at else None,
                     "has_pending": r.pending_action_json is not None,
@@ -586,6 +589,8 @@ async def create_dispatcher_session(request: CreateSessionRequest):
                 "session_id": row.session_id,
                 "title": row.title,
                 "pinned_thread_id": row.pinned_thread_id,
+                "is_pinned": row.is_pinned,
+                "title_source": row.title_source,
                 "updated_at": row.updated_at.timestamp(),
                 "created_at": row.created_at.timestamp(),
             }
@@ -627,6 +632,8 @@ async def get_dispatcher_session(session_id: str):
                 "session_id": row.session_id,
                 "title": row.title,
                 "pinned_thread_id": row.pinned_thread_id,
+                "is_pinned": row.is_pinned,
+                "title_source": row.title_source,
                 "messages": [
                     {"role": m.role, "content": m.content, "ts": m.ts}
                     for m in messages
@@ -660,8 +667,11 @@ async def update_dispatcher_session(session_id: str, request: UpdateSessionReque
 
             if request.title is not None:
                 row.title = request.title
+                row.title_source = "manual"  # 手动改的标记为 manual
             if request.pinned_thread_id is not None:
                 row.pinned_thread_id = request.pinned_thread_id
+            if request.is_pinned is not None:
+                row.is_pinned = request.is_pinned
             db.commit()
             db.refresh(row)
 
@@ -669,6 +679,7 @@ async def update_dispatcher_session(session_id: str, request: UpdateSessionReque
                 "session_id": row.session_id,
                 "title": row.title,
                 "pinned_thread_id": row.pinned_thread_id,
+                "is_pinned": row.is_pinned,
             }
     except HTTPException:
         raise
