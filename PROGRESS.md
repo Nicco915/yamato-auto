@@ -1,6 +1,6 @@
 # 供应链单证自动化 — 项目进度总览
 
-> 最后更新：2026-08-10（Session 管理：对话持久化 + 左侧会话列表，见 6.18 节）
+> 最后更新：2026-08-10（Session 增强：标题/搜索/徽章/置顶/日期分组，见 6.19 节）
 > 设计文档：`../agent设计/`（第一/二/三阶段、api接口以及异步机制、人工审核界面设计、提取agent背景prompt）
 
 ## 1. 项目目标
@@ -40,6 +40,7 @@
 | 全链路日志体系 | ✅ 完成 | 三 handler 中央配置 + 批次/工厂关联 + LLM 调用可观测 + 路由决策留痕，7 测试套全绿（见第 6.11 节） |
 | 后台预提取：审核不阻塞识别 | ✅ 完成 | 图首次 interrupt 后 daemon 线程逐个预提取剩余工厂，Node3 缓存命中短路跳过 LLM（见第 6.12 节） |
 | Session 管理：对话持久化 + 会话列表 | ✅ 完成 | DB 落库 3 新表（chat_sessions/messages/tool_history）+ 5 CRUD 端点 + UI sidebar + 重启恢复 + pending_action 持久化，10+1 端到端验证通过（见第 6.18 节） |
+| Session 增强：标题/搜索/徽章/置顶/分组 | ✅ 完成 | 自动标题 + LLM 摘要 + 搜索 + 批次状态徽章 + ⭐ 置顶 + 日期分组，9 项端到端验证通过（见第 6.19 节） |
 
 ## 4. 提取引擎（app/extraction/）
 
@@ -1011,6 +1012,67 @@ GET    /api/v1/dispatcher/history           → 改造：内存 peek 优先，mi
 6cdab0a feat(dispatcher): persist session history/tool_history/pending_action to DB (write-through)
 99d6ceb feat(db): add ChatSession/ChatMessage/ChatToolHistory ORM models for session persistence
 32fdf48 chore: mark agent_chat.py as DEPRECATED (merged into dispatcher set_paths)
+```
+
+## 6.19 Session 增强：标题 + 搜索 + 日期分组 + 批次状态 + 置顶（2026-08-10 完成，分支 worktree-session-enhance，worktree session-enhance 开发，4 commit 合入 main）
+
+**动机**：6.18 的 session 管理基础设施（DB 持久化 + CRUD + sidebar）已经就位，但 sidebar 体验粗糙——标题靠手动命名、没有搜索、没有批次状态显示、没有置顶、没有时间分组。操作员 session 一多就找不到。
+
+**目标**：让 sidebar 真正可用，6 项增强一次迭代完成。
+
+### 数据模型变更
+
+`chat_sessions` 表追加 2 列：
+- `is_pinned` (Boolean, default False) — ⭐ 置顶标记
+- `title_source` (String(20), nullable) — 标题来源追踪：`None`/`"auto"`/`"llm"`/`"manual"`
+
+### 6 项增强
+
+**① 标题自动生成（auto）**：`record_turn` 末尾，首条用户消息截断 30 字设为标题（`title_source="auto"`）。仅当 DB 中 `title` 为空时触发。截断逻辑中文按字符，英文按空格边界。
+
+**② LLM 摘要标题（升级 auto → llm）**：累计消息 ≥ 4 条（2 轮对话）且 `title_source=="auto"` 时，调 LLM 生成 10 字以内精炼标题。`llm_client.chat_completion(json_mode=False, max_tokens=50)`——轻量调用，失败静默。**手动改过的标题（`title_source=="manual"`）绝不覆盖**——双重检查防并发。
+
+**③ 会话搜索**：`GET /sessions?q=关键词` 按标题 `ilike` 模糊过滤。前端 sidebar 顶部搜索框，300ms 防抖。搜索时关闭日期分组（平铺显示），清空后恢复分组。
+
+**④ 日期分组（纯前端）**：`groupByDate()` 按 `updated_at` 分"今天 / 昨天 / 本周 / 更早"四组，空组跳过。**置顶会话独立于日期分组**，用 `.session-pinned-section` 包裹固定在最前。
+
+**⑤ 批次状态徽章**：`GET /sessions` 列表返回时，对所有 `pinned_thread_id` 批量调 `service.get_batch_summary` 取 `status`，作为 `batch_status` 字段返回。前端渲染彩色徽章：🔵 运行中 / 🟡 待审核 / 🟢 已完成 / 🔴 异常 / ⚪ 未知。
+
+**⑥ 会话置顶**：`PATCH /sessions/{id}` 支持 `is_pinned` 字段；菜单加"置顶/取消置顶"；后端 `list` 按 `is_pinned.desc(), updated_at.desc()` 排序；前端置顶项前加 ⭐ 图标。
+
+### 关键设计细节
+
+- **`title_source` 状态机**：`None → auto → llm`（自动升级），`auto → manual` 或 `llm → manual`（手动改名后锁定）。LLM 升级时双重检查（读写都查 source），防止并发手动改被覆盖。
+- **`_auto_title` 和 `_maybe_llm_title` 同步执行**：`record_turn` 本身同步，DB 写穿 try/except 兜底，LLM 调用失败静默。真正"异步"体现在不影响用户体验——标题生成在响应返回前完成，但前端下一次 `loadSessionList` 才看到新标题。
+- **批次状态批量查询**：避免 N+1 问题——先收集所有 `pinned_thread_id`（去重），再逐个 `get_batch_summary`（该方法本身轻量，只读 checkpoint）。异常兜底为 `"unknown"`，不阻塞列表返回。
+- **搜索模式切换**：`loadSessionList(q)` 有 q 时平铺，无 q 时按日期分组——UX 上搜索时用户不想看到分组标题干扰。
+
+### 测试（9 项端到端全绿）
+
+1. ✅ 创建新会话 → 发首条消息 → 标题自动截断（`title_source="auto"`）
+2. ✅ 累计 2 轮对话 → 标题升级为 LLM 摘要（`title_source="llm"`）
+3. ✅ Pin 会话 → `is_pinned=True`
+4. ✅ 手动改名 → `title_source="manual"`
+5. ✅ 搜索"手动" → 找到匹配会话
+6. ✅ 搜索"不存在" → 空列表
+7. ✅ Pin 批次 → 列表返回 `batch_status` 字段
+8. ✅ 重启后端 → title/is_pinned/title_source 全保留
+9. ✅ 手动改名后发更多消息 → LLM 不再覆盖（`title_source` 仍为 `"manual"`）
+
+### 文件改动（4 commit）
+
+```
+4c0c3c7 feat(ui): date-grouped sidebar + pinned section + ⭐ icon
+2f10774 feat(session): search by title + batch status badge in sidebar
+2df111e feat(session): LLM-generated summary title after 2 rounds of conversation
+b2188a2 feat(session): auto-title on first message + is_pinned column + title_source tracking
+```
+
+```
+app/api/main.py             |  47 ++++--   （q 参数 + batch_status + is_pinned）
+app/db/models.py            |   4 +       （is_pinned + title_source 列）
+app/dispatcher/sessions.py  |  64 +++++++  （_auto_title + _maybe_llm_title）
+app/ui/static/chat.html     | 200 ++++++++++++++++++------  （搜索+分组+徽章+置顶+排序）
 ```
 
 ## 7. 关键设计决策记录
