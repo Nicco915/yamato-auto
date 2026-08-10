@@ -9,6 +9,21 @@
   /* 页面局部样式：通用组件全部来自 ui.css */
   .form-actions { margin-top: 14px; text-align: right; }
   .form-hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  /* 路径下方完整展示：input 单行不折行，长路径只能横向滚动看不到末尾。
+     这里把当前路径以等宽字体折行显示在 input 下方，永远可见。 */
+  .path-display {
+    margin-top: 4px;
+    padding: 4px 8px;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #374151;
+    word-break: break-all;
+    white-space: pre-wrap;
+  }
   .col-actions { white-space: nowrap; }
   .col-actions .btn { margin-right: 6px; }
   .refresh-btn { padding: 2px 10px; }
@@ -64,6 +79,7 @@
         <input id="f-upstream" type="text" placeholder="加载默认配置中…" style="flex:1">
         <button type="button" onclick="openFileBrowser('f-upstream','dir')" title="浏览" style="padding:4px 10px;cursor:pointer">📁</button>
       </div>
+      <div id="f-upstream-display" class="path-display" style="display:none"></div>
     </div>
     <div class="field">
       <label for="f-downstream">下游装箱表</label>
@@ -71,6 +87,7 @@
         <input id="f-downstream" type="text" placeholder="加载默认配置中…" style="flex:1">
         <button type="button" onclick="openFileBrowser('f-downstream','file','xlsx,xls')" title="浏览" style="padding:4px 10px;cursor:pointer">📄</button>
       </div>
+      <div id="f-downstream-display" class="path-display" style="display:none"></div>
     </div>
     <div class="form-hint">路径变更请优先通过「Agent对话」页配置；此处修改仅对本次发起生效。</div>
     <div class="form-actions">
@@ -182,6 +199,34 @@ async function loadDefaults() {
     $("f-upstream").placeholder = "请输入上游工厂文件夹路径";
     $("f-downstream").placeholder = "请输入下游装箱表路径";
   }
+  syncPathDisplay("f-upstream");
+  syncPathDisplay("f-downstream");
+}
+
+/* 长路径折行展示：input 单行不折行，下方 div 把当前值等宽字体自由换行 */
+function syncPathDisplay(inputId) {
+  const inp = $(inputId);
+  const box = $(inputId + "-display");
+  if (!inp || !box) return;
+  const v = inp.value.trim();
+  if (v) {
+    box.textContent = v;
+    box.style.display = "";
+    inp.title = v;  // hover 兜底提示完整路径
+  } else {
+    box.textContent = "";
+    box.style.display = "none";
+    inp.removeAttribute("title");
+  }
+}
+["f-upstream", "f-downstream"].forEach((id) => {
+  const inp = $(id);
+  if (inp) inp.addEventListener("input", () => syncPathDisplay(id));
+});
+/* 文件浏览器选完路径后直接刷：JS 改 .value 不触发 input 事件，需手动同步 */
+function _fbSetValue(targetId, val) {
+  $(targetId).value = val;
+  syncPathDisplay(targetId);
 }
 
 /* ================= 发起批次（两段式：precheck 预检 → 确认 → 发起） ================= */
@@ -582,14 +627,14 @@ function fbNavigateUp() {
 
 function fbSelectFile(path) {
   if (_fbTarget) {
-    document.getElementById(_fbTarget).value = path;
+    _fbSetValue(_fbTarget, path);
   }
   closeFileBrowser();
 }
 
 function fbSelect() {
   if (_fbTarget && _fbCurrentPath) {
-    document.getElementById(_fbTarget).value = _fbCurrentPath;
+    _fbSetValue(_fbTarget, _fbCurrentPath);
   }
   closeFileBrowser();
 }
