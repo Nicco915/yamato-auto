@@ -141,9 +141,10 @@ function createBulkSelector(opts) {
   var header = opts.headerCheckId ? document.getElementById(opts.headerCheckId) : null;
   var btn = document.getElementById(opts.btnId);
   var countEl = document.getElementById(opts.countId);
+  var sel = opts.checkboxSel;
 
   function _checkboxes() {
-    return Array.from(document.querySelectorAll(opts.checkboxSel));
+    return Array.from(document.querySelectorAll(sel));
   }
 
   function _enabled(boxes) {
@@ -169,24 +170,20 @@ function createBulkSelector(opts) {
     if (opts.onChange) opts.onChange(checked);
   }
 
-  // 表头全选事件
+  // 事件委托：在 document 上监听 change，匹配本实例的 checkbox 选择器
+  // 这样无论 checkbox 何时被创建/销毁，事件都能正确触发
+  document.addEventListener("change", function (e) {
+    if (e.target.matches && e.target.matches(sel)) {
+      update();
+    }
+  });
+
+  // 表头全选事件（header 是固定元素，直接绑定）
   if (header) {
     header.addEventListener("change", function () {
       var enabled = _enabled(_checkboxes());
       enabled.forEach(function (cb) { cb.checked = header.checked; });
       update();
-    });
-  }
-
-  // 行 checkbox 事件（事件委托：监听 tbody 或列表容器）
-  // 需要调用方在渲染后确保 checkbox 有 onchange
-  // 这里提供一个便捷的绑定方法
-  function _bindCheckboxes() {
-    _checkboxes().forEach(function (cb) {
-      if (!cb._bulkBound) {
-        cb.addEventListener("change", update);
-        cb._bulkBound = true;
-      }
     });
   }
 
@@ -202,10 +199,7 @@ function createBulkSelector(opts) {
       if (header) header.checked = false;
       update();
     },
-    refresh: function () {
-      _bindCheckboxes();
-      update();
-    },
+    refresh: update,
     update: update,
   };
 }
