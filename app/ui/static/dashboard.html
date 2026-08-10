@@ -9,20 +9,17 @@
   /* 页面局部样式：通用组件全部来自 ui.css */
   .form-actions { margin-top: 14px; text-align: right; }
   .form-hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
-  /* 路径下方完整展示：input 单行不折行，长路径只能横向滚动看不到末尾。
-     这里把当前路径以等宽字体折行显示在 input 下方，永远可见。 */
+  /* 路径辅助提示：input 拉到接近卡片全宽后已能看清绝大多数路径。
+     灰色小字一行仅在路径极长仍溢出时展示，hover title 仍可见完整路径。 */
   .path-display {
-    margin-top: 4px;
-    padding: 4px 8px;
-    background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 4px;
+    margin-top: 3px;
     font-family: ui-monospace, Menlo, Consolas, monospace;
-    font-size: 12px;
-    line-height: 1.5;
-    color: #374151;
-    word-break: break-all;
-    white-space: pre-wrap;
+    font-size: 11px;
+    line-height: 1.4;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .col-actions { white-space: nowrap; }
   .col-actions .btn { margin-right: 6px; }
@@ -75,17 +72,17 @@
     </div>
     <div class="field">
       <label for="f-upstream">上游工厂文件夹</label>
-      <div style="display:flex;gap:4px">
-        <input id="f-upstream" type="text" placeholder="加载默认配置中…" style="flex:1">
-        <button type="button" onclick="openFileBrowser('f-upstream','dir')" title="浏览" style="padding:4px 10px;cursor:pointer">📁</button>
+      <div style="display:flex;gap:4px;align-items:center">
+        <input id="f-upstream" type="text" placeholder="加载默认配置中…" style="flex:1;min-width:0">
+        <button type="button" onclick="openFileBrowser('f-upstream','dir')" title="浏览" style="padding:3px 8px;cursor:pointer;flex-shrink:0">📁</button>
       </div>
       <div id="f-upstream-display" class="path-display" style="display:none"></div>
     </div>
     <div class="field">
       <label for="f-downstream">下游装箱表</label>
-      <div style="display:flex;gap:4px">
-        <input id="f-downstream" type="text" placeholder="加载默认配置中…" style="flex:1">
-        <button type="button" onclick="openFileBrowser('f-downstream','file','xlsx,xls')" title="浏览" style="padding:4px 10px;cursor:pointer">📄</button>
+      <div style="display:flex;gap:4px;align-items:center">
+        <input id="f-downstream" type="text" placeholder="加载默认配置中…" style="flex:1;min-width:0">
+        <button type="button" onclick="openFileBrowser('f-downstream','file','xlsx,xls')" title="浏览" style="padding:3px 8px;cursor:pointer;flex-shrink:0">📄</button>
       </div>
       <div id="f-downstream-display" class="path-display" style="display:none"></div>
     </div>
