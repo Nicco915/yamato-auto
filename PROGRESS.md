@@ -1,6 +1,6 @@
 # 供应链单证自动化 — 项目进度总览
 
-> 最后更新：2026-08-04（调度 Agent React 引擎迁移，见 6.17 节）
+> 最后更新：2026-08-10（Session 管理：对话持久化 + 左侧会话列表，见 6.18 节）
 > 设计文档：`../agent设计/`（第一/二/三阶段、api接口以及异步机制、人工审核界面设计、提取agent背景prompt）
 
 ## 1. 项目目标
@@ -39,6 +39,7 @@
 | 调度 Agent SSE 流式 | ✅ 完成 | on_progress 回调穿透 loop→handle_message→SSE 端点，chat.html 流式消费 + 实时工具进度气泡；原 /chat 端点保留并存；未补专测（见第 6.10 节） |
 | 全链路日志体系 | ✅ 完成 | 三 handler 中央配置 + 批次/工厂关联 + LLM 调用可观测 + 路由决策留痕，7 测试套全绿（见第 6.11 节） |
 | 后台预提取：审核不阻塞识别 | ✅ 完成 | 图首次 interrupt 后 daemon 线程逐个预提取剩余工厂，Node3 缓存命中短路跳过 LLM（见第 6.12 节） |
+| Session 管理：对话持久化 + 会话列表 | ✅ 完成 | DB 落库 3 新表（chat_sessions/messages/tool_history）+ 5 CRUD 端点 + UI sidebar + 重启恢复 + pending_action 持久化，10+1 端到端验证通过（见第 6.18 节） |
 
 ## 4. 提取引擎（app/extraction/）
 
@@ -914,6 +915,103 @@ confirm→execute_confirmed（TTL + 三道防线）、pending_action
 **后续待办**：平行运行观察 `dispatcher.log` 1-2 周 → 删 legacy
 （triage.py、run_dispatch、槽位字段、execute_confirmed 移 confirm.py）
 → 更新 CLAUDE.md。
+
+## 6.18 Session 管理：对话持久化 + 左侧会话列表（2026-08-10 完成，分支 feature/session-management，worktree session-management 开发，5 commit 合入 main）
+
+**动机**：原调度 Agent 对话存在进程内 dict（2h TTL，重启即丢），前端 localStorage 只存单个 `sessionId`，无会话列表、无切换、无删除。操作员关浏览器或重启后端，上下文全没。且 `agent_chat.py` 的"对话式改路径"功能已全量并入 dispatcher 的 `set_paths` Tool，可废弃。
+
+**目标**：和 ChatGPT/Claude 一样的左侧会话列表 UI，可创建、切换、删除、重命名、pin 批次；对话历史落 DB 跨重启持久；一个 session 可选关联一个批次（`pinned_thread_id`）。
+
+### 数据模型（3 张新表，进 master.db）
+
+- **`chat_sessions`**：`session_id` (PK) / `title` / `pinned_thread_id` / `pending_action_json`（待确认操作信封）/ `created_at` / `updated_at`
+- **`chat_messages`**：`id` / `session_id` (FK → CASCADE) / `role` (user/assistant) / `content` / `ts`
+- **`chat_tool_history`**：`id` / `session_id` (FK → CASCADE) / `tool` / `args_summary` / `result_summary` / `confirmed` (NULL/0/1) / `ts`
+
+**索引**：`chat_sessions(updated_at DESC)`（sidebar 排序）；`chat_messages(session_id, ts)` 复合；`chat_tool_history(session_id, ts)` 复合。`pending_action` 嵌在 `chat_sessions` 行里（同一时刻最多一个，session 删则 pending 清，不单独建表）。
+
+### Hydration 策略（内存 ↔ DB 桥接）
+
+**写穿（write-through）**：`record_turn()` / `record_tool()` / `persist_pending()` 内存操作后同步写 DB，DB 失败只打 warning 不阻塞（记忆是辅助设施）。
+
+**读路径**：请求进来（带 `session_id`）→ 命中进程内 `DispatcherSession` 则直接用 → 内存 miss 时调 `_hydrate_from_db()` 从 DB 恢复 history + tool_history + pending_action → 灌入 `DispatcherSession` 存入内存 dict（后续请求命中内存，TTL 仍 2h 作为 LRU）。
+
+**内存 TTL 不丢数据**：过期清理只从 dict 移除，DB 数据不受影响，下次请求再 hydrate 回来。
+
+**`_HISTORY_MAX_TURNS`** 10 → 30（近场窗口，发给 LLM 的轮数），DB 无限存。
+
+**pending_action 持久化时机**：影子写工具生成确认卡时 → 内存 + DB 双写；`confirm()` / 拒绝 / 过期 → 内存 + DB 双清；**重启恢复**：hydrate 时检查 `created_at`，陈旧则清 DB 并返回 None。
+
+**软挂起不持久化**：`soft_pending` / `current_slots` / `pending_file_selection` 是短命的单轮状态，重启丢可接受（操作员重新说一遍即可），不落 DB。
+
+### API 端点（5 新增 + 1 改造）
+
+```
+GET    /api/v1/dispatcher/sessions          → list_sessions()   （sidebar 数据源）
+POST   /api/v1/dispatcher/sessions          → create_session()  （body: {title, pinned_thread_id}）
+GET    /api/v1/dispatcher/sessions/{id}     → get_session()     （含 messages + tool_history + pending_action）
+PATCH  /api/v1/dispatcher/sessions/{id}     → update_session()  （改 title / pinned_thread_id）
+DELETE /api/v1/dispatcher/sessions/{id}     → delete_session()  （cascade 清子表 + 清内存 dict）
+GET    /api/v1/dispatcher/history           → 改造：内存 peek 优先，miss 则 DB 兜底（陈旧 pending 自动清）
+```
+
+**保留不变**：`POST /dispatcher/chat`、`POST /dispatcher/chat/stream`、`GET /dispatcher/last_operation`。
+
+**废弃**：`POST /api/v1/agent/chat`（文件顶部加 DEPRECATED docstring，路由保留作为兼容入口）。
+
+### UI sidebar 改造（chat.html）
+
+- 两栏 flex 布局：左侧 240px sticky `#session-sidebar`，右侧 `.chat-main` 填满剩余（去掉原 `max-width: 860px` 对主区的限制）
+- sidebar 顶部 `+ 新会话` 按钮（调 `POST /sessions`，服务端生成 UUID）
+- 会话列表按 `updated_at desc`，活跃项高亮；hover 显示 `⋯` 菜单
+- `⋯` 菜单：重命名 / Pin 批次 / 删除（确认弹窗）
+- 点击会话项 → `switchSession()` → 切 `sessionId` + 重载 history
+- `loadHistory()` 改造：优先调 `GET /sessions/{id}`（完整数据），404 降级旧 `/history` 接口
+- `fmtTime(ts)`：Unix timestamp → "刚刚 / 3分钟前 / 2小时前 / N天前"
+
+### 关键技术点
+
+- `DispatcherSession.__init__` 加 `session_id: str | None` 参数，`__slots__` 同步扩；临时 session（不持久化）传 None
+- `_ensure_session_row(session_id)` 新建会话时插行（锁外执行，避免持锁访 DB）
+- `_hydrate_from_db` 内 pending_action 陈旧清理：`time.time() - action["created_at"] > ACTION_TTL_SEC` 则置 NULL 并 UPDATE DB
+- DB 写操作全 try/except，失败只 warning 不抛（记忆辅助设施铁律）
+- `clear_pending()` 内部调 `persist_pending()`（此时 `pending_action` 已 None，写 NULL）
+
+### 测试
+
+端到端验证（真实 qwen + FastAPI，worktree 独立跑）：
+1. ✅ 创建会话 → POST /sessions 返回 UUID
+2. ✅ 发消息 → chat 响应 + messages 自动落 DB
+3. ✅ GET /sessions/{id} 返回 messages 历史
+4. ✅ PATCH 重命名 + pin → 列表反映
+5. ✅ DELETE → 列表减 1
+6. ✅ Legacy /history 接口兜底可用
+7. ✅ **重启持久化**：重启后 list/detail/messages 全在
+8. ✅ **Hydration 续聊**：重启后问"记得刚才说了什么吗"，Agent 正确回忆
+9. ✅ UI chat.html 加载含 sidebar 关键元素
+
+### 文件改动统计
+
+```
+ app/agent_chat.py          |   5 +    （DEPRECATED docstring）
+ app/api/main.py            | 280 ++   （5 端点 + history 改造）
+ app/db/models.py           |  80 ++   （3 新 ORM 模型 + 索引）
+ app/dispatcher/lc_tools.py |   1 +    （persist_pending 挂钩）
+ app/dispatcher/loop.py     |   1 +    （persist_pending 挂钩）
+ app/dispatcher/sessions.py | 186 ++   （hydration + write-through）
+ app/ui/static/chat.html    | 355 ++   （sidebar + CRUD + 切换）
+ 7 files changed, 846 insertions(+), 62 deletions(-)
+```
+
+### Commit 列表（5 个）
+
+```
+32a6178 feat(ui): add session sidebar with CRUD + switch + pin
+2da0845 feat(api): add session CRUD endpoints + DB-backed history fallback
+6cdab0a feat(dispatcher): persist session history/tool_history/pending_action to DB (write-through)
+99d6ceb feat(db): add ChatSession/ChatMessage/ChatToolHistory ORM models for session persistence
+32fdf48 chore: mark agent_chat.py as DEPRECATED (merged into dispatcher set_paths)
+```
 
 ## 7. 关键设计决策记录
 
