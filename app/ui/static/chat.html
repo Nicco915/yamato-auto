@@ -135,6 +135,18 @@
   .session-menu-popup button.danger {
     color: #dc2626;
   }
+  .session-group-label {
+    padding: 10px 12px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #9ca3af;
+    letter-spacing: 0.05em;
+  }
+  .session-pinned-section {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+    margin-bottom: 4px;
+  }
   .info-bar {
     background: #f3f4f6;
     color: #4b5563;
@@ -1223,6 +1235,53 @@ $("btn-new-session").onclick = async () => {
 };
 
 /* ================= 会话列表管理 ================= */
+function groupByDate(sessions) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 86400000);
+  const weekAgo = new Date(today.getTime() - 7 * 86400000);
+
+  const groups = { "今天": [], "昨天": [], "本周": [], "更早": [] };
+  sessions.forEach(s => {
+    if (!s.updated_at) return;
+    const d = new Date(s.updated_at * 1000);
+    if (d >= today) groups["今天"].push(s);
+    else if (d >= yesterday) groups["昨天"].push(s);
+    else if (d >= weekAgo) groups["本周"].push(s);
+    else groups["更早"].push(s);
+  });
+  return groups;
+}
+
+function renderSessionItem(s, isPinned) {
+  const item = document.createElement("div");
+  item.className = "session-item" + (s.session_id === sessionId ? " active" : "");
+  item.dataset.sessionId = s.session_id;
+
+  const titleText = (isPinned ? "⭐ " : "") + (s.title || "新会话");
+  const pinBadge = s.pinned_thread_id
+    ? '<span class="session-pin" title="关联批次">' + escHtml(s.pinned_thread_id) + '</span>'
+    : "";
+  const statusBadge = s.pinned_thread_id ? batchStatusBadge(s.batch_status) : "";
+
+  item.innerHTML =
+    '<div class="session-title">' + escHtml(titleText) + '</div>' +
+    '<div class="session-meta">' +
+      pinBadge + statusBadge +
+      '<span class="session-time">' + fmtTime(s.updated_at) + '</span>' +
+      '<button class="session-menu-btn">⋯</button>' +
+    '</div>';
+
+  item.onclick = (e) => {
+    if (e.target.classList.contains("session-menu-btn")) {
+      showSessionMenu(s, e);
+    } else {
+      switchSession(s.session_id);
+    }
+  };
+  return item;
+}
+
 async function loadSessionList(q) {
   try {
     const url = q ? "/api/v1/dispatcher/sessions?q=" + encodeURIComponent(q) : "/api/v1/dispatcher/sessions";
@@ -1230,27 +1289,34 @@ async function loadSessionList(q) {
     const sessions = await resp.json();
     const container = $("session-list");
     container.innerHTML = "";
-    sessions.forEach(s => {
-      const item = document.createElement("div");
-      item.className = "session-item" + (s.session_id === sessionId ? " active" : "");
-      item.dataset.sessionId = s.session_id;
-      item.innerHTML =
-        '<div class="session-title">' + escHtml(s.title || "新会话") + '</div>' +
-        '<div class="session-meta">' +
-          (s.pinned_thread_id ? '<span class="session-pin" title="关联批次">' + escHtml(s.pinned_thread_id) + '</span>' : '') +
-          (s.pinned_thread_id ? batchStatusBadge(s.batch_status) : '') +
-          '<span class="session-time">' + fmtTime(s.updated_at) + '</span>' +
-          '<button class="session-menu-btn">⋯</button>' +
-        '</div>';
-      item.onclick = (e) => {
-        if (e.target.classList.contains("session-menu-btn")) {
-          showSessionMenu(s, e);
-        } else {
-          switchSession(s.session_id);
-        }
-      };
-      container.appendChild(item);
-    });
+
+    // 分流：置顶 vs 普通
+    const pinned = sessions.filter(s => s.is_pinned);
+    const normal = sessions.filter(s => !s.is_pinned);
+
+    // 渲染置顶区（独立于日期分组）
+    if (pinned.length > 0) {
+      const section = document.createElement("div");
+      section.className = "session-pinned-section";
+      pinned.forEach(s => section.appendChild(renderSessionItem(s, true)));
+      container.appendChild(section);
+    }
+
+    // 日期分组（无搜索词时启用；有搜索词时不分组，平铺显示）
+    if (!q) {
+      const groups = groupByDate(normal);
+      for (const [label, items] of Object.entries(groups)) {
+        if (items.length === 0) continue;
+        const labelEl = document.createElement("div");
+        labelEl.className = "session-group-label";
+        labelEl.textContent = label;
+        container.appendChild(labelEl);
+        items.forEach(s => container.appendChild(renderSessionItem(s, false)));
+      }
+    } else {
+      // 搜索模式：平铺显示
+      normal.forEach(s => container.appendChild(renderSessionItem(s, false)));
+    }
   } catch (e) {
     console.error("加载会话列表失败", e);
   }
@@ -1322,6 +1388,20 @@ function showSessionMenu(s, e) {
     } catch (err) { toast("重命名失败"); }
   };
 
+  const btnPinTop = document.createElement("button");
+  btnPinTop.textContent = s.is_pinned ? "取消置顶" : "置顶";
+  btnPinTop.onclick = async () => {
+    popup.remove();
+    try {
+      await fetch("/api/v1/dispatcher/sessions/" + s.session_id, {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({is_pinned: !s.is_pinned})
+      });
+      await loadSessionList($("session-search") ? $("session-search").value : "");
+    } catch (err) { toast("置顶操作失败"); }
+  };
+
   const btnPin = document.createElement("button");
   btnPin.textContent = s.pinned_thread_id ? "修改关联批次" : "Pin 批次";
   btnPin.onclick = async () => {
@@ -1347,6 +1427,7 @@ function showSessionMenu(s, e) {
   };
 
   popup.appendChild(btnRename);
+  popup.appendChild(btnPinTop);
   popup.appendChild(btnPin);
   popup.appendChild(btnDelete);
   document.body.appendChild(popup);
