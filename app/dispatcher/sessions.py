@@ -98,6 +98,86 @@ def _ensure_session_row(session_id: str) -> None:
         logger.warning("_ensure_session_row 失败: %s", exc)
 
 
+def _auto_title(session_id: str, msg: str) -> None:
+    """首条用户消息截断 30 字自动生成标题（仅当 DB 中 title 为空时）。"""
+    if not session_id or not msg or not msg.strip():
+        return
+    try:
+        # 截断逻辑：中文按字符，英文按空格边界
+        if len(msg) <= 30:
+            title = msg.strip()
+        elif msg[30] == " " or msg[29] == " ":
+            title = msg[:30].rstrip()
+        else:
+            title = msg[:30].rstrip() + "…"
+
+        with _get_db_session() as db:
+            row = db.get(_ChatSessionOrm, session_id)
+            if row and not row.title:
+                row.title = title
+                row.title_source = "auto"
+                db.commit()
+    except Exception as exc:
+        logger.warning("_auto_title 失败 | session=%s | %s", session_id, exc)
+
+
+def _maybe_llm_title(session_id: str) -> None:
+    """累计消息数达标且标题为 auto 时，调 LLM 生成精炼标题。
+
+    触发条件：DB 中 title_source == "auto"（手动改的跳过）。
+    失败静默（辅助功能，不阻塞主流程）。
+    """
+    if not session_id:
+        return
+    try:
+        with _get_db_session() as db:
+            row = db.get(_ChatSessionOrm, session_id)
+            if not row or row.title_source != "auto":
+                return
+            # 取最近 6 条消息（3 轮对话）拼成摘要
+            msgs = (db.query(_ChatMessageOrm)
+                    .filter(_ChatMessageOrm.session_id == session_id)
+                    .order_by(_ChatMessageOrm.ts.desc())
+                    .limit(6)
+                    .all())
+            msgs = list(reversed(msgs))  # 按 ts 升序
+
+        if len(msgs) < 4:  # 至少 2 轮对话才值得生成标题
+            return
+
+        # 拼装 prompt
+        snippet_parts = []
+        for m in msgs:
+            content = (m.content or "")[:80]
+            role_cn = "用户" if m.role == "user" else "助手"
+            snippet_parts.append(f"[{role_cn}] {content}")
+        snippet = "\n".join(snippet_parts)
+
+        from app.extraction import llm_client
+        prompt = (
+            "用 10 字以内概括以下对话的主题（中文），只输出标题文本，不要引号，不要标点。\n\n"
+            + snippet
+        )
+        summary = llm_client.chat_completion(
+            [{"role": "user", "content": prompt}],
+            source_file="session_title",
+            max_tokens=50,
+            json_mode=False,
+        ).strip()
+
+        if not summary or len(summary) > 20:
+            return  # LLM 返回异常，跳过
+
+        with _get_db_session() as db:
+            row = db.get(_ChatSessionOrm, session_id)
+            if row and row.title_source == "auto":  # 双重检查，防止并发手动改
+                row.title = summary
+                row.title_source = "llm"
+                db.commit()
+    except Exception as exc:
+        logger.warning("_maybe_llm_title 失败 | session=%s | %s", session_id, exc)
+
+
 def _hydrate_from_db(session_id: str) -> DispatcherSession | None:
     """从 DB 加载会话（内存 miss 时兜底）。
 
@@ -232,6 +312,13 @@ def record_turn(session: DispatcherSession, user_msg: str, agent_msg: str) -> No
                 db.commit()
         except Exception as exc:  # noqa: BLE001 DB 失败不阻塞主流程
             logger.warning("record_turn DB 写穿失败: %s", exc)
+    # 自动标题：首条用户消息截断生成（异步，不阻塞主流程已无法——
+    # record_turn 本身是同步的，_auto_title 内部 try/except 兜底）
+    if session.session_id and user_msg:
+        _auto_title(session.session_id, user_msg)
+    # LLM 摘要标题：累计 4 条消息（2 轮对话）后尝试升级 auto → llm
+    if session.session_id:
+        _maybe_llm_title(session.session_id)
 
 
 def record_tool(session: DispatcherSession, tool: str, args_summary: str,

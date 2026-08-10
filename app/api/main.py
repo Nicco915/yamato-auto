@@ -535,24 +535,45 @@ class UpdateSessionRequest(BaseModel):
     """更新会话请求体（仅传需要改的字段）。"""
     title: str | None = None
     pinned_thread_id: str | None = None
+    is_pinned: bool | None = None  # 置顶标记
 
 
 @app.get("/api/v1/dispatcher/sessions")
-async def list_dispatcher_sessions():
-    """列出所有会话，按 updated_at DESC 排序（左侧 sidebar 数据源）。"""
+async def list_dispatcher_sessions(q: str | None = None):
+    """列出所有会话，按 is_pinned DESC + updated_at DESC 排序（左侧 sidebar 数据源）。
+
+    支持按标题模糊搜索：q=关键词 过滤 title ILIKE %关键词%。
+    对每个有 pinned_thread_id 的会话，额外批量查询批次状态（batch_status）。
+    """
     try:
         from app.db.models import ChatSession as _ChatSessionOrm
         from app.db.session import get_session as _get_db_session
 
         with _get_db_session() as db:
-            rows = (db.query(_ChatSessionOrm)
-                    .order_by(_ChatSessionOrm.updated_at.desc())
-                    .all())
+            query = db.query(_ChatSessionOrm)
+            if q and q.strip():
+                query = query.filter(_ChatSessionOrm.title.ilike(f"%{q.strip()}%"))
+            rows = query.order_by(_ChatSessionOrm.is_pinned.desc(),
+                                  _ChatSessionOrm.updated_at.desc()).all()
+
+            # 批量查询批次状态（针对有 pinned_thread_id 的 session）
+            pinned_ids = {r.pinned_thread_id for r in rows if r.pinned_thread_id}
+            batch_statuses: dict[str, str] = {}
+            for tid in pinned_ids:
+                try:
+                    summary = service.get_batch_summary(tid)
+                    batch_statuses[tid] = summary.get("status", "unknown")
+                except Exception:
+                    batch_statuses[tid] = "unknown"
+
             return [
                 {
                     "session_id": r.session_id,
                     "title": r.title,
                     "pinned_thread_id": r.pinned_thread_id,
+                    "is_pinned": r.is_pinned,
+                    "title_source": r.title_source,
+                    "batch_status": batch_statuses.get(r.pinned_thread_id) if r.pinned_thread_id else None,
                     "updated_at": r.updated_at.timestamp() if r.updated_at else None,
                     "created_at": r.created_at.timestamp() if r.created_at else None,
                     "has_pending": r.pending_action_json is not None,
@@ -586,6 +607,8 @@ async def create_dispatcher_session(request: CreateSessionRequest):
                 "session_id": row.session_id,
                 "title": row.title,
                 "pinned_thread_id": row.pinned_thread_id,
+                "is_pinned": row.is_pinned,
+                "title_source": row.title_source,
                 "updated_at": row.updated_at.timestamp(),
                 "created_at": row.created_at.timestamp(),
             }
@@ -627,6 +650,8 @@ async def get_dispatcher_session(session_id: str):
                 "session_id": row.session_id,
                 "title": row.title,
                 "pinned_thread_id": row.pinned_thread_id,
+                "is_pinned": row.is_pinned,
+                "title_source": row.title_source,
                 "messages": [
                     {"role": m.role, "content": m.content, "ts": m.ts}
                     for m in messages
@@ -660,8 +685,11 @@ async def update_dispatcher_session(session_id: str, request: UpdateSessionReque
 
             if request.title is not None:
                 row.title = request.title
+                row.title_source = "manual"  # 手动改的标记为 manual
             if request.pinned_thread_id is not None:
                 row.pinned_thread_id = request.pinned_thread_id
+            if request.is_pinned is not None:
+                row.is_pinned = request.is_pinned
             db.commit()
             db.refresh(row)
 
@@ -669,6 +697,7 @@ async def update_dispatcher_session(session_id: str, request: UpdateSessionReque
                 "session_id": row.session_id,
                 "title": row.title,
                 "pinned_thread_id": row.pinned_thread_id,
+                "is_pinned": row.is_pinned,
             }
     except HTTPException:
         raise

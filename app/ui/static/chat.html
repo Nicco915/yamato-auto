@@ -98,6 +98,17 @@
   .session-menu-btn:hover {
     color: #374151;
   }
+  .batch-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .badge-running { background: #dbeafe; color: #1e40af; }
+  .badge-pending { background: #fef3c7; color: #92400e; }
+  .badge-done { background: #d1fae5; color: #065f46; }
+  .badge-error { background: #fee2e2; color: #991b1b; }
+  .badge-unknown { background: #f3f4f6; color: #6b7280; }
   .session-menu-popup {
     position: fixed;
     background: #fff;
@@ -123,6 +134,18 @@
   }
   .session-menu-popup button.danger {
     color: #dc2626;
+  }
+  .session-group-label {
+    padding: 10px 12px 4px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #9ca3af;
+    letter-spacing: 0.05em;
+  }
+  .session-pinned-section {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 4px;
+    margin-bottom: 4px;
   }
   .info-bar {
     background: #f3f4f6;
@@ -284,6 +307,8 @@
 <!-- 左侧会话列表 sidebar -->
 <aside id="session-sidebar">
   <div class="sidebar-header">
+    <input type="text" id="session-search" placeholder="搜索会话…"
+           style="width:100%;box-sizing:border-box;padding:6px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;margin-bottom:6px">
     <button id="btn-new-session" class="btn btn-primary" style="width:100%">+ 新会话</button>
   </div>
   <div id="session-list" style="flex:1; overflow-y:auto; padding:8px">
@@ -442,6 +467,19 @@ function fmtTime(ts) {
   if (diff < 3600) return Math.floor(diff / 60) + "分钟前";
   if (diff < 86400) return Math.floor(diff / 3600) + "小时前";
   return Math.floor(diff / 86400) + "天前";
+}
+
+function batchStatusBadge(status) {
+  if (!status) return "";
+  const map = {
+    running: { label: "运行中", cls: "badge-running" },
+    pending_review: { label: "待审核", cls: "badge-pending" },
+    completed: { label: "已完成", cls: "badge-done" },
+    error: { label: "异常", cls: "badge-error" },
+    unknown: { label: "未知", cls: "badge-unknown" },
+  };
+  const s = map[status] || map.unknown;
+  return '<span class="batch-badge ' + s.cls + '">' + s.label + '</span>';
 }
 
 /* ================= 发送消息（SSE 流式） ================= */
@@ -1188,7 +1226,7 @@ $("btn-new-session").onclick = async () => {
     localStorage.setItem("yamato_chat_sid", sessionId);
     history.length = 0;
     $("msgs").innerHTML = "";
-    await loadSessionList();
+    await loadSessionList($("session-search") ? $("session-search").value : "");
     addAgentText("已开始新会话。");
     $("inp").focus();
   } catch (e) {
@@ -1197,36 +1235,98 @@ $("btn-new-session").onclick = async () => {
 };
 
 /* ================= 会话列表管理 ================= */
-async function loadSessionList() {
+function groupByDate(sessions) {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today.getTime() - 86400000);
+  const weekAgo = new Date(today.getTime() - 7 * 86400000);
+
+  const groups = { "今天": [], "昨天": [], "本周": [], "更早": [] };
+  sessions.forEach(s => {
+    if (!s.updated_at) return;
+    const d = new Date(s.updated_at * 1000);
+    if (d >= today) groups["今天"].push(s);
+    else if (d >= yesterday) groups["昨天"].push(s);
+    else if (d >= weekAgo) groups["本周"].push(s);
+    else groups["更早"].push(s);
+  });
+  return groups;
+}
+
+function renderSessionItem(s, isPinned) {
+  const item = document.createElement("div");
+  item.className = "session-item" + (s.session_id === sessionId ? " active" : "");
+  item.dataset.sessionId = s.session_id;
+
+  const titleText = (isPinned ? "⭐ " : "") + (s.title || "新会话");
+  const pinBadge = s.pinned_thread_id
+    ? '<span class="session-pin" title="关联批次">' + escHtml(s.pinned_thread_id) + '</span>'
+    : "";
+  const statusBadge = s.pinned_thread_id ? batchStatusBadge(s.batch_status) : "";
+
+  item.innerHTML =
+    '<div class="session-title">' + escHtml(titleText) + '</div>' +
+    '<div class="session-meta">' +
+      pinBadge + statusBadge +
+      '<span class="session-time">' + fmtTime(s.updated_at) + '</span>' +
+      '<button class="session-menu-btn">⋯</button>' +
+    '</div>';
+
+  item.onclick = (e) => {
+    if (e.target.classList.contains("session-menu-btn")) {
+      showSessionMenu(s, e);
+    } else {
+      switchSession(s.session_id);
+    }
+  };
+  return item;
+}
+
+async function loadSessionList(q) {
   try {
-    const resp = await fetch("/api/v1/dispatcher/sessions");
+    const url = q ? "/api/v1/dispatcher/sessions?q=" + encodeURIComponent(q) : "/api/v1/dispatcher/sessions";
+    const resp = await fetch(url);
     const sessions = await resp.json();
     const container = $("session-list");
     container.innerHTML = "";
-    sessions.forEach(s => {
-      const item = document.createElement("div");
-      item.className = "session-item" + (s.session_id === sessionId ? " active" : "");
-      item.dataset.sessionId = s.session_id;
-      item.innerHTML =
-        '<div class="session-title">' + escHtml(s.title || "新会话") + '</div>' +
-        '<div class="session-meta">' +
-          (s.pinned_thread_id ? '<span class="session-pin" title="关联批次">' + escHtml(s.pinned_thread_id) + '</span>' : '') +
-          '<span class="session-time">' + fmtTime(s.updated_at) + '</span>' +
-          '<button class="session-menu-btn">⋯</button>' +
-        '</div>';
-      item.onclick = (e) => {
-        if (e.target.classList.contains("session-menu-btn")) {
-          showSessionMenu(s, e);
-        } else {
-          switchSession(s.session_id);
-        }
-      };
-      container.appendChild(item);
-    });
+
+    // 分流：置顶 vs 普通
+    const pinned = sessions.filter(s => s.is_pinned);
+    const normal = sessions.filter(s => !s.is_pinned);
+
+    // 渲染置顶区（独立于日期分组）
+    if (pinned.length > 0) {
+      const section = document.createElement("div");
+      section.className = "session-pinned-section";
+      pinned.forEach(s => section.appendChild(renderSessionItem(s, true)));
+      container.appendChild(section);
+    }
+
+    // 日期分组（无搜索词时启用；有搜索词时不分组，平铺显示）
+    if (!q) {
+      const groups = groupByDate(normal);
+      for (const [label, items] of Object.entries(groups)) {
+        if (items.length === 0) continue;
+        const labelEl = document.createElement("div");
+        labelEl.className = "session-group-label";
+        labelEl.textContent = label;
+        container.appendChild(labelEl);
+        items.forEach(s => container.appendChild(renderSessionItem(s, false)));
+      }
+    } else {
+      // 搜索模式：平铺显示
+      normal.forEach(s => container.appendChild(renderSessionItem(s, false)));
+    }
   } catch (e) {
     console.error("加载会话列表失败", e);
   }
 }
+
+let _searchTimer = null;
+$("session-search").addEventListener("input", () => {
+  clearTimeout(_searchTimer);
+  _searchTimer = setTimeout(() => loadSessionList($("session-search").value), 300);
+});
 
 async function switchSession(sid) {
   if (sid === sessionId) return;
@@ -1236,7 +1336,7 @@ async function switchSession(sid) {
   history.length = 0;
   $("msgs").innerHTML = "";
   await loadHistory();
-  await loadSessionList();
+  await loadSessionList($("session-search") ? $("session-search").value : "");
   resumeBatchPolling();
 }
 
@@ -1253,7 +1353,7 @@ async function deleteSession(sid) {
         $("btn-new-session").click();
       }
     } else {
-      await loadSessionList();
+      await loadSessionList($("session-search") ? $("session-search").value : "");
     }
   } catch (e) {
     toast("删除失败");
@@ -1284,8 +1384,22 @@ function showSessionMenu(s, e) {
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({title: newTitle})
       });
-      await loadSessionList();
+      await loadSessionList($("session-search") ? $("session-search").value : "");
     } catch (err) { toast("重命名失败"); }
+  };
+
+  const btnPinTop = document.createElement("button");
+  btnPinTop.textContent = s.is_pinned ? "取消置顶" : "置顶";
+  btnPinTop.onclick = async () => {
+    popup.remove();
+    try {
+      await fetch("/api/v1/dispatcher/sessions/" + s.session_id, {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({is_pinned: !s.is_pinned})
+      });
+      await loadSessionList($("session-search") ? $("session-search").value : "");
+    } catch (err) { toast("置顶操作失败"); }
   };
 
   const btnPin = document.createElement("button");
@@ -1300,7 +1414,7 @@ function showSessionMenu(s, e) {
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({pinned_thread_id: threadId || null})
       });
-      await loadSessionList();
+      await loadSessionList($("session-search") ? $("session-search").value : "");
     } catch (err) { toast("Pin 批次失败"); }
   };
 
@@ -1313,6 +1427,7 @@ function showSessionMenu(s, e) {
   };
 
   popup.appendChild(btnRename);
+  popup.appendChild(btnPinTop);
   popup.appendChild(btnPin);
   popup.appendChild(btnDelete);
   document.body.appendChild(popup);
@@ -1468,7 +1583,7 @@ async function loadHistory() {
 
 /* ================= 初始化 ================= */
 async function initChat() {
-  await loadSessionList();
+  await loadSessionList($("session-search") ? $("session-search").value : "");
   if (sessionId) {
     await loadHistory();
     resumeBatchPolling();

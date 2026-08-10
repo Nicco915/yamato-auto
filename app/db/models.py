@@ -233,6 +233,9 @@ class ChatSession(Base):
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     pinned_thread_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     pending_action_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    title_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # title_source 取值：None=未设 / "auto"=截断自动 / "llm"=LLM摘要 / "manual"=手动
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
