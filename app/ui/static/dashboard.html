@@ -87,9 +87,14 @@
         <button class="btn btn-ghost btn-sm refresh-btn" onclick="refreshList(true)">刷新</button>
       </span>
     </h2>
+    <div class="bulk-toolbar">
+      <button id="batch-bulk-del" class="bulk-btn" disabled onclick="openBulkDeleteBatchModal()">🗑 批量删除</button>
+      <span id="batch-bulk-count" class="bulk-count"></span>
+    </div>
     <table class="table">
       <thead>
         <tr>
+          <th class="col-check"><input type="checkbox" id="batch-check-all" title="全选/取消全选"></th>
           <th>批次号</th>
           <th>状态</th>
           <th>当前工厂</th>
@@ -99,7 +104,7 @@
         </tr>
       </thead>
       <tbody id="batch-tbody">
-        <tr><td colspan="6" class="empty">加载中…</td></tr>
+        <tr><td colspan="7" class="empty">加载中…</td></tr>
       </tbody>
     </table>
   </div>
@@ -145,6 +150,16 @@
 renderTopbar("dashboard");
 loadDefaults();
 refreshList(true);
+// 初始化批量选择管理器
+window._batchBulkSel = createBulkSelector({
+  checkboxSel: ".batch-row-check",
+  headerCheckId: "batch-check-all",
+  btnId: "batch-bulk-del",
+  countId: "batch-bulk-count",
+  getLabel: function (cb) {
+    return cb.value + "（" + (cb.dataset.status || "未知") + "）";
+  },
+});
 setInterval(autoRefresh, 10000);
 /* Esc 关闭弹窗 */
 document.addEventListener("keydown", (e) => {
@@ -152,6 +167,8 @@ document.addEventListener("keydown", (e) => {
   if ($("delete-mask").classList.contains("show")) closeDeleteModal();
   if ($("precheck-mask").classList.contains("show")) closePrecheckModal();
   if (document.getElementById('file-browser-modal').style.display === 'flex') closeFileBrowser();
+  var bulkMask = document.getElementById("bulk-delete-mask");
+  if (bulkMask && bulkMask.classList.contains("show")) closeBulkDeleteModal();
 });
 
 /* ================= 默认路径预填 ================= */
@@ -335,13 +352,19 @@ function rowActions(b) {
 function renderRows(batches) {
   const tbody = $("batch-tbody");
   if (!batches || batches.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty">暂无批次，请在上方发起</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">暂无批次，请在上方发起</td></tr>';
     return;
   }
   tbody.innerHTML = batches
     .map(
       (b) =>
         "<tr>" +
+        '<td class="col-check">' +
+        '<input type="checkbox" class="batch-row-check" value="' + esc(b.thread_id) + '"' +
+        (b.status === "running" ? ' disabled title="运行中的批次不能删除"' : '') +
+        ' data-status="' + esc(b.status || "") + '"' +
+        '>' +
+        '</td>' +
         "<td><strong>" + esc(b.thread_id) + "</strong></td>" +
         "<td>" + statusBadge(b.status) + "</td>" +
         "<td>" + (b.current_factory ? esc(b.current_factory) : "-") + "</td>" +
@@ -351,6 +374,8 @@ function renderRows(batches) {
         "</tr>"
     )
     .join("");
+  // 刷新后重新绑定批量选择
+  if (window._batchBulkSel) window._batchBulkSel.refresh();
 }
 
 /* manual=true 时失败弹 toast；静默刷新失败只记 console */
@@ -430,6 +455,30 @@ async function confirmDelete() {
       btn.textContent = "确认删除";
     }
   }
+}
+
+function openBulkDeleteBatchModal() {
+  if (!window._batchBulkSel) return;
+  var labels = window._batchBulkSel.getLabels();
+  if (labels.length === 0) return;
+  openBulkDeleteModal(labels, "批次", async function () {
+    var ids = window._batchBulkSel.getSelected();
+    try {
+      var result = await api("/api/v1/batches/batch-delete", {
+        method: "POST",
+        body: { thread_ids: ids },
+      });
+      var msg = "成功删除 " + result.deleted.length + " 条";
+      if (result.failed && result.failed.length > 0) {
+        msg += "，" + result.failed.length + " 条失败";
+      }
+      toast(msg, 4000);
+      window._batchBulkSel.clear();
+      refreshList(false);
+    } catch (e) {
+      toast("批量删除失败：" + e.message, 4000);
+    }
+  });
 }
 
 /* ================= 文件浏览器 ================= */

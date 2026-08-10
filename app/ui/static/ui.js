@@ -123,3 +123,154 @@ function fmtTime(v) {
     pad(d.getMinutes())
   );
 }
+
+/* ========== 批量选择管理器 ========== */
+
+/**
+ * 通用多选管理器（工厂函数）
+ * @param {Object} opts
+ * @param {string} opts.checkboxSel  - 行 checkbox 的 CSS 选择器（如 '.row-check'）
+ * @param {string} opts.headerCheckId - 表头全选 checkbox 的 id（可选）
+ * @param {string} opts.btnId         - 批量删除按钮 id
+ * @param {string} opts.countId       - 选中计数显示 id
+ * @param {Function} opts.getLabel    - (checkboxEl) => 用于弹窗摘要的文本
+ * @param {Function} [opts.onChange]  - 选中变化时的回调（可选）
+ * @returns {{ getSelected: () => string[], clear: () => void, refresh: () => void }}
+ */
+function createBulkSelector(opts) {
+  var header = opts.headerCheckId ? document.getElementById(opts.headerCheckId) : null;
+  var btn = document.getElementById(opts.btnId);
+  var countEl = document.getElementById(opts.countId);
+
+  function _checkboxes() {
+    return Array.from(document.querySelectorAll(opts.checkboxSel));
+  }
+
+  function _enabled(boxes) {
+    return boxes.filter(function (cb) { return !cb.disabled; });
+  }
+
+  function update() {
+    var boxes = _checkboxes();
+    var enabled = _enabled(boxes);
+    var checked = enabled.filter(function (cb) { return cb.checked; });
+    // 更新计数
+    if (countEl) countEl.textContent = checked.length > 0 ? "已选 " + checked.length + " 项" : "";
+    // 更新按钮状态
+    if (btn) {
+      btn.disabled = checked.length === 0;
+      if (checked.length > 0) { btn.classList.add("active"); } else { btn.classList.remove("active"); }
+    }
+    // 更新表头全选状态
+    if (header) {
+      header.checked = enabled.length > 0 && checked.length === enabled.length;
+      header.indeterminate = checked.length > 0 && checked.length < enabled.length;
+    }
+    if (opts.onChange) opts.onChange(checked);
+  }
+
+  // 表头全选事件
+  if (header) {
+    header.addEventListener("change", function () {
+      var enabled = _enabled(_checkboxes());
+      enabled.forEach(function (cb) { cb.checked = header.checked; });
+      update();
+    });
+  }
+
+  // 行 checkbox 事件（事件委托：监听 tbody 或列表容器）
+  // 需要调用方在渲染后确保 checkbox 有 onchange
+  // 这里提供一个便捷的绑定方法
+  function _bindCheckboxes() {
+    _checkboxes().forEach(function (cb) {
+      if (!cb._bulkBound) {
+        cb.addEventListener("change", update);
+        cb._bulkBound = true;
+      }
+    });
+  }
+
+  return {
+    getSelected: function () {
+      return _checkboxes().filter(function (cb) { return cb.checked && !cb.disabled; }).map(function (cb) { return cb.value; });
+    },
+    getLabels: function () {
+      return _checkboxes().filter(function (cb) { return cb.checked && !cb.disabled; }).map(opts.getLabel);
+    },
+    clear: function () {
+      _checkboxes().forEach(function (cb) { cb.checked = false; });
+      if (header) header.checked = false;
+      update();
+    },
+    refresh: function () {
+      _bindCheckboxes();
+      update();
+    },
+    update: update,
+  };
+}
+
+/**
+ * 打开批量删除确认弹窗
+ * @param {string[]} labels   - 待删除项的摘要文本
+ * @param {string} typeLabel  - 数据类型名（"批次"/"产品映射" 等）
+ * @param {Function} onConfirm - async () => Promise<void>
+ */
+function openBulkDeleteModal(labels, typeLabel, onConfirm) {
+  var mask = document.getElementById("bulk-delete-mask");
+  if (!mask) {
+    // 动态创建弹窗（仅创建一次）
+    mask = document.createElement("div");
+    mask.id = "bulk-delete-mask";
+    mask.className = "modal-mask";
+    mask.onclick = function (e) { if (e.target === mask) closeBulkDeleteModal(); };
+    mask.innerHTML =
+      '<div class="modal">' +
+      '<h3 id="bulk-del-title"></h3>' +
+      '<p style="font-size:13px;color:#4b5563;margin:0 0 6px">将删除以下记录（不可恢复）：</p>' +
+      '<ul id="bulk-del-items" class="bulk-del-list"></ul>' +
+      '<ul class="del-list">' +
+      '<li><strong>将保留：</strong>审计记录、工厂会话、输出文件</li>' +
+      '</ul>' +
+      '<div class="modal-actions">' +
+      '<button class="btn" onclick="closeBulkDeleteModal()">取消</button>' +
+      '<button id="bulk-del-confirm-btn" class="btn btn-danger" onclick="_bulkDelConfirm()">确认删除</button>' +
+      '</div>' +
+      '</div>';
+    document.body.appendChild(mask);
+  }
+  document.getElementById("bulk-del-title").textContent = "批量删除 " + labels.length + " 条" + typeLabel + "？";
+  var maxShow = 10;
+  var itemsHtml = labels.slice(0, maxShow).map(function (l) { return "<li>• " + esc(l) + "</li>"; }).join("");
+  if (labels.length > maxShow) {
+    itemsHtml += '<li class="bulk-del-more">…还有 ' + (labels.length - maxShow) + ' 条</li>';
+  }
+  document.getElementById("bulk-del-items").innerHTML = itemsHtml;
+  var btn = document.getElementById("bulk-del-confirm-btn");
+  btn.disabled = false;
+  btn.textContent = "确认删除";
+  // 存储回调
+  window._bulkDelCallback = onConfirm;
+  mask.classList.add("show");
+}
+
+function closeBulkDeleteModal() {
+  var mask = document.getElementById("bulk-delete-mask");
+  if (mask) mask.classList.remove("show");
+  window._bulkDelCallback = null;
+}
+
+async function _bulkDelConfirm() {
+  if (!window._bulkDelCallback) return;
+  var btn = document.getElementById("bulk-del-confirm-btn");
+  btn.disabled = true;
+  btn.textContent = "删除中…";
+  try {
+    await window._bulkDelCallback();
+    closeBulkDeleteModal();
+  } catch (e) {
+    toast("删除失败：" + e.message, 4000);
+    btn.disabled = false;
+    btn.textContent = "确认删除";
+  }
+}

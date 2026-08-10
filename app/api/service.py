@@ -1332,6 +1332,22 @@ def delete_batch(thread_id: str) -> dict[str, Any]:
         }
 
 
+def batch_delete_batches(thread_ids: list[str]) -> dict[str, Any]:
+    """批量删除批次：逐个调用 delete_batch，部分失败不影响其他。
+
+    返回 {deleted: [str], failed: [{id, reason}]}。
+    """
+    deleted: list[str] = []
+    failed: list[dict[str, str]] = []
+    for tid in thread_ids:
+        try:
+            delete_batch(tid)
+            deleted.append(tid)
+        except (ValueError, RuntimeError) as e:
+            failed.append({"id": tid, "reason": str(e)})
+    return {"deleted": deleted, "failed": failed}
+
+
 # ---------------------------------------------------------------------------
 # 重复处理预检（W4b）：sessions 完成态 + 审核落库记录，四档判定工厂是否已处理
 # ---------------------------------------------------------------------------

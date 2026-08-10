@@ -583,3 +583,45 @@ textarea::placeholder { color: #9ca3af; }
 .alias-use-check { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #4b5563; margin-right: 10px; white-space: nowrap; }
 .alias-add-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .alias-add-row input[type="text"] { width: 240px; }
+
+/* ========== 批量选择 / 批量删除 ========== */
+
+/* 表格多选 checkbox 列 */
+.col-check { width: 36px; text-align: center; }
+.col-check input[type="checkbox"] {
+  width: 16px; height: 16px; cursor: pointer;
+  accent-color: var(--primary);
+}
+.col-check input[type="checkbox"]:disabled { cursor: not-allowed; opacity: 0.4; }
+
+/* 批量操作工具栏 */
+.bulk-toolbar {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 4px;
+}
+.bulk-btn {
+  padding: 4px 14px; border-radius: 6px;
+  border: 1px solid var(--border); background: #fff;
+  cursor: pointer; font-size: 13px; font-family: var(--font);
+  color: var(--muted); transition: all .15s;
+}
+.bulk-btn.active { border-color: var(--err); color: var(--err); background: #fef2f2; }
+.bulk-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.bulk-count { font-size: 13px; color: var(--muted); min-width: 60px; }
+
+/* 卡片列表多选 checkbox（品名组、工厂卡片） */
+.card-check {
+  width: 16px; height: 16px; cursor: pointer;
+  accent-color: var(--primary); margin-right: 6px; flex: none;
+}
+.card-check:disabled { cursor: not-allowed; opacity: 0.4; }
+
+/* 批量删除确认弹窗内的待删除列表 */
+.bulk-del-list {
+  max-height: 220px; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px 14px; margin: 10px 0; background: #f9fafb;
+  font-size: 13px; list-style: none;
+}
+.bulk-del-list li { padding: 3px 0; color: #4b5563; }
+.bulk-del-more { color: var(--muted); font-style: italic; padding: 3px 0; }

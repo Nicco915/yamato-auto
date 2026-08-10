@@ -32,6 +32,11 @@ function switchTab(tab) {
         document.getElementById("tab-" + t).className = "port-tab" + (tab === t ? " active" : "");
         document.getElementById("pane-" + t).style.display = tab === t ? "" : "none";
     });
+    // 切换 Tab 时清空所有批量选择
+    ["product", "group", "factory", "sku"].forEach(function (prefix) {
+        var sel = window["_" + prefix + "BulkSel"];
+        if (sel) sel.clear();
+    });
     if (tab === "groups") loadGroups();
     if (tab === "factories") loadFactories();
     if (tab === "skus") loadSkus();
@@ -53,14 +58,15 @@ async function loadProducts() {
     } catch (e) {
         toast("映射列表加载失败：" + e.message, 4000);
         document.getElementById("product-tbody").innerHTML =
-            '<tr><td colspan="8" class="empty">加载失败</td></tr>';
+            '<tr><td colspan="9" class="empty">加载失败</td></tr>';
+        if (window._productBulkSel) window._productBulkSel.clear();
     }
 }
 
 function renderProducts() {
     var tbody = document.getElementById("product-tbody");
     if (!products || products.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty">暂无数据</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="empty">暂无数据</td></tr>';
         return;
     }
     tbody.innerHTML = products.map(function (m) {
@@ -68,6 +74,7 @@ function renderProducts() {
         var sj = m.inspection_required ? '<span class="sj-mark">✓</span>' : "";
         var dash = function (v) { return v ? esc(v) : '<span class="muted">-</span>'; };
         return "<tr" + rowCls + ">"
+            + '<td class="col-check"><input type="checkbox" class="product-row-check" value="' + m.id + '"></td>'
             + "<td><strong>" + esc(m.product_name_cn) + "</strong></td>"
             + "<td class=\"mono\">" + dash(m.hs_code) + "</td>"
             + "<td>" + dash(m.supplier_name) + "</td>"
@@ -80,6 +87,7 @@ function renderProducts() {
             + '<button class="btn btn-sm" onclick="deleteProduct(' + m.id + ')">删除</button>'
             + "</td></tr>";
     }).join("");
+    if (window._productBulkSel) window._productBulkSel.refresh();
 }
 
 function openProductModal(id) {
@@ -170,6 +178,40 @@ async function deleteProduct(id) {
     }
 }
 
+// 产品映射批量选择
+window._productBulkSel = createBulkSelector({
+    checkboxSel: ".product-row-check",
+    headerCheckId: "product-check-all",
+    btnId: "product-bulk-del",
+    countId: "product-bulk-count",
+    getLabel: function (cb) {
+        var id = parseInt(cb.value);
+        var m = products.find(function (x) { return x.id === id; });
+        return m ? (m.product_name_cn + (m.sku_code ? " / " + m.sku_code : "")) : ("id=" + id);
+    },
+});
+
+function openBulkDeleteProductModal() {
+    if (!window._productBulkSel) return;
+    var labels = window._productBulkSel.getLabels();
+    if (labels.length === 0) return;
+    openBulkDeleteModal(labels, "产品映射", async function () {
+        var ids = window._productBulkSel.getSelected().map(function (v) { return parseInt(v); });
+        try {
+            var result = await api("/api/v1/mappings/products/batch-delete", {
+                method: "POST", body: { ids: ids }
+            });
+            var msg = "成功删除 " + result.deleted + " 条";
+            if (result.failed && result.failed.length > 0) msg += "，" + result.failed.length + " 条失败";
+            toast(msg, 4000);
+            window._productBulkSel.clear();
+            loadProducts();
+        } catch (e) {
+            toast("批量删除失败：" + e.message, 4000);
+        }
+    });
+}
+
 /* Excel 批量导入（.xlsx，列：产品|税号|供应商|商检|产品组一|自定义七） */
 async function importProducts(input) {
     var file = input.files && input.files[0];
@@ -232,6 +274,7 @@ function renderGroups() {
         }).join("");
         return '<div class="card group-card">'
             + '<div class="group-card-header">'
+            + '<input type="checkbox" class="card-check group-row-check" value="' + g.id + '">'
             + "<strong>" + esc(g.name) + "</strong>"
             + groupTypeTag(g.group_type)
             + '<span class="muted">源品名：' + esc(g.source_name_cn) + "</span>"
@@ -244,6 +287,7 @@ function renderGroups() {
             + "<tbody>" + rowsHtml + "</tbody></table>"
             + "</div>";
     }).join("");
+    if (window._groupBulkSel) window._groupBulkSel.refresh();
 }
 
 function openGroupModal(id) {
@@ -359,6 +403,39 @@ async function deleteGroup(id) {
     }
 }
 
+// 品名组批量选择
+window._groupBulkSel = createBulkSelector({
+    checkboxSel: ".group-row-check",
+    btnId: "group-bulk-del",
+    countId: "group-bulk-count",
+    getLabel: function (cb) {
+        var id = parseInt(cb.value);
+        var g = groups.find(function (x) { return x.id === id; });
+        return g ? (g.name + "（" + (g.group_type === "set_split" ? "组套拆分" : "配对均分") + "）") : ("id=" + id);
+    },
+});
+
+function openBulkDeleteGroupModal() {
+    if (!window._groupBulkSel) return;
+    var labels = window._groupBulkSel.getLabels();
+    if (labels.length === 0) return;
+    openBulkDeleteModal(labels, "品名组", async function () {
+        var ids = window._groupBulkSel.getSelected().map(function (v) { return parseInt(v); });
+        try {
+            var result = await api("/api/v1/mappings/groups/batch-delete", {
+                method: "POST", body: { ids: ids }
+            });
+            var msg = "成功删除 " + result.deleted + " 条";
+            if (result.failed && result.failed.length > 0) msg += "，" + result.failed.length + " 条失败";
+            toast(msg, 4000);
+            window._groupBulkSel.clear();
+            loadGroups();
+        } catch (e) {
+            toast("批量删除失败：" + e.message, 4000);
+        }
+    });
+}
+
 /* ============================================================
    工厂与别名
    ============================================================ */
@@ -411,6 +488,9 @@ function renderFactories() {
             : '<p class="empty-hint" style="padding:8px 0">暂无别名</p>';
         return '<div class="card">'
             + '<div class="group-card-header">'
+            + '<input type="checkbox" class="card-check factory-row-check" value="' + f.id + '"'
+            + ((f.sku_count || 0) > 0 ? ' disabled title="有 ' + (f.sku_count || 0) + ' 条 SKU 关联，请先清理"' : '')
+            + '>'
             + "<strong>" + esc(f.factory_name) + "</strong>"
             + shortHtml
             + '<label class="toggle-label">商检工厂 '
@@ -431,6 +511,7 @@ function renderFactories() {
             + "</div>"
             + "</div>";
     }).join("");
+    if (window._factoryBulkSel) window._factoryBulkSel.refresh();
 }
 
 function openFactoryModal(id) {
@@ -500,6 +581,43 @@ async function deleteFactory(id) {
     } catch (e) {
         toast("删除失败：" + e.message, 4000);
     }
+}
+
+// 工厂批量选择
+window._factoryBulkSel = createBulkSelector({
+    checkboxSel: ".factory-row-check",
+    btnId: "factory-bulk-del",
+    countId: "factory-bulk-count",
+    getLabel: function (cb) {
+        var id = parseInt(cb.value);
+        var f = findFactory(id);
+        return f ? (f.factory_name + "（SKU " + (f.sku_count || 0) + " 条）") : ("id=" + id);
+    },
+});
+
+function openBulkDeleteFactoryModal() {
+    if (!window._factoryBulkSel) return;
+    var labels = window._factoryBulkSel.getLabels();
+    if (labels.length === 0) return;
+    openBulkDeleteModal(labels, "工厂", async function () {
+        var ids = window._factoryBulkSel.getSelected().map(function (v) { return parseInt(v); });
+        try {
+            var result = await api("/api/v1/mappings/factories/batch-delete", {
+                method: "POST", body: { ids: ids }
+            });
+            var msg = "成功删除 " + result.deleted + " 条";
+            if (result.failed && result.failed.length > 0) {
+                msg += "，" + result.failed.length + " 条失败";
+                toast(msg, 5000);
+            } else {
+                toast(msg, 4000);
+            }
+            window._factoryBulkSel.clear();
+            loadFactories();
+        } catch (e) {
+            toast("批量删除失败：" + e.message, 4000);
+        }
+    });
 }
 
 /* 商检工厂开关：改动前确认（影响后续批次分票判定），取消则还原 */
@@ -624,7 +742,8 @@ async function loadSkus() {
     } catch (e) {
         toast("SKU 主数据加载失败：" + e.message, 4000);
         document.getElementById("sku-tbody").innerHTML =
-            '<tr><td colspan="8" class="empty">加载失败</td></tr>';
+            '<tr><td colspan="9" class="empty">加载失败</td></tr>';
+        if (window._skuBulkSel) window._skuBulkSel.clear();
     }
 }
 
@@ -633,13 +752,14 @@ function renderSkus() {
     document.getElementById("sku-count").textContent =
         skus && skus.length ? "共 " + skus.length + " 条" : "";
     if (!skus || skus.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty">暂无数据</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="9" class="empty">暂无数据</td></tr>';
         return;
     }
     var dash = function (v) { return (v !== null && v !== undefined && v !== "") ? esc(v) : '<span class="muted">-</span>'; };
     tbody.innerHTML = skus.map(function (k) {
         var sj = k.inspection_required ? '<span class="sj-mark">✓</span>' : "";
         return "<tr>"
+            + '<td class="col-check"><input type="checkbox" class="sku-row-check" value="' + k.sku_id + '"></td>'
             + '<td class="mono"><strong>' + esc(k.sku_code) + "</strong></td>"
             + "<td>" + dash(k.name_cn) + "</td>"
             + "<td>" + dash(k.name_en) + "</td>"
@@ -647,9 +767,13 @@ function renderSkus() {
             + "<td>" + sj + "</td>"
             + "<td>" + dash(k.unit_net_weight) + "</td>"
             + "<td>" + dash(k.unit_gross_weight) + "</td>"
-            + '<td class="col-actions"><button class="btn btn-sm" onclick="openSkuModal(' + k.sku_id + ')">编辑</button></td>'
+            + '<td class="col-actions">'
+            + '<button class="btn btn-sm" onclick="openSkuModal(' + k.sku_id + ')">编辑</button>'
+            + '<button class="btn btn-sm" onclick="deleteSku(' + k.sku_id + ')" style="color:#dc2626;border-color:#fca5a5">删除</button>'
+            + '</td>'
             + "</tr>";
     }).join("");
+    if (window._skuBulkSel) window._skuBulkSel.refresh();
 }
 
 function openSkuModal(skuId) {
@@ -720,6 +844,54 @@ async function saveSku() {
     }
 }
 
+// SKU 单条删除
+async function deleteSku(skuId) {
+    var k = skus.find(function (x) { return x.sku_id === skuId; });
+    var label = k ? (k.sku_code + (k.name_cn ? " / " + k.name_cn : "")) : ("id=" + skuId);
+    if (!confirm("确定删除 SKU「" + label + "」？此操作不可恢复。")) return;
+    try {
+        await api("/api/v1/mappings/skus/" + skuId, { method: "DELETE" });
+        toast("已删除");
+        loadSkus();
+    } catch (e) {
+        toast("删除失败：" + e.message, 4000);
+    }
+}
+
+// SKU 批量选择
+window._skuBulkSel = createBulkSelector({
+    checkboxSel: ".sku-row-check",
+    headerCheckId: "sku-check-all",
+    btnId: "sku-bulk-del",
+    countId: "sku-bulk-count",
+    getLabel: function (cb) {
+        var id = parseInt(cb.value);
+        var k = skus.find(function (x) { return x.sku_id === id; });
+        return k ? (k.sku_code + (k.name_cn ? " / " + k.name_cn : "")) : ("id=" + id);
+    },
+});
+
+function openBulkDeleteSkuModal() {
+    if (!window._skuBulkSel) return;
+    var labels = window._skuBulkSel.getLabels();
+    if (labels.length === 0) return;
+    openBulkDeleteModal(labels, "SKU 主数据", async function () {
+        var ids = window._skuBulkSel.getSelected().map(function (v) { return parseInt(v); });
+        try {
+            var result = await api("/api/v1/mappings/skus/batch-delete", {
+                method: "POST", body: { ids: ids }
+            });
+            var msg = "成功删除 " + result.deleted + " 条";
+            if (result.failed && result.failed.length > 0) msg += "，" + result.failed.length + " 条失败";
+            toast(msg, 4000);
+            window._skuBulkSel.clear();
+            loadSkus();
+        } catch (e) {
+            toast("批量删除失败：" + e.message, 4000);
+        }
+    });
+}
+
 /* ---------- 键盘：Esc 关闭弹窗 ---------- */
 document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
@@ -727,6 +899,8 @@ document.addEventListener("keydown", function (e) {
     if (document.getElementById("group-modal").classList.contains("show")) closeGroupModal();
     if (document.getElementById("factory-modal").classList.contains("show")) closeFactoryModal();
     if (document.getElementById("sku-modal").classList.contains("show")) closeSkuModal();
+    var bulkMask = document.getElementById("bulk-delete-mask");
+    if (bulkMask && bulkMask.classList.contains("show")) closeBulkDeleteModal();
 });
 
 /* ---------- 启动 ---------- */

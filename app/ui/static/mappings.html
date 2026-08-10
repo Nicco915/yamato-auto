@@ -53,6 +53,8 @@
         <input id="p-incomplete" type="checkbox" onchange="loadProducts()"> 只看待完善
       </label>
       <span class="spacer"></span>
+      <button id="product-bulk-del" class="bulk-btn" disabled onclick="openBulkDeleteProductModal()">🗑 批量删除</button>
+      <span id="product-bulk-count" class="bulk-count"></span>
       <input id="p-import-file" type="file" accept=".xlsx" style="display:none" onchange="importProducts(this)">
       <button class="btn" onclick="document.getElementById('p-import-file').click()">Excel 导入</button>
       <button class="btn btn-primary" onclick="openProductModal(null)">新增映射</button>
@@ -61,6 +63,7 @@
       <table class="table">
         <thead>
           <tr>
+            <th class="col-check"><input type="checkbox" id="product-check-all"></th>
             <th>品名</th>
             <th>税号</th>
             <th>供应商</th>
@@ -72,7 +75,7 @@
           </tr>
         </thead>
         <tbody id="product-tbody">
-          <tr><td colspan="8" class="empty">加载中…</td></tr>
+          <tr><td colspan="9" class="empty">加载中…</td></tr>
         </tbody>
       </table>
     </div>
@@ -83,6 +86,8 @@
     <div class="mp-toolbar">
       <span class="muted" id="group-count"></span>
       <span class="spacer"></span>
+      <button id="group-bulk-del" class="bulk-btn" disabled onclick="openBulkDeleteGroupModal()">🗑 批量删除</button>
+      <span id="group-bulk-count" class="bulk-count"></span>
       <button class="btn btn-primary" onclick="openGroupModal(null)">新增组</button>
     </div>
     <div id="group-list">
@@ -95,6 +100,8 @@
     <div class="mp-toolbar">
       <span class="muted" id="factory-count"></span>
       <span class="spacer"></span>
+      <button id="factory-bulk-del" class="bulk-btn" disabled onclick="openBulkDeleteFactoryModal()">🗑 批量删除</button>
+      <span id="factory-bulk-count" class="bulk-count"></span>
       <button class="btn btn-primary" onclick="openFactoryModal(null)">新增工厂</button>
     </div>
     <div id="factory-list">
@@ -111,12 +118,15 @@
       <input id="s-q" type="text" placeholder="搜索 SKU / 品名" onkeydown="if(event.key==='Enter')loadSkus()">
       <button class="btn" onclick="loadSkus()">搜索</button>
       <span class="spacer"></span>
+      <button id="sku-bulk-del" class="bulk-btn" disabled onclick="openBulkDeleteSkuModal()">🗑 批量删除</button>
+      <span id="sku-bulk-count" class="bulk-count"></span>
       <span class="muted" id="sku-count"></span>
     </div>
     <div class="card">
       <table class="table">
         <thead>
           <tr>
+            <th class="col-check"><input type="checkbox" id="sku-check-all"></th>
             <th>SKU</th>
             <th>中文品名</th>
             <th>英文品名</th>
@@ -128,7 +138,7 @@
           </tr>
         </thead>
         <tbody id="sku-tbody">
-          <tr><td colspan="8" class="empty">加载中…</td></tr>
+          <tr><td colspan="9" class="empty">加载中…</td></tr>
         </tbody>
       </table>
     </div>

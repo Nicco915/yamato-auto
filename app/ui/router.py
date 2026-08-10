@@ -123,6 +123,11 @@ class UpdateBatchPathsRequest(BaseModel):
     reset_checkpoint: bool = False
 
 
+class BatchDeleteRequest(BaseModel):
+    """批量删除批次请求。"""
+    thread_ids: list[str]
+
+
 @router.get("/api/v1/batches")
 async def list_batches():
     """批次列表：checkpoint 只读枚举 + 状态/进度推导。"""
@@ -190,6 +195,13 @@ async def delete_batch(thread_id: str):
         raise HTTPException(status_code=404, detail=str(e)) from e
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+
+
+@router.post("/api/v1/batches/batch-delete")
+async def batch_delete_batches(req: BatchDeleteRequest):
+    """批量删除批次：逐个调用 service.delete_batch，返回 {deleted, failed}。"""
+    result = await asyncio.to_thread(service.batch_delete_batches, req.thread_ids)
+    return result
 
 
 @router.patch("/api/v1/batches/{thread_id}/paths")

@@ -18,7 +18,12 @@
 - PUT    /api/v1/mappings/aliases/{alias_id}      编辑别名（文本 + 两个用途开关）
 - DELETE /api/v1/mappings/aliases/{alias_id}      删除别名
 - GET    /api/v1/mappings/skus              SKU 主数据列表（?factory_id=&q= 模糊搜 SKU/品名）
+- DELETE /api/v1/mappings/skus/{sku_id}     删除 SKU 主数据
 - PUT    /api/v1/mappings/skus/{sku_id}     编辑 SKU 主数据（逐字段 diff 写 sku_master_audits 留痕）
+- POST   /api/v1/mappings/products/batch-delete   批量删除产品映射
+- POST   /api/v1/mappings/groups/batch-delete     批量删除品名组（含成员）
+- POST   /api/v1/mappings/factories/batch-delete  批量删除工厂（有关联跳过）
+- POST   /api/v1/mappings/skus/batch-delete       批量删除 SKU 主数据
 """
 
 from __future__ import annotations
@@ -102,6 +107,11 @@ class SkuUpsert(BaseModel):
     inspection_required: bool = False
     unit_net_weight: Optional[float] = None
     unit_gross_weight: Optional[float] = None
+
+
+class IdsRequest(BaseModel):
+    """批量删除请求：ID 列表。"""
+    ids: list[int]
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +270,22 @@ async def import_products(file: UploadFile):
     return {"created": created, "updated": updated, "total": created + updated}
 
 
+@router.post("/products/batch-delete")
+def batch_delete_products(req: IdsRequest):
+    """批量删除产品映射。"""
+    deleted, failed = 0, []
+    with get_session() as s:
+        for pid in req.ids:
+            m = s.get(ProductMapping, pid)
+            if m is None:
+                failed.append({"id": pid, "reason": "映射不存在"})
+            else:
+                s.delete(m)
+                deleted += 1
+        s.commit()
+    return {"deleted": deleted, "failed": failed}
+
+
 # ---------------------------------------------------------------------------
 # 品名组
 # ---------------------------------------------------------------------------
@@ -375,6 +401,23 @@ def delete_group(group_id: int):
         s.delete(g)
         s.commit()
         return {"deleted": group_id}
+
+
+@router.post("/groups/batch-delete")
+def batch_delete_groups(req: IdsRequest):
+    """批量删除品名组（含成员）。"""
+    deleted, failed = 0, []
+    with get_session() as s:
+        for gid in req.ids:
+            g = s.get(ProductGroup, gid)
+            if g is None:
+                failed.append({"id": gid, "reason": "品名组不存在"})
+            else:
+                s.query(ProductGroupMember).filter(ProductGroupMember.group_id == gid).delete()
+                s.delete(g)
+                deleted += 1
+        s.commit()
+    return {"deleted": deleted, "failed": failed}
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +553,32 @@ def delete_factory(factory_id: int):
         return {"deleted": factory_id}
 
 
+@router.post("/factories/batch-delete")
+def batch_delete_factories(req: IdsRequest):
+    """批量删除工厂：有关联的工厂跳过并报告原因。"""
+    deleted, failed = 0, []
+    with get_session() as s:
+        for fid in req.ids:
+            f = s.get(Factory, fid)
+            if f is None:
+                failed.append({"id": fid, "reason": "工厂不存在"})
+                continue
+            sku_count = s.query(FactorySKU).filter(FactorySKU.factory_id == fid).count()
+            alias_count = s.query(FactoryAlias).filter(FactoryAlias.factory_id == fid).count()
+            if sku_count or alias_count:
+                parts = []
+                if sku_count:
+                    parts.append(f"{sku_count} 条 SKU")
+                if alias_count:
+                    parts.append(f"{alias_count} 条别名")
+                failed.append({"id": fid, "reason": f"有 {' 和 '.join(parts)} 关联"})
+            else:
+                s.delete(f)
+                deleted += 1
+        s.commit()
+    return {"deleted": deleted, "failed": failed}
+
+
 @router.post("/factories/{factory_id}/aliases", status_code=201)
 def create_alias(factory_id: int, req: AliasUpsert):
     """新增工厂别名（两个用途开关至少开一个）。"""
@@ -620,6 +689,35 @@ def list_skus(
             )
         rows = query.order_by(FactorySKU.factory_id, FactorySKU.sku_code).all()
         return [_sku_dict(k) for k in rows]
+
+
+@router.delete("/skus/{sku_id}")
+def delete_sku(sku_id: int):
+    """删除 SKU 主数据。不检查引用、不级联。"""
+    with get_session() as s:
+        k = s.get(FactorySKU, sku_id)
+        if k is None:
+            raise HTTPException(status_code=404, detail=f"SKU 主数据不存在: id={sku_id}")
+        code = k.sku_code
+        s.delete(k)
+        s.commit()
+        return {"deleted": code}
+
+
+@router.post("/skus/batch-delete")
+def batch_delete_skus(req: IdsRequest):
+    """批量删除 SKU 主数据。不检查引用、不级联。"""
+    deleted, failed = 0, []
+    with get_session() as s:
+        for sid in req.ids:
+            k = s.get(FactorySKU, sid)
+            if k is None:
+                failed.append({"id": sid, "reason": "SKU 不存在"})
+            else:
+                s.delete(k)
+                deleted += 1
+        s.commit()
+    return {"deleted": deleted, "failed": failed}
 
 
 # 可编辑字段 → 留痕字段名（与 SkuMasterAudit.field 对应）
