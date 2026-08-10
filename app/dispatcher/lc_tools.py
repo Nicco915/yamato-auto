@@ -282,6 +282,7 @@ def build_pending_action(tool_name: str, args: dict,
             return {"ok": False, "clarify": False, "action": None,
                     "msg_text": msg, "history_text": msg}
         session.pending_action = action
+        sessions.persist_pending(session)
 
     sessions.record_tool(session, tool=tool_name,
                          args_summary=_args_summary(clean_args),
