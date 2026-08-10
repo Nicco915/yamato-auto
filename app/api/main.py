@@ -539,16 +539,33 @@ class UpdateSessionRequest(BaseModel):
 
 
 @app.get("/api/v1/dispatcher/sessions")
-async def list_dispatcher_sessions():
-    """列出所有会话，按 updated_at DESC 排序（左侧 sidebar 数据源）。"""
+async def list_dispatcher_sessions(q: str | None = None):
+    """列出所有会话，按 is_pinned DESC + updated_at DESC 排序（左侧 sidebar 数据源）。
+
+    支持按标题模糊搜索：q=关键词 过滤 title ILIKE %关键词%。
+    对每个有 pinned_thread_id 的会话，额外批量查询批次状态（batch_status）。
+    """
     try:
         from app.db.models import ChatSession as _ChatSessionOrm
         from app.db.session import get_session as _get_db_session
 
         with _get_db_session() as db:
-            rows = (db.query(_ChatSessionOrm)
-                    .order_by(_ChatSessionOrm.updated_at.desc())
-                    .all())
+            query = db.query(_ChatSessionOrm)
+            if q and q.strip():
+                query = query.filter(_ChatSessionOrm.title.ilike(f"%{q.strip()}%"))
+            rows = query.order_by(_ChatSessionOrm.is_pinned.desc(),
+                                  _ChatSessionOrm.updated_at.desc()).all()
+
+            # 批量查询批次状态（针对有 pinned_thread_id 的 session）
+            pinned_ids = {r.pinned_thread_id for r in rows if r.pinned_thread_id}
+            batch_statuses: dict[str, str] = {}
+            for tid in pinned_ids:
+                try:
+                    summary = service.get_batch_summary(tid)
+                    batch_statuses[tid] = summary.get("status", "unknown")
+                except Exception:
+                    batch_statuses[tid] = "unknown"
+
             return [
                 {
                     "session_id": r.session_id,
@@ -556,6 +573,7 @@ async def list_dispatcher_sessions():
                     "pinned_thread_id": r.pinned_thread_id,
                     "is_pinned": r.is_pinned,
                     "title_source": r.title_source,
+                    "batch_status": batch_statuses.get(r.pinned_thread_id) if r.pinned_thread_id else None,
                     "updated_at": r.updated_at.timestamp() if r.updated_at else None,
                     "created_at": r.created_at.timestamp() if r.created_at else None,
                     "has_pending": r.pending_action_json is not None,
