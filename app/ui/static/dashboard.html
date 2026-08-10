@@ -243,7 +243,8 @@ async function createBatch() {
   try {
     pre = await api("/api/v1/batches/precheck", {
       method: "POST",
-      body: { downstream_file_path: downstreamFile },
+      // thread_id 必填：每批次独立缓存，预检按本批次判定（与后端 PrecheckRequest 对齐）
+      body: { thread_id: threadId, downstream_file_path: downstreamFile },
     });
   } catch (e) {
     // precheck 422（装箱单解析失败等）直接 toast，不发起
