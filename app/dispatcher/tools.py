@@ -359,9 +359,11 @@ def _preview_create_batch(args: dict) -> dict:
                 lines.append(f"  {factory}")
 
         # ---- W4b 重复处理预检（sessions 完成态 + 审核落库四档判定）----
-        # 解析失败只进 warning 不阻断预览；重复工厂分行标注 + 汇总警告
+        # 解析失败只进 warning 不阻断预览；重复工厂分行标注 + 汇总警告；
+        # 每批次独立：限查本批次 thread_id，跨批次审核不再回看
         try:
             precheck = service.check_processed_factories(
+                thread_id,
                 str(d_path),
                 factory_names=list(factory_filter) if factory_filter else None)
         except ValueError as e:

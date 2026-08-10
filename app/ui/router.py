@@ -106,8 +106,11 @@ class PrecheckRequest(BaseModel):
     """重复处理预检请求：路径字段语义与发起批次一致（缺省取配置默认值）。
 
     factory_names 缺省时解析装箱单取工厂集合；给出时直接用之。
+
+    thread_id 必填：每批次独立缓存，预检按本批次判定；跨批次审核不再回看。
     """
 
+    thread_id: str
     downstream_file_path: Optional[str] = None
     factory_names: Optional[list[str]] = None
 
@@ -157,10 +160,14 @@ async def create_batch(request: CreateBatchRequest):
 
 @router.post("/api/v1/batches/precheck")
 async def batch_precheck(request: PrecheckRequest):
-    """重复处理预检（W4b）：四档判定各工厂是否已处理；装箱单解析失败 422。"""
+    """重复处理预检（W4b）：四档判定各工厂是否已处理；装箱单解析失败 422。
+
+    按本批次 thread_id 隔离；跨批次审核记录不再回看。
+    """
     try:
         return await asyncio.to_thread(
             service.check_processed_factories,
+            request.thread_id,
             request.downstream_file_path,
             request.factory_names,
         )

@@ -251,31 +251,52 @@ def rerun_batch(
     batch_id: str,
     on_progress: Callable[[dict], None] | None = None,
 ) -> dict[str, Any]:
-    """完全重跑批次：清空 containers/，重置 checkpoint，从 Node1 重新执行。
+    """完全重跑批次：先归档当前 output 产物到 _history/，再清空 sessions，再重置 checkpoint 重跑。
 
-    Args:
-        batch_id: 批次号
-        on_progress: 进度回调
+    重跑前把 output/{safe(batch_id)}/ 目录整体（containers/、declarations/、
+    batch_state.json、batch_config.json）+ 顶层 {safe(batch_id)}_filled.xlsx
+    一起搬到 output/_history/{safe(batch_id)}/r{N}_{ts}/，按 run_count 编号。
 
-    Returns:
-        run_until_interrupt 的返回值
+    然后清空 data/sessions/{safe(batch_id)}/*.json（不删目录）。
 
-    Raises:
-        ValueError: 批次不存在
+    这样每批次独立缓存；rerun 不污染历史产物，所有历史 run 可审计回看。
     """
+    import shutil
+
+    # 注：settings.history_output_dir 方法由 config.py 提供（如果还没有，
+    # 请在 Settings 类加一个返回 output/_history/{safe(batch_id)} 的方法）。
     config = _read_batch_config(batch_id)
     if config is None:
         raise ValueError(f"批次不存在: {batch_id}")
+    run_count = config.get("run_count", 1)
 
-    # 清空 containers/ 目录
     settings = get_settings()
-    containers_dir = settings.batch_containers_dir(batch_id)
-    if containers_dir.exists():
-        import shutil
-        shutil.rmtree(containers_dir, ignore_errors=True)
-        logger.info("[rerun] 已清空 containers 目录: %s", containers_dir)
+    batch_output_dir = settings.batch_output_dir(batch_id)
 
-    # 重置 checkpoint
+    # ① 归档 output（仅当上一轮产物存在）
+    if batch_output_dir.exists():
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_run_dir = settings.history_output_dir(batch_id) / f"r{run_count}_{ts}"
+        archive_run_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.move(str(batch_output_dir), str(archive_run_dir / "run"))
+            logger.info("[rerun] 已归档 output 到 %s", archive_run_dir)
+        except (OSError, shutil.Error) as e:
+            logger.error("[rerun] 归档失败，拒绝重跑: %s: %s", type(e).__name__, e)
+            raise RuntimeError(f"output 归档失败，已拒绝 rerun: {e}") from e
+
+    # ② 清空 sessions 目录下文件（不删目录）
+    sessions_dir = SESSIONS_DIR / settings.safe_path_tag(batch_id)
+    if sessions_dir.is_dir():
+        for p in sessions_dir.glob("*.json"):
+            try:
+                p.unlink()
+            except OSError as e:
+                logger.warning("[rerun] 清理 session %s 失败（跳过）: %s: %s",
+                               p.name, type(e).__name__, e)
+        logger.info("[rerun] 已清空 sessions 目录: %s", sessions_dir)
+
+    # ③ 原逻辑：重置 checkpoint、run_count + 1、_write_batch_config、调 run_until_interrupt
     from langgraph.graph import START
     graph = get_graph()
     cfg = _config(batch_id)
@@ -289,12 +310,10 @@ def rerun_batch(
         as_node=START,
     )
 
-    # 更新配置中的运行信息
     config["last_run_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
-    config["run_count"] = config.get("run_count", 0) + 1
+    config["run_count"] = run_count + 1
     _write_batch_config(batch_id, config)
 
-    # 重新执行
     return run_until_interrupt(
         thread_id=batch_id,
         downstream_file_path=config["downstream_file_path"],
@@ -578,7 +597,7 @@ def _pre_extract_factories(
         # 缓存已存在且新鲜（路径证据仍在当前批次 upstream_root 之下）则跳过；
         # 新鲜度校验是 rerun_with_paths 改路径重跑场景的兜底：旧根目录留下
         # 的缓存视为陈旧，照常重提，不误用上一批次数据
-        if _try_load_cached_session(factory, str(root_path)) is not None:
+        if _try_load_cached_session(thread_id, factory, str(root_path)) is not None:
             logger.info("[预提取] 工厂「%s」：缓存已存在，跳过", factory)
             if progress:
                 progress.update(factory, "cached")
@@ -598,7 +617,7 @@ def _pre_extract_factories(
         if progress:
             progress.update(factory, "running")
         try:
-            _run_factory_session(folder_path, factory, expected_skus)
+            _run_factory_session(thread_id, folder_path, factory, expected_skus)
             logger.info("[预提取] 工厂「%s」：完成（%s，得分 %.1f）",
                         factory, method, score)
             if progress:
@@ -611,79 +630,27 @@ def _pre_extract_factories(
 
 
 # ---------------------------------------------------------------------------
-# 批次启动归档旧 session 缓存（2026-08-05，陈旧会话缓存修复 方案A）
+# 每批次独立 session 缓存目录（2026-08-10）
 # ---------------------------------------------------------------------------
-# 背景：sessions/{工厂}.json 只按工厂名命名、无批次维度。上一批次跑完后
-# 这些 JSON 留在磁盘，新批次启动时 Node3 缓存命中逻辑和后台预提取会直接
-# 命中旧缓存，导致新批次全部工厂沿用上一批次的提取结果和文件路径。
-# 对策：新批次首次启动（checkpoint state 为空）时，把 sessions/ 下的
-# *.json 整体移动到 sessions/_archive/{批次号}/——移动不删除，保留审计
-# （零容错原则）。归档失败绝不阻塞批次启动。
-
-_ARCHIVE_DIR_NAME = "_archive"
+# 背景：早期实现把 sessions/*.json 全部平铺在 SESSIONS_DIR 顶层，按工厂
+# 名命名、无批次维度。新批次启动时 Node3 缓存命中和后台预提取会沿用
+# 上一批次的结果，导致错配。新设计：每批次独立目录
+# data/sessions/{safe(batch_id)}/{factory}.json，跨批次物理隔离、零冲突。
+# 新批次启动时幂等创建目录，目录已存在则复用——把里面的 *.json 留作下次
+# run 增量（rerun 显式清空是另一条路径，由 rerun_batch 负责）。
 
 
-def _warn_if_other_batches_in_flight(thread_id: str) -> None:
-    """归档后检查是否还有其他在途批次（pending_review/running），有则打醒目 warning。
+def _ensure_batch_session_dir(thread_id: str) -> Path:
+    """批次启动时确保 data/sessions/{safe(batch_id)}/ 目录存在。
 
-    只读枚举（复用 list_batches），当前 thread_id 不计入。归档是可逆的移动
-    操作，所以即使在途批次存在也照常归档，这里只负责提醒。检查本身失败
-    只记 warning，绝不反过来影响批次启动。
+    每批次独立缓存目录。新批次启动会幂等创建，不做归档。
+    目录不存在则 mkdir，目录已存在则直接复用，文件留作下次 run 增量。
+    返回该目录路径供调用方使用。
     """
-    try:
-        batches = list_batches().get("batches") or []
-    except Exception as e:  # noqa: BLE001 枚举失败不阻塞批次启动
-        logger.warning("[会话归档] 在途批次检查失败（不影响归档结果）：%s: %s",
-                       type(e).__name__, e)
-        return
-    in_flight = [b["thread_id"] for b in batches
-                 if b.get("thread_id") != thread_id
-                 and b.get("status") in ("pending_review", "running")]
-    if in_flight:
-        logger.warning("⚠️⚠️ [会话归档] 批次 %s 启动归档时仍有 %d 个在途批次"
-                       "（%s）：这些批次的工厂会话已移入 _archive，"
-                       "恢复时可能触发重新提取",
-                       thread_id, len(in_flight), "、".join(in_flight))
-
-
-def _archive_sessions_for_new_batch(thread_id: str) -> int:
-    """批次启动前把 sessions/*.json 归档到 sessions/_archive/{批次号}/。
-
-    只移动不删除（零容错审计）；归档目标目录已存在时直接并入（同名文件
-    覆盖）；sessions 目录不存在或为空时静默跳过；单文件移动失败只记
-    warning 继续，绝不阻塞批次启动。返回成功归档的文件数。
-    """
-    try:
-        if not SESSIONS_DIR.is_dir():
-            return 0
-        # 只取顶层 *.json（_archive 是子目录，天然排除）
-        files = sorted(p for p in SESSIONS_DIR.iterdir()
-                       if p.is_file() and p.suffix == ".json")
-        if not files:
-            return 0
-
-        dest_dir = SESSIONS_DIR / _ARCHIVE_DIR_NAME / get_settings().safe_path_tag(thread_id)
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        moved = 0
-        for src in files:
-            try:
-                # 同文件系统内 rename；os.replace 语义，同名旧档直接覆盖
-                src.replace(dest_dir / src.name)
-                moved += 1
-            except OSError as e:
-                logger.warning("[会话归档] 批次 %s：移动 %s 失败（跳过该文件，"
-                               "不阻塞启动）：%s: %s",
-                               thread_id, src.name, type(e).__name__, e)
-        logger.info("[会话归档] 批次 %s：已归档 %d/%d 个会话文件到 %s",
-                    thread_id, moved, len(files), dest_dir)
-        if moved:
-            # 有归档动作才做在途批次检查（避免无谓的全表枚举开销）
-            _warn_if_other_batches_in_flight(thread_id)
-        return moved
-    except OSError as e:
-        logger.warning("[会话归档] 批次 %s：归档异常（跳过归档，不阻塞启动）："
-                       "%s: %s", thread_id, type(e).__name__, e)
-        return 0
+    settings = get_settings()
+    batch_dir = SESSIONS_DIR / settings.safe_path_tag(thread_id)
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    return batch_dir
 
 
 def run_until_interrupt(
@@ -719,7 +686,7 @@ def run_until_interrupt(
         if factory_alias_overrides:
             initial_state["factory_alias_overrides"] = factory_alias_overrides
         initial_state["batch_id"] = thread_id
-        _archive_sessions_for_new_batch(thread_id)
+        _ensure_batch_session_dir(thread_id)
         snap = graph.get_state(_config(thread_id))
         _write_batch_state(thread_id, "running", state=initial_state)
 
@@ -1358,63 +1325,42 @@ _SESSION_DONE_STATUSES = ("complete_auto", "complete_manual")
 _SESSION_PARTIAL_STATUSES = ("collecting", "waiting_pl")
 
 
-def _latest_archived_session(factory: str) -> Path | None:
-    """在 sessions/_archive/ 下找最新归档批次目录里的 {factory}.json。
+def _session_status_light(
+    batch_id: str,
+    factory: str,
+) -> tuple[str | None, str | None]:
+    """轻量读 sessions/{safe(batch_id)}/{factory}.json，只取 (status, updated_at)。
 
-    只在主路径未命中时被调用（避免每次预检都遍历归档）；归档批次目录
-    按 mtime 取最新（实现最简单，且归档后目录不再变动，mtime 即归档时刻）。
-    _archive 不存在/为空/任何 IO 异常都返回 None（视为无证据），绝不抛异常。
+    仅查本批次目录。每个批次独立缓存，跨批次不回看历史。文件不存在/JSON 损坏
+    一律静默回落，返回 (None, None)。
     """
-    archive_root = SESSIONS_DIR / _ARCHIVE_DIR_NAME
-    try:
-        if not archive_root.is_dir():
-            return None
-        batch_dirs = [d for d in archive_root.iterdir() if d.is_dir()]
-        if not batch_dirs:
-            return None
-        latest = max(batch_dirs, key=lambda d: d.stat().st_mtime)
-        candidate = latest / f"{factory}.json"
-        return candidate if candidate.is_file() else None
-    except OSError:
-        return None
-
-
-def _session_status_light(factory: str) -> tuple[str | None, str | None]:
-    """轻量读 sessions/{factory}.json，只取 (status, updated_at)，不算 coverage。
-
-    主路径未命中时回读 sessions/_archive/ 最新归档批次目录中的同名文件：
-    归档是批次边界（方案A 新批次启动会把上一批次 session 整体移入
-    _archive），预检的「已处理」记忆需要跨批次回看最近一次归档，否则
-    「提过完成但未审核落库」的工厂在新批次预检中被误判为未处理。
-    文件不存在/归档为空/JSON 损坏一律静默回落，返回 (None, None)。
-    """
-    path = SESSIONS_DIR / f"{factory}.json"
+    settings = get_settings()
+    path = SESSIONS_DIR / settings.safe_path_tag(batch_id) / f"{factory}.json"
     if not path.is_file():
-        path = _latest_archived_session(factory)
-        if path is None:
-            return None, None
+        return None, None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001 损坏的会话文件按无会话处理
+    except Exception:  # noqa: BLE001
         return None, None
     return data.get("status"), data.get("updated_at")
 
 
 def check_processed_factories(
+    thread_id: str,                                  # ← 新增必填
     downstream_file_path: str | None = None,
     factory_names: list[str] | None = None,
 ) -> dict[str, Any]:
-    """预检装箱单各工厂是否已处理过（W4b 重复处理确认的唯一判定口径）。
+    """四档预检（仅查本批次）。
 
     工厂集合：给出 factory_names 时直接用之（不解析文件，调用方已知名单）；
     缺省时解析装箱单（parse_requirements），解析失败抛 ValueError（路由层
     转 422）。
 
-    level 四档（processed = level in (audited, session_complete)）：
-      - audited：review_audits 有 approved=true 记录（最强，审核已落库）；
-      - session_complete：sessions/*.json 为 complete_auto/complete_manual；
-      - partial：collecting/waiting_pl（提过没提完，不算已处理）；
-      - none：无任何记录。
+    level 四档：
+      - audited：本批次 review_audits 有 approved=true
+      - session_complete：本批次 sessions/{batch_id_safe}/{factory}.json 为 complete_*
+      - partial：collecting / waiting_pl
+      - none：无任何记录
     单工厂查询异常降级 level="none"，不拖垮整表。
     """
     if factory_names is not None:
@@ -1439,6 +1385,7 @@ def check_processed_factories(
                 rows = session.scalars(
                     select(ReviewAudit)
                     .where(ReviewAudit.factory_name.in_(names),
+                           ReviewAudit.thread_id == thread_id,             # ← 新增：限本批次
                            ReviewAudit.approved.is_(True))
                     .order_by(ReviewAudit.ts.desc())
                 ).all()
@@ -1458,7 +1405,7 @@ def check_processed_factories(
     processed_count = 0
     for name in names:
         try:
-            status, updated_at = _session_status_light(name)
+            status, updated_at = _session_status_light(thread_id, name)
             audit = last_audit.get(name)
             if audit is not None:
                 level = "audited"
@@ -1552,7 +1499,10 @@ def create_batch(
     effective_filter = factory_filter
     skipped: list[str] = []
     if skip_processed and not factory_filter:
-        precheck = check_processed_factories(str(d_path))
+        precheck = check_processed_factories(
+            thread_id=thread_id,                              # ← 新增
+            downstream_file_path=str(d_path),
+        )
         skipped = [f["factory"] for f in precheck["factories"] if f["processed"]]
         remaining = [f["factory"] for f in precheck["factories"]
                      if not f["processed"]]
