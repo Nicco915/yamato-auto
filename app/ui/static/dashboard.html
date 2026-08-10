@@ -565,6 +565,7 @@ async function fbLoad(path) {
 function fbNavigateUp() {
   if (_fbCurrentPath) {
     // 跨平台：同时处理 / 和 \ 分隔符
+    const isAbsoluteUnix = _fbCurrentPath.startsWith('/');
     const parts = _fbCurrentPath.split(/[\\/]/).filter(Boolean);
     parts.pop();
     // Windows 盘符路径（如 C:）需要保留冒号
@@ -572,7 +573,9 @@ function fbNavigateUp() {
     if (parent && parent.match(/^[A-Za-z]:$/)) {
       parent = parent + '/';
     }
-    if (!parent) parent = '/';
+    // Linux/macOS 绝对路径要保留前导 /（filter(Boolean) 会把它过滤掉）
+    if (isAbsoluteUnix && parent) parent = '/' + parent;
+    if (!parent) parent = isAbsoluteUnix ? '/' : '';
     fbLoad(parent);
   }
 }
