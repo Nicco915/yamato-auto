@@ -43,6 +43,57 @@ def _err(e: Exception) -> dict:
     return {"error": f"{type(e).__name__}: {e}"}
 
 
+def _pinned_scope_warning(args: dict, session_id: str | None) -> str | None:
+    """Pinned scope 检查（写工具前置防御）。
+
+    当前会话已 pin 某个批次（chat_sessions.pinned_thread_id != None）时，
+    若写工具的 thread_id 参数与 pinned_thread_id 不一致，返回一句自然
+    语言警告；其他场景（无 pinned / 未传 thread_id / thread_id 一致）
+    返回 None。
+
+    设计要点：
+    - 仅以 chat_sessions.pinned_thread_id 为唯一权威源（DB 表已存在，
+      session_id 提供时实时查，避免 DispatcherSession 多承载一份缓存
+      与 DB 失同步）；
+    - 仅在 args 实际含 thread_id 时检查（set_paths 不带 thread_id、
+      start_split 只校验上游路径——这些场景无 thread_id，沉默放行）；
+    - session_id=None 时直接返回 None（保持向后兼容：单元测试与未启用
+      pinned 的旧会话一致行为）；
+    - DB 异常绝不抛出——降级返回 None（铁律：scope 警告是防御性的，不能
+      阻塞确认门主流程）。
+    """
+    if not session_id:
+        return None
+    target_tid = args.get("thread_id")
+    if not target_tid or not isinstance(target_tid, str):
+        return None
+    try:
+        from app.db.models import ChatSession as _ChatSessionOrm
+        from app.db.session import get_session as _get_db_session
+        with _get_db_session() as db:
+            row = db.get(_ChatSessionOrm, session_id)
+            pinned = row.pinned_thread_id if row else None
+        if not pinned:
+            return None
+        if pinned == target_tid:
+            return None
+        return (f"当前会话已 pin 批次「{pinned}」，本次操作目标是"
+                f"「{target_tid}」，确认仍要执行吗？")
+    except Exception:  # noqa: BLE001 DB 异常降级放行
+        return None
+
+
+def _merge_pinned_warning(args: dict, session_id: str | None,
+                          warnings: list[str]) -> list[str]:
+    """把 _pinned_scope_warning 合并进 warnings 列表（带哨兵去重）。
+
+    调用方只关心「返回新 list」，不重复 import。"""
+    msg = _pinned_scope_warning(args, session_id)
+    if msg and msg not in warnings:
+        return warnings + [msg]
+    return warnings
+
+
 def _preview(summary: str, lines: list[str] | None = None,
              warnings: list[str] | None = None, **extra) -> dict:
     """写工具 preview 的统一返回结构；**extra 透传结构化附加字段
@@ -266,7 +317,7 @@ def _ask_guide_wrapper(args: dict) -> dict:
 # 二期写工具实现（risk="write"，preview + execute，execute 内二次校验）
 # ---------------------------------------------------------------------------
 
-def _preview_create_batch(args: dict) -> dict:
+def _preview_create_batch(args: dict, session_id: str | None = None) -> dict:
     """create_batch 预览：展开实际路径 + 查重预检 + 工厂名对照预扫（W5 三档）。
 
     轮1（无 alias_decisions）：预扫结果分「确定命中/低置信推荐/无候选」三档
@@ -294,6 +345,8 @@ def _preview_create_batch(args: dict) -> dict:
             state = service.get_order_state(thread_id)
             if state.get("exists"):
                 warnings.append(f"thread_id 已存在，确认后执行会报重名错误: {thread_id}")
+        # Pinned scope 防御：会话已 pin 别的批次时给一句警告
+        warnings = _merge_pinned_warning(args, session_id, warnings)
 
         d_path = Path(downstream).expanduser()
         u_path = Path(upstream).expanduser()
@@ -528,7 +581,7 @@ def _exec_create_batch(args: dict,
         return _err(e)
 
 
-def _preview_rerun(args: dict) -> dict:
+def _preview_rerun(args: dict, session_id: str | None = None) -> dict:
     """rerun 预览：当前状态（next_nodes，未挂起明确警告）+ 路径旧→新 diff。"""
     try:
         thread_id = args["thread_id"]
@@ -542,6 +595,8 @@ def _preview_rerun(args: dict) -> dict:
         status_text = "待继续处理" if next_nodes else "已完成"
         lines = [f"批次 {thread_id} 当前状态: {status_text}"]
         warnings: list[str] = []
+        # Pinned scope 防御
+        warnings = _merge_pinned_warning(args, session_id, warnings)
         if not next_nodes:
             warnings.append("该批次未处于挂起状态：仅挂起批次可重跑，确认后执行会报错")
 
@@ -592,7 +647,7 @@ def _exec_rerun(args: dict,
         return _err(e)
 
 
-def _preview_retry_factory(args: dict) -> dict:
+def _preview_retry_factory(args: dict, session_id: str | None = None) -> dict:
     """retry_factory 预览：取当前挂起 payload，展示将重试的工厂与 SKU 数；
     带 folder/save 时追加对照注入说明与永久对照覆盖警告。"""
     try:
@@ -609,6 +664,8 @@ def _preview_retry_factory(args: dict) -> dict:
         lines = [f"批次 {thread_id} 当前挂起工厂: {factory}"
                  f"（{len(items)} 个 SKU）"]
         warnings: list[str] = []
+        # Pinned scope 防御
+        warnings = _merge_pinned_warning(args, session_id, warnings)
 
         # 对照注入（W6b）：操作员告知的对应文件夹，预览展示注入内容
         folder = args.get("folder")
@@ -661,7 +718,7 @@ _FIELD_LABEL: dict[str, str] = {
 }
 
 
-def _preview_submit_review(args: dict) -> dict:
+def _preview_submit_review(args: dict, session_id: str | None = None) -> dict:
     """submit_review 预览：复用 _prepare_audit 的 diff 结果生成人读确认依据。"""
     try:
         thread_id = args["thread_id"]
@@ -698,6 +755,8 @@ def _preview_submit_review(args: dict) -> dict:
                          f"需要商检={inspection}")
 
         warnings: list[str] = []
+        # Pinned scope 防御
+        warnings = _merge_pinned_warning(args, session_id, warnings)
         if not approved:
             warnings.append("审核结论为驳回：确认后该工厂数据不会落库")
         return _preview(
@@ -722,7 +781,7 @@ def _exec_submit_review(args: dict,
         return _err(e)
 
 
-def _preview_set_paths(args: dict) -> dict:
+def _preview_set_paths(args: dict, session_id: str | None = None) -> dict:
     """set_paths 预览：硬错误列顶 + 旧→新变更预览 + 异平台警告。"""
     try:
         from app import agent_chat
@@ -732,6 +791,8 @@ def _preview_set_paths(args: dict) -> dict:
         lines = [f"[硬错误] {e}" for e in errors]
         lines += agent_chat.preview_changes(paths)
         warnings = agent_chat.cross_platform_warnings(paths)
+        # Pinned scope 防御：set_paths 可选带 thread_id（带时与 pinned 比对）
+        warnings = _merge_pinned_warning(args, session_id, warnings)
         if args.get("thread_id"):
             lines.append(f"确认后当前批次 {args['thread_id']} 将立即用新路径重跑")
         summary = (f"将修改 {len(paths)} 项路径配置并写入 .env 持久生效"
@@ -829,7 +890,7 @@ def _cosine_sim(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
-def _preview_curate_kb(args: dict) -> dict:
+def _preview_curate_kb(args: dict, session_id: str | None = None) -> dict:
     """curate_kb 预览：读队列 → 聚类 → 查现有 KB 去重 → 结构化预览。"""
     try:
         from app.dispatcher import rag
@@ -843,6 +904,8 @@ def _preview_curate_kb(args: dict) -> dict:
         clusters = _cluster_questions(items)
         lines: list[str] = []
         warnings: list[str] = []
+        # Pinned scope 防御（curate_kb 不带 thread_id，常规下沉默放行）
+        warnings = _merge_pinned_warning(args, session_id, warnings)
 
         for idx, cl in enumerate(clusters):
             rep = cl["representative"]
@@ -1149,7 +1212,7 @@ def _fn_list_declarations(args: dict) -> dict:
 # 分票写工具（risk="write"，preview + execute，execute 内二次校验）
 # ---------------------------------------------------------------------------
 
-def _preview_start_split(args: dict) -> dict:
+def _preview_start_split(args: dict, session_id: str | None = None) -> dict:
     """start_split 预览：校验上游批次 + 源文件 + 判定是否已存在分票。"""
     try:
         thread_id = (args.get("thread_id") or "").strip()
@@ -1157,6 +1220,8 @@ def _preview_start_split(args: dict) -> dict:
 
         lines = [f"上游批次: {thread_id}"]
         warnings: list[str] = []
+        # Pinned scope 防御
+        warnings = _merge_pinned_warning(args, session_id, warnings)
 
         if not thread_id:
             warnings.append("thread_id 为空，确认后执行会失败")
@@ -1263,7 +1328,7 @@ def _exec_start_split(
         return _err(e)
 
 
-def _preview_confirm_split(args: dict) -> dict:
+def _preview_confirm_split(args: dict, session_id: str | None = None) -> dict:
     """confirm_split 预览：统计警告，force 模式判定。"""
     try:
         thread_id = (args.get("thread_id") or "").strip()
@@ -1272,6 +1337,9 @@ def _preview_confirm_split(args: dict) -> dict:
 
         if not thread_id:
             return _preview("无法确认分票", [], ["thread_id 为空"])
+
+        # Pinned scope 防御
+        pinned_msg = _pinned_scope_warning(args, session_id)
 
         from app.split.graph import get_split_graph
         graph = get_split_graph()
@@ -1334,8 +1402,10 @@ def _preview_confirm_split(args: dict) -> dict:
         summary = f"确认批次 {thread_id} 分票方案（共 {total_tickets} 票）？"
         if force:
             summary += "（强制通过模式）"
-        return _preview(summary, lines,
-                        [w[:200] for w in all_warnings])
+        warnings_out = [w[:200] for w in all_warnings]
+        if pinned_msg and pinned_msg not in warnings_out:
+            warnings_out.insert(0, pinned_msg)
+        return _preview(summary, lines, warnings_out)
     except Exception as e:
         return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
 
@@ -1409,7 +1479,7 @@ def _exec_confirm_split(
         return _err(e)
 
 
-def _preview_reset_split(args: dict) -> dict:
+def _preview_reset_split(args: dict, session_id: str | None = None) -> dict:
     """reset_split 预览：展示当前版本与重置确认提示。"""
     try:
         thread_id = (args.get("thread_id") or "").strip()
@@ -1441,7 +1511,10 @@ def _preview_reset_split(args: dict) -> dict:
             f"确认重置批次 {thread_id} 的分票？"
             "原有方案将被保留为历史版本，推荐方案重新生成。"
         )
-        return _preview(summary, lines)
+        warnings: list[str] = []
+        # Pinned scope 防御
+        warnings = _merge_pinned_warning(args, session_id, warnings)
+        return _preview(summary, lines, warnings)
     except Exception as e:
         return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
 
@@ -1563,13 +1636,15 @@ def _fn_list_declaration_files(args: dict) -> dict:
         return _err(e)
 
 
-def _preview_generate_declarations(args: dict) -> dict:
+def _preview_generate_declarations(args: dict, session_id: str | None = None) -> dict:
     """generate_declarations 预览：校验分票已确认 + 展示发票号规则。"""
     try:
         thread_id = (args.get("thread_id") or "").strip()
         invoice_number = (args.get("invoice_number") or "").strip()
 
         warnings: list[str] = []
+        # Pinned scope 防御
+        warnings = _merge_pinned_warning(args, session_id, warnings)
         if not thread_id:
             warnings.append("thread_id 为空")
         if not invoice_number:
@@ -1650,7 +1725,7 @@ def _exec_generate_declarations(
         return _err(e)
 
 
-def _preview_upsert_product_mapping(args: dict) -> dict:
+def _preview_upsert_product_mapping(args: dict, session_id: str | None = None) -> dict:
     """upsert_product_mapping 预览：展示将写入的映射字段。"""
     try:
         name = (args.get("product_name_cn") or "").strip()

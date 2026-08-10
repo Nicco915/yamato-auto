@@ -1585,9 +1585,71 @@ async function loadHistory() {
   greet();
 }
 
+/* ================= URL 深链（工作台"对话"按钮） ================= */
+/* 自动建 pinned 会话 + 渲染确定性进度气泡。完成后由用户输入首条消息（不自动发消息）。 */
+async function maybePinFromUrl() {
+  const tid = new URLSearchParams(location.search).get('thread_id');
+  if (!tid) return false;
+
+  stopBatchPoll(true);
+  try {
+    const resp = await fetch("/api/v1/dispatcher/sessions", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({title: null, pinned_thread_id: tid})
+    });
+    if (!resp.ok) throw new Error(await resp.text());
+    const data = await resp.json();
+
+    sessionId = data.session_id;
+    localStorage.setItem("yamato_chat_sid", sessionId);
+    history.length = 0;
+    $("msgs").innerHTML = "";
+
+    /* 渲染两个气泡：欢迎 + 进度 */
+    addAgentText("已绑定到批次 " + tid + "。可以直接问进度、错误，或发起新操作。");
+    await renderPinnedBatchProgress(tid);
+
+    /* 同步左侧会话列表（含批次状态徽章） */
+    await loadSessionList($("session-search") ? $("session-search").value : "");
+    return true;
+  } catch (e) {
+    toast("绑定批次失败: " + e.message);
+    return false;
+  }
+}
+
+/* 纯确定性渲染 pinned 批次的进度（复用 renderBatchProgress + startBatchPoll） */
+async function renderPinnedBatchProgress(tid) {
+  try {
+    const resp = await fetch("/api/v1/batches/" + encodeURIComponent(tid));
+    if (resp.status === 404) return;  // 批次被删：静默
+    if (!resp.ok) return;
+    const data = await resp.json();
+
+    if (data.status === "running" || data.status === "pending_review") {
+      renderBatchProgress(data, true);
+      startBatchPoll({ args: { thread_id: tid } });
+    } else {
+      /* completed / error / 其他：一次性静态展示，不挂 polling */
+      renderBatchProgress(data, false);
+    }
+  } catch (e) {
+    console.warn("pinned 批次进度加载失败:", e);
+  }
+}
+
 /* ================= 初始化 ================= */
 async function initChat() {
   await loadSessionList($("session-search") ? $("session-search").value : "");
+
+  /* URL 深链：来自工作台"对话"按钮。短路原有流程。 */
+  if (new URLSearchParams(location.search).get('thread_id')) {
+    await maybePinFromUrl();
+    $("inp").focus();
+    return;
+  }
+
   if (sessionId) {
     await loadHistory();
     resumeBatchPolling();

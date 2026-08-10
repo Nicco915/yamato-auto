@@ -243,7 +243,8 @@ def build_pending_action(tool_name: str, args: dict,
 
     # preview 契约未保证不抛，兜底为 ok=False 错误文案
     try:
-        preview = tool.preview(clean_args)
+        # 透传 session_id：写工具 preview 内部做 pinned scope 检查
+        preview = tool.preview(clean_args, session_id)
     except Exception as exc:  # noqa: BLE001 工具层绝不抛出
         logger.warning("写工具预览生成失败 | 工具=%s | 错误=%s", tool_name, exc)
         msg = f"预览生成失败：{exc}。"

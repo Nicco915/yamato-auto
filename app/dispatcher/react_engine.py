@@ -90,7 +90,8 @@ def run_dispatch_react(message: str, session: DispatcherSession, *,
     - 超 recursion_limit 的兜底 {"status": "ok", "message": 拆分提示}
     """
     # system prompt：react 专用 + L2 操作记忆上下文（注入语义同 loop.py）
-    sys_prompt = prompts.react_prompt(phase)
+    # session_id 一并传入：自动追加 pinned 上下文段（与 legacy 引擎对齐）
+    sys_prompt = prompts.react_prompt(phase, session_id)
     if session_id:
         from app.dispatcher.memory import OperationMemory
         try:

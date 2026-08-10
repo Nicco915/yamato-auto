@@ -255,8 +255,10 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
     # 构建 system prompt（基础 + L2 记忆上下文）
     # 带 hint（分诊成功）：用执行器角色化 prompt（意图已确认，无需意图判断
     # 与 qa 判别）；无 hint（降级路径）：用全量 prompt（行为与重构前一致）
-    sys_prompt = (prompts.executor_prompt(phase) if triage_hint
-                  else prompts.system_prompt(phase))
+    # session_id 一并传入：双引擎自动追加 pinned 上下文段（统一逻辑，
+    # legacy/react/triage 三个 prompt 都从同一处 _pinned_context_block 取数）
+    sys_prompt = (prompts.executor_prompt(phase, session_id) if triage_hint
+                  else prompts.system_prompt(phase, session_id))
     if session_id:
         from app.dispatcher.memory import OperationMemory
         try:
@@ -351,7 +353,8 @@ def run_dispatch(message: str, session: DispatcherSession, *, phase: int = 2,
                     on_progress({"type": "tool_call", "tool": name,
                                  "args_summary": _args_summary(args)})
                 try:
-                    preview = tool.preview(args)
+                    # 透传 session_id：写工具 preview 内部做 pinned scope 检查
+                    preview = tool.preview(args, session_id)
                 except Exception as exc:  # preview 契约未保证不抛，兜底回喂
                     logger.warning(
                         "工具错误：写工具预览生成失败 | 工具=%s | 错误=%s", name, exc)

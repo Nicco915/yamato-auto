@@ -156,16 +156,48 @@ _RULES_PROMPT = r"""
 """
 
 
-def system_prompt(phase: int = 2) -> str:
+def _pinned_context_block(session_id: str | None) -> str:
+    """Pinned 上下文段（双引擎通用，注入 system prompt）。
+
+    session_id 提供时从 chat_sessions.pinned_thread_id 取已 pin 的批次号，
+    拼成自然语言片段让模型知道「这个会话已绑定到批次 X」——
+    - 用户说「那个批次」「它」时优先指向 pinned 批次（避免误指代其他批次）；
+    - pinned 缺省或 DB 异常时返回空串（铁律：防御性注入，绝不抛异常）。
+
+    仅对调度 Agent 内部可见；前端不接受该段（base 原则 2：纯文字描述）。
+    """
+    if not session_id:
+        return ""
+    try:
+        from app.db.models import ChatSession as _ChatSessionOrm
+        from app.db.session import get_session as _get_db_session
+        with _get_db_session() as db:
+            row = db.get(_ChatSessionOrm, session_id)
+            pinned = row.pinned_thread_id if row else None
+        if not pinned:
+            return ""
+        return ("\n\n【会话上下文】当前会话已绑定（pin）到批次「"
+                + str(pinned)
+                + "」。当操作员使用「那个批次」「它」「这个工厂」等指代时，"
+                "默认指向上述批次；写工具若要求 thread_id 而操作员未明确给出，"
+                "也应优先使用该批次号，避免误操作其他批次。")
+    except Exception:  # noqa: BLE001 防御性注入，DB 异常沉默
+        return ""
+
+
+def system_prompt(phase: int = 2, session_id: str | None = None) -> str:
     """按建设阶段生成调度 Agent 的 system prompt。
 
     phase=1：只含只读工具（一期端点只暴露只读工具，写工具段落不下发）；
     phase=2：追加写工具段落（写工具 + 人工确认门上线后使用）。
+
+    session_id 提供时，追加 pinned 上下文段（让模型知道当前会话已绑定批次）。
     """
     parts = [_BASE_PROMPT]
     if phase >= 2:
         parts.append(_WRITE_PROMPT)
     parts.append(_RULES_PROMPT)
+    parts.append(_pinned_context_block(session_id))
     return "".join(parts).strip()
 
 
@@ -422,7 +454,7 @@ thread_id（可选，当前批次号，提供时自动收集该批次上下文�
 """
 
 
-def executor_prompt(phase: int = 2) -> str:
+def executor_prompt(phase: int = 2, session_id: str | None = None) -> str:
     """带 triage_hint 路径的执行器 system prompt（loop.run_dispatch 有 hint 时用）。
 
     与 system_prompt(phase) 的差异：
@@ -432,11 +464,14 @@ def executor_prompt(phase: int = 2) -> str:
     - _WRITE_PROMPT 与 _RULES_PROMPT 原样复用（工具参数构造规则与
       行为铁律是执行器核心职责，保持单一事实来源，不复制）。
     降级路径（无 hint）仍用 system_prompt(phase)，本函数不影响它。
+
+    session_id 提供时追加 pinned 上下文段（与 system_prompt 一致）。
     """
     parts = [_EXECUTOR_ROLE, _EXECUTOR_READ_PROMPT]
     if phase >= 2:
         parts.append(_WRITE_PROMPT)
     parts.append(_RULES_PROMPT)
+    parts.append(_pinned_context_block(session_id))
     return "".join(parts).strip()
 
 
@@ -547,7 +582,7 @@ _REACT_SHADOW_PROMPT = r"""
 """
 
 
-def react_prompt(phase: int = 2) -> str:
+def react_prompt(phase: int = 2, session_id: str | None = None) -> str:
     """react 引擎的 system prompt（react 引擎专用）。
 
     与 legacy 的 system_prompt(phase) 的差异：
@@ -557,6 +592,8 @@ def react_prompt(phase: int = 2) -> str:
       （调用≠执行、一轮一写、黄灯规则走 request_clarification）；
     - _RULES_PROMPT 原样拼接压阵（铁律保持单一事实来源）。
 
+    session_id 提供时追加 pinned 上下文段（与 legacy 双引擎一致）。
+
     legacy prompt 函数（system_prompt / triage_prompt / executor_prompt）
     保留至 DISPATCHER_ENGINE 切换完成，本函数不影响它们。
     """
@@ -565,4 +602,5 @@ def react_prompt(phase: int = 2) -> str:
         parts.append(_REACT_WRITE_KNOWLEDGE)
         parts.append(_REACT_SHADOW_PROMPT)
     parts.append(_RULES_PROMPT)
+    parts.append(_pinned_context_block(session_id))
     return "".join(parts).strip()
