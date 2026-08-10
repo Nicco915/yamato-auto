@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
 """预提取进度落盘 + 批次端点 pre_extraction 键 测试（2026-08-03）。
 
+2026-08-10 适配：每批次独立 session 缓存目录。
+- service._try_load_cached_session 新签名 (batch_id, factory_name, upstream_root)；
+  替身 fake_load 同步对齐。
+- 预提取替身 _try_load_cached_session 命中走 batch_session_path 真实路径。
+
 覆盖：
 1. 状态流转：cached / done / failed（异常摘要 type+message，截 200 字符）、
    pending → running 中间态每次重写后文件都可完整解析；
@@ -63,7 +68,7 @@ def test_state_transitions() -> Path:
     orig_load = extraction_node._try_load_cached_session
     orig_run = extraction_node._run_factory_session
 
-    def fake_load(factory, upstream_root=None):
+    def fake_load(batch_id, factory, upstream_root=None):
         return {"items": {"SKU1": {}}} if factory == "缓存厂" else None
 
     def fake_run(folder_path, factory, expected_skus):

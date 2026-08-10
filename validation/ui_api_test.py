@@ -1,6 +1,17 @@
 # -*- coding: utf-8 -*-
 """生产前端（T1-T5）全链路 API/UI 测试：TestClient 走通批次管理 + 审核 + 审计落库。
 
+2026-08-10 适配每批次独立缓存：
+- get_batch_detail 返回 factories[].session 应基于本批次目录
+  data/sessions/{safe(thread_id)}/{factory}.json，而全局路径
+  data/sessions/{factory}.json（旧 _load_factory_session 仍用此路径）应
+  不再出现在响应里。当前 _load_factory_session 仍是旧语义（按工厂名取
+  顶层路径，无 batch_id 维度），与新设计不一致；断言暂不强制路径格式，
+  待 service._load_factory_session 适配后补一条 batch_id 维度断言。
+- TODO：待 service._load_factory_session 改造后，新增断言
+  detail["factories"][0]["session"]["batch_id"] == THREAD_ID 与
+  session["session_path"] 含 safe(thread_id) 段。
+
 隔离原则（绝不碰 app/data/ 下的生产 db）：
 - checkpoint / master db 全部指向临时目录（env 前置，import app 之前生效）；
 - 下游装箱单复制到临时目录后按批次传入（Node6 只写 output 副本，绝不覆盖原件，
@@ -141,6 +152,8 @@ def main() -> int:
     assert len(currents) == 1, f"应恰有 1 个 current 工厂: {currents}"
     assert currents[0]["factory"] == first_factory
     assert "session" in detail["factories"][0], "factories[] 缺 session 键"
+    # TODO: 待 _load_factory_session 接入 batch_id 后，断言 session 应基于
+    # data/sessions/{safe(THREAD_ID)}/{factory}.json，而非全局路径
     assert detail["audit"] == [], f"resume 前 audit 应为空: {detail['audit']}"
     assert detail["usage"]["scope"] == "process_lifetime", detail["usage"]
     print(f"  ✓ factories {len(detail['factories'])} 个（current=「{first_factory}」），"
