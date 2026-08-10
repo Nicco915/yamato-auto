@@ -838,6 +838,20 @@ function renderBatchProgress(data, active) {
   if (active) {
     html += '<div class="progress-status-row"><span class="progress-spinner"></span>批次进行中…</div>';
   }
+  // 批次挂起待审核时：追加"去审核 / 看批次"按钮，覆盖所有恢复路径
+  // （resumeBatchPolling / renderPinnedBatchProgress / startBatchPoll）。
+  // 用字符串拼接而非 createElement：5s 轮询会用 innerHTML 覆盖整个气泡。
+  if (st === "pending_review" && prog.current_factory) {
+    const tid = data.thread_id;
+    if (tid) {
+      html += '<div class="preview-actions">'
+            + '<a class="btn btn-primary btn-sm" href="/review?thread_id='
+            + encodeURIComponent(tid) + '">去审核</a>'
+            + '<a class="btn btn-sm" href="/batch/'
+            + encodeURIComponent(tid) + '">看批次</a>'
+            + '</div>';
+    }
+  }
   b.innerHTML = html;
   scrollBottom();
 }
