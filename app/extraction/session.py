@@ -26,6 +26,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
+from app.config import get_settings
 from .agent import _route_extract
 from .excel_channel import UnsupportedFileError
 from .schemas import ExtractedItem
@@ -36,6 +37,23 @@ from .target_identifier import (
 )
 
 SESSIONS_DIR = Path(__file__).resolve().parents[2] / "data" / "sessions"
+
+
+def batch_session_dir(batch_id: str) -> Path:
+    """获取某批次专属 session 目录：data/sessions/{safe(batch_id)}/
+
+    调用方按需 mkdir。此函数不创建目录，只返回路径。
+    """
+    settings = get_settings()
+    return SESSIONS_DIR / settings.safe_path_tag(batch_id)
+
+
+def batch_session_path(batch_id: str, factory_name: str) -> Path:
+    """获取某批次某工厂 session.json 路径：data/sessions/{safe(batch_id)}/{factory}.json"""
+    return batch_session_dir(batch_id) / f"{factory_name}.json"
+
+
+# 注意：保留 save/load 与原语义兼容——他们接受 path 参数，调用方按需提供路径
 
 # 会话状态
 WAITING_PL = "waiting_pl"  # 暂无箱单

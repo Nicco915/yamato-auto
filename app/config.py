@@ -150,6 +150,14 @@ class Settings(BaseSettings):
         """报关单输出目录：{output_dir}/{batch_id}/declarations/"""
         return self.batch_output_dir(batch_id) / "declarations"
 
+    def history_output_dir(self, batch_id: str) -> Path:
+        """批次历史 output 归档目录：output/_history/{safe(batch_id)}/
+
+        rerun 时把上一轮的 {batch_id}/ 整体搬到这下面的 r{N}_{ts}/ 下，
+        保留审计。该目录不存在则建；已存在则复用。
+        """
+        return self.output_dir_abs / "_history" / self.safe_path_tag(batch_id)
+
 
 @lru_cache
 def get_settings() -> Settings:

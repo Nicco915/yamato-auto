@@ -5,7 +5,8 @@
 - set_expected_skus() 对接 Node1 的下游期望 SKU，每次处理都产出覆盖率；
 - 负向候选（报关/汇总版）只登记暂缓、不调 LLM，成本只花在真箱单上；
 - 同 SKU 改单自动覆盖旧值入 history 并标 needs_human_review；
-- 会话 JSON 落盘 app/data/sessions/<工厂名>.json 供审计追溯。
+- 会话 JSON 落盘 app/data/sessions/{safe(batch_id)}/<工厂名>.json
+  供审计追溯；每批次独立缓存、跨批次不回看。
 
 供 Node4 的字段契约（每条 extracted_items）：
     sku_code / sku_name / total_quantity / total_net_weight / total_gross_weight /
@@ -20,8 +21,8 @@ Node5 补录，不中断流转。
 直接加载跳过 LLM 调用——实现"审核工厂 A 时提取工厂 B，审核不阻塞提取"。
 保存用原子写入（.tmp → rename），防并发读脏数据。
 
-缓存新鲜度校验（2026-08-05，方案C兜底）：会话缓存只按工厂名命名、无批次
-维度，上一批次的 JSON 可能残留。命中前先校验缓存内的路径证据
+缓存新鲜度校验（2026-08-05，方案C兜底）：会话缓存按 batch_id 隔离目录
+（data/sessions/{safe(batch_id)}/），跨批次独立。命中前再校验缓存内的路径证据
 （targets[].path / source_file）是否仍落在本批次 upstream_root 之下，
 不在（或无任何可用路径证据）则视为陈旧、弃缓存重提，防"改了路径但
 没清缓存""rerun_with_paths 改路径重跑"等场景全厂误用上一批次数据。
@@ -106,14 +107,22 @@ def _compute_coverage_from_cache(cached: dict, expected_skus: list[str]) -> dict
     return {"extracted": len(have), "expected": None, "missing": [], "extra": []}
 
 
-def _run_factory_session(folder_path: str, factory_name: str,
-                         expected_skus: list[str]):
+def _run_factory_session(
+    batch_id: str,
+    folder_path: str,
+    factory_name: str,
+    expected_skus: list[str],
+):
     """增量模式驱动：单据逐个 process_file，返回跑完的 FactorySession。
+
+    每批次独立缓存：写入 data/sessions/{safe(batch_id)}/{factory}.json，
+    与 `_try_load_cached_session` 的读路径完全对称。
 
     保存走原子写入（tmp → rename）：后台预提取线程与图内 Node3 可能
     同时访问同一工厂的 session 文件，原子 rename 保证读方要么看到旧文件
     要么看到完整新文件，不会读到半截 JSON。
     """
+    from app.extraction.session import batch_session_dir
     session = _session_mod.FactorySession(factory=factory_name)
     session.set_expected_skus(expected_skus)
     root = Path(folder_path)
@@ -125,11 +134,12 @@ def _run_factory_session(folder_path: str, factory_name: str,
         r = _session_mod.process_file(session, str(p))
         logger.info("[Node3]   [%s] %s：%s", r.action, p.name, r.message)
 
-    # 原子写入：先写临时文件，再 rename（POSIX 原子操作）
-    _SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-    target = _SESSIONS_DIR / f"{factory_name}.json"
+    # 每批次专属目录：data/sessions/{safe(batch_id)}/
+    session_dir = batch_session_dir(batch_id)
+    session_dir.mkdir(parents=True, exist_ok=True)
+    target = session_dir / f"{factory_name}.json"
     tmp_fd, tmp_path = tempfile.mkstemp(
-        suffix=".json", prefix=f"{factory_name}.", dir=str(_SESSIONS_DIR))
+        suffix=".json", prefix=f"{factory_name}.", dir=str(session_dir))
     try:
         os.write(tmp_fd, json.dumps(session.to_dict(), ensure_ascii=False,
                                      indent=1).encode("utf-8"))
@@ -194,32 +204,32 @@ def _is_cache_fresh(data: dict, factory_name: str, upstream_root: str) -> bool:
     return False
 
 
-def _try_load_cached_session(factory_name: str,
+def _try_load_cached_session(batch_id: str,
+                             factory_name: str,
                              upstream_root: str | None = None) -> dict | None:
-    """尝试从已落盘的 session JSON 加载提取结果。
+    """读本批次 data/sessions/{safe(batch_id)}/{factory_name}.json。
 
-    返回 None 表示缓存未命中（文件不存在 / JSON 损坏 / 无 items / 缓存陈旧），
-    调用方应走正常提取流程。JSON 损坏时只记 warning 不抛异常——
-    可能是后台预提取正在写入（虽已原子 rename，但极端情况下仍可能）。
+    每批次独立缓存；跨批次不回看（由调用方按 batch_id 隔离语义保证）。
 
-    upstream_root 为 None 时不做新鲜度校验（兼容预提取等既有调用方）；
-    给出时按 _is_cache_fresh 规则校验，陈旧缓存视同未命中。
+    upstream_root 不为 None 时做方案 C 校验：缓存内 targets[].path
+    （回落 items/no_code_items 的 source_file，非路径标记如 mock 自动剔除）
+    至少一条在 upstream_root 之下、且该文件仍存在才视为新鲜。
+
+    upstream_root=None 时不做新鲜度校验（兼容预提取）。
+
+    文件不存在/JSON 损坏/不新鲜均返回 None。
     """
-    path = _SESSIONS_DIR / f"{factory_name}.json"
+    from app.extraction.session import batch_session_path
+    path = batch_session_path(batch_id, factory_name)
     if not path.is_file():
         return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
-        logger.warning("[Node3] 会话缓存 %s JSON 损坏，走正常提取：%s",
-                       factory_name, e)
+    except Exception:  # noqa: BLE001
         return None
-    items = data.get("items") or {}
-    if not items and not data.get("no_code_items"):
-        return None  # 空会话（只有元数据无提取结果），不算命中
     if upstream_root is not None and not _is_cache_fresh(
             data, factory_name, upstream_root):
-        return None  # 陈旧缓存（疑似上一批次残留），视同未命中
+        return None
     return data
 
 
@@ -260,8 +270,9 @@ def extraction_node(state: AgentState) -> dict:
     # 新鲜度校验（方案C兜底）：以本批次 upstream_root 判定缓存是否陈旧，
     # state 缺省时回落 .env 缺省上游根目录（与 folder_router 口径一致）
     upstream_root = state.get("upstream_root") or get_settings().upstream_root
+    batch_id = state.get("batch_id") or "unknown"
     cached = None if force else _try_load_cached_session(
-        factory_name, upstream_root)
+        batch_id, factory_name, upstream_root)
     if cached is not None:
         items = [dict(d) for d in (cached.get("items") or {}).values()]
         items += [dict(d) for d in (cached.get("no_code_items") or [])]
@@ -290,7 +301,7 @@ def extraction_node(state: AgentState) -> dict:
         return {"current_factory_data": cur, "force_reextract": False}
 
     try:
-        session = _run_factory_session(folder_path, factory_name, expected_skus)
+        session = _run_factory_session(batch_id, folder_path, factory_name, expected_skus)
     except Exception as e:  # 提取异常不中断流转，转人工兜底
         logger.exception("[Node3] 提取引擎异常：%s，生成人工补录占位数据", e)
         cur["extracted_items"] = _placeholder_items(expected_skus, f"extraction_error: {e}")
