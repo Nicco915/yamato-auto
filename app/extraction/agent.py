@@ -21,6 +21,7 @@
 """
 from __future__ import annotations
 
+import logging
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +39,8 @@ from .pipeline import _convert_doc_to_pdf, _extract_pdf
 from .schemas import ExtractedItem
 from .target_identifier import FileProfile, identify_targets, scan_folder
 from .vision_channel import IMAGE_SUFFIXES, PDF_SUFFIXES, extract_vision
+
+logger = logging.getLogger(__name__)
 
 DOC_SUFFIXES = {".doc", ".docx"}
 IGNORE_NAMES = {".DS_Store", "Thumbs.db"}
@@ -77,20 +80,38 @@ class AgentReport:
         self.issues.append(Issue(level=level, type=type_, message=message, file=file))
 
 
-def _route_extract(fpath: str) -> ChannelResult:
-    """按文件类型路由到对应通道（与 pipeline.extract_folder 同一套规则）。"""
+def _route_extract(fpath: str, pages: list[int] | None = None,
+                   force_vision: bool = False) -> ChannelResult:
+    """按文件类型路由到对应通道（与 pipeline.extract_folder 同一套规则）。
+
+    pages / force_vision 仅对 PDF 生效；doc→pdf 转换后页码不可靠，
+    显式传 pages 时该路径忽略并记 warning。
+    """
     suffix = Path(fpath).suffix.lower()
     if suffix in EXCEL_SUFFIXES:
         return extract_excel(fpath)
     if suffix in PDF_SUFFIXES:
-        return _extract_pdf(fpath)
+        return _extract_pdf(fpath, pages=pages, force_vision=force_vision)
     if suffix in IMAGE_SUFFIXES:
+        if force_vision or pages:
+            logger.info(
+                "_route_extract 图片强制视觉（实际等同 extract_vision）| 文件=%s",
+                fpath,
+            )
         return extract_vision(fpath)
     if suffix in DOC_SUFFIXES:
         with tempfile.TemporaryDirectory() as tmp:
             pdf = _convert_doc_to_pdf(fpath, tmp)
             if pdf is not None:
-                return _extract_pdf(pdf, source_file=fpath)
+                if pages:
+                    # doc 转 pdf 后页码不可靠，忽略用户指定页码
+                    logger.warning(
+                        "_route_extract doc→pdf 后页码不可靠，忽略 pages | 文件=%s | pages=%s",
+                        fpath, pages,
+                    )
+                    pages = None
+                return _extract_pdf(pdf, source_file=fpath, pages=pages,
+                                    force_vision=force_vision)
             return extract_doc(fpath)
     raise UnsupportedFileError(f"无可用通道的文件类型: {fpath}")
 

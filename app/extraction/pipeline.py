@@ -224,16 +224,24 @@ def _iter_files(folder_path: str) -> list[Path]:
     return files
 
 
-def _extract_pdf(pdf_path: str, source_file: str | None = None) -> ChannelResult:
+def _extract_pdf(pdf_path: str, source_file: str | None = None,
+                 pages: list[int] | None = None,
+                 force_vision: bool = False) -> ChannelResult:
     """按文本层探测结果路由 PDF：有文本层走文本快速路，扫描件走视觉通道。
 
     source_file: 原始来源文件（doc 转换场景下标注回原始 doc 路径）。
+    pages: 可选，指定要提取的 1-based 页码列表；非空时一律走视觉通道。
+    force_vision: 可选，True 时跳过文本层探测直接走视觉通道。
     """
-    _, has_text = pdf_to_text(pdf_path)
-    if has_text:
-        res = extract_pdf_text(pdf_path)
+    if force_vision or pages:
+        # 显式指定页码或强制视觉 →直接走视觉，跳过 has_text 探测
+        res = extract_vision(pdf_path, pages=pages)
     else:
-        res = extract_vision(pdf_path)
+        _, has_text = pdf_to_text(pdf_path)
+        if has_text:
+            res = extract_pdf_text(pdf_path)
+        else:
+            res = extract_vision(pdf_path)
     if source_file and source_file != pdf_path:
         for item in res.items:
             item.source_file = source_file

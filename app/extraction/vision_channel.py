@@ -40,26 +40,50 @@ def _png_bytes_to_data_uri(data: bytes) -> str:
     return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
 
 
-def render_pdf_pages(file_path: str, dpi: int = RENDER_DPI) -> list[bytes]:
-    """把 PDF 每页渲染为 PNG 字节流（>=200 DPI，最长边受限）。"""
+def render_pdf_pages(file_path: str, dpi: int = RENDER_DPI,
+                     pages: list[int] | None = None) -> list[bytes]:
+    """把 PDF 每页渲染为 PNG 字节流（>=200 DPI，最长边受限）。
+
+    pages=None：渲染所有页（最多 MAX_TOTAL_PAGES=12）；否则按 1-based 页码
+    去重升序取页（doc.load_page(n-1)），越界单页跳过+warning，全部越界
+    落既有 UnsupportedFileError 分支。MAX_TOTAL_PAGES 仍作最终上限。
+    """
     doc = fitz.open(file_path)
-    pages: list[bytes] = []
+    rendered: list[bytes] = []
     zoom = dpi / 72.0
+
+    def _render(page) -> bytes:
+        rect = page.rect
+        edge = max(rect.width, rect.height) * zoom
+        z = zoom if edge <= MAX_IMAGE_EDGE else zoom * MAX_IMAGE_EDGE / edge
+        pix = page.get_pixmap(matrix=fitz.Matrix(z, z), alpha=False)
+        return pix.tobytes("png")
+
     try:
-        for page in doc:
-            if len(pages) >= MAX_TOTAL_PAGES:
-                break
-            # 若 200DPI 下最长边超限则等比降低 zoom
-            rect = page.rect
-            edge = max(rect.width, rect.height) * zoom
-            z = zoom if edge <= MAX_IMAGE_EDGE else zoom * MAX_IMAGE_EDGE / edge
-            pix = page.get_pixmap(matrix=fitz.Matrix(z, z), alpha=False)
-            pages.append(pix.tobytes("png"))
+        if pages is None:
+            # 现状路径：全页遍历，受 MAX_TOTAL_PAGES 限制
+            for page in doc:
+                if len(rendered) >= MAX_TOTAL_PAGES:
+                    break
+                rendered.append(_render(page))
+        else:
+            # 用户指定页码：1-based 去重升序，越界跳过
+            page_count = len(doc)
+            for p in sorted(set(pages)):
+                if p < 1 or p > page_count:
+                    logger.warning(
+                        "render_pdf_pages 跳过越界页码 | 文件=%s | 指定页=%d | 总页数=%d",
+                        file_path, p, page_count,
+                    )
+                    continue
+                if len(rendered) >= MAX_TOTAL_PAGES:
+                    break
+                rendered.append(_render(doc.load_page(p - 1)))
     finally:
         doc.close()
-    if not pages:
-        raise UnsupportedFileError(f"PDF 无页面: {file_path}")
-    return pages
+    if not rendered:
+        raise UnsupportedFileError(f"PDF 无可渲染页面: {file_path}")
+    return rendered
 
 
 def load_image_file(file_path: str) -> list[bytes]:
@@ -139,15 +163,24 @@ def _extract_batch(
     return result
 
 
-def extract_vision(file_path: str) -> ChannelResult:
-    """提取单个 PDF/图片文件。多页 PDF 分批处理并合并结果。"""
+def extract_vision(file_path: str, pages: list[int] | None = None) -> ChannelResult:
+    """提取单个 PDF/图片文件。多页 PDF 分批处理并合并结果。
+
+    pages=None 时渲染所有页；非空时仅渲染指定页（PDF 专用，1-based）。
+    图片文件忽略 pages 参数。
+    """
     suffix = Path(file_path).suffix.lower()
     source_name = Path(file_path).name
 
     if suffix in PDF_SUFFIXES:
-        pages = render_pdf_pages(file_path)
-        uris = [_png_bytes_to_data_uri(p) for p in pages]
+        rendered = render_pdf_pages(file_path, pages=pages)
+        uris = [_png_bytes_to_data_uri(p) for p in rendered]
     elif suffix in IMAGE_SUFFIXES:
+        if pages is not None:
+            logger.info(
+                "extract_vision 忽略 pages 参数（图片文件无页码概念） | 文件=%s",
+                file_path,
+            )
         uris = [_image_data_uri(file_path, d) for d in load_image_file(file_path)]
     else:
         raise UnsupportedFileError(f"不是影像文件: {file_path}")

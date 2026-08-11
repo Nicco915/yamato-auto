@@ -350,8 +350,12 @@ def process_file(session: FactorySession, file_path: str) -> ProcessResult:
     )
 
 
-def force_extract(session: FactorySession, file_path: str) -> ProcessResult:
-    """人工告知：强制提取指定文件（跳过一切身份判定）。"""
+def force_extract(session: FactorySession, file_path: str,
+                  pages: list[int] | None = None) -> ProcessResult:
+    """人工告知：强制提取指定文件（跳过一切身份判定）。
+
+    pages: 可选，PDF 专用。指定页码时一律走视觉大模型识别。
+    """
     file_path = str(file_path)
     session.updated_at = time.time()
     # 从暂缓名单移除（如在其中）
@@ -364,10 +368,13 @@ def force_extract(session: FactorySession, file_path: str) -> ProcessResult:
     session.targets.append({
         "path": file_path, "barcodes": barcodes,
         "name_score": 999, "forced": True,
+        "pages": list(pages) if pages else None,
     })
     session.no_pl_notified = False
     try:
-        res = _route_extract(file_path)
+        # pages 有值 → 强制走视觉通道；否则按 _route_extract 自动路由
+        res = _route_extract(file_path, pages=pages,
+                             force_vision=bool(pages))
     except Exception as e:  # noqa: BLE001
         session._log("blocking", "FORCE_EXTRACT_FAILED",
                      f"人工指定文件提取失败：{type(e).__name__}: {str(e)[:200]}", file=file_path)
@@ -375,10 +382,13 @@ def force_extract(session: FactorySession, file_path: str) -> ProcessResult:
         return ProcessResult(file=file_path, action="channel_error",
                              message=f"提取失败：{e}", coverage=session.coverage(), status=session.status)
     new_skus, updated = _merge(session, res.items, file_path)
-    session.file_records[file_path] = {"role": "forced", "note": "人工指定强制提取"}
+    pages_note = f"（第 {','.join(map(str, pages))} 页）" if pages else ""
+    session.file_records[file_path] = {
+        "role": "forced", "note": f"人工指定强制提取{pages_note}",
+    }
     session._refresh_status()
     return ProcessResult(file=file_path, action="forced",
-                         message=f"人工指定提取 {len(res.items)} 条（新增 {len(new_skus)}，改单 {len(updated)}）",
+                         message=f"人工指定提取 {len(res.items)} 条（新增 {len(new_skus)}，改单 {len(updated)}）{pages_note}",
                          new_skus=new_skus, updated_skus=updated,
                          coverage=session.coverage(), status=session.status)
 
