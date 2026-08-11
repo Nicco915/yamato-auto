@@ -943,6 +943,151 @@ def retry_factory_extraction(
         return result
 
 
+def force_extract_file(
+    thread_id: str,
+    file_path: str,
+    pages: list[int] | None = None,
+    force_vision: bool = False,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict[str, Any]:
+    """指定单个文件强制重新提取（跳过自动目标识别，可指定页码/强制视觉）。
+
+    适用场景：
+    - 自动识别选错了箱单（比如挑了报关汇总版）
+    - 箱单是扫描件/图片，自动识别扫不出
+    - 一份 PDF 混了多份单据，操作员只要其中几页
+    - 文本层识别把数字读错，要换看图方式重新识别
+
+    机制：
+    1. 校验批次挂起（NODE5 in snap.next）
+    2. 校验 file_path 在批次 upstream_root 之下（防路径穿越）
+    3. 校验 pages（每个 1..≤500、去重升序、长度 ≤ 12）
+    4. 从批次专属 session 目录加载 FactorySession
+    5. 调 session.force_extract(session, file_path, pages=pages)
+    6. 原子写回 session JSON（与 Node3 写策略一致）
+    7. graph.update_state(as_node=NODE2) 不带 force_reextract=True
+       ——要 Node3 命中缓存、读到刚写入的 force_extract 结果
+    8. graph.stream 直到 __interrupt__，返回新 review_data
+    """
+    from app.extraction.session import (
+        FactorySession,
+        batch_session_dir,
+        batch_session_path,
+        force_extract as session_force_extract,
+    )
+
+    graph = get_graph()
+    cfg = _config(thread_id)
+    snap = graph.get_state(cfg)
+    if not snap.values:
+        raise ValueError(f"thread {thread_id} 不存在")
+    if NODE5 not in (snap.next or ()):
+        raise ValueError(f"thread {thread_id} 当前未挂起待审核，无法指定文件提取")
+
+    cur = snap.values.get("current_factory_data") or {}
+    factory = cur.get("factory_name")
+    if not factory:
+        raise ValueError(f"thread {thread_id} 缺少当前工厂数据，无法指定文件提取")
+
+    # 页码 sanity：1-based、去重升序、范围 1..500、长度 ≤ 12
+    clean_pages: list[int] | None = None
+    if pages is not None:
+        if not isinstance(pages, list) or not all(isinstance(p, int) for p in pages):
+            raise ValueError("pages 必须是整数列表")
+        clean_pages = sorted(set(pages))
+        if not clean_pages:
+            clean_pages = None
+        else:
+            if clean_pages[0] < 1 or clean_pages[-1] > 500:
+                raise ValueError(f"pages 必须在 1..500 范围内，实际={clean_pages}")
+            if len(clean_pages) > 12:
+                raise ValueError(
+                    f"pages 长度 {len(clean_pages)} 超过上限 12，请缩小范围"
+                )
+
+    # 路径白名单：必须在本批次 upstream_root 之下，且是真实文件
+    upstream_root = (
+        snap.values.get("upstream_root") or get_settings().upstream_root)
+    file_path_obj = Path(file_path).expanduser().resolve()
+    if not file_path_obj.is_file():
+        raise ValueError(f"文件不存在: {file_path}")
+    upstream_root_obj = Path(upstream_root).expanduser().resolve()
+    try:
+        file_path_obj.relative_to(upstream_root_obj)
+    except ValueError as e:
+        raise ValueError(
+            f"文件不在本批次上游工厂文件夹之下，禁止操作 | "
+            f"file={file_path_obj} | upstream_root={upstream_root_obj}"
+        ) from e
+
+    # 加载批次专属 session JSON（不存在时报清晰错误，避免 FactorySession.load
+    # 静默返回空 session 覆盖既有成果）
+    sess_path = batch_session_path(thread_id, factory)
+    if not sess_path.is_file():
+        raise ValueError(
+            f"该工厂尚无提取会话（{sess_path}），请先用 retry_factory 重跑整厂后再指定文件"
+        )
+    session_obj = FactorySession.load(str(sess_path))
+
+    # 执行强制提取（force_vision 在 pages 有值时自动为 True）
+    with logging_context(thread_id=thread_id):
+        process_result = session_force_extract(
+            session_obj, str(file_path_obj), pages=clean_pages,
+            force_vision=force_vision,
+        )
+        if process_result.action == "channel_error":
+            raise ValueError(process_result.message or "提取失败")
+
+        # 原子写回 session JSON（与 extraction_node.py:141-148 一致）
+        import os, tempfile as _tempfile
+        sess_dir = batch_session_dir(thread_id)
+        sess_dir.mkdir(parents=True, exist_ok=True)
+        data = session_obj.to_dict()
+        fd, tmp_path = _tempfile.mkstemp(
+            dir=str(sess_dir), prefix=f".{factory}.", suffix=".json.tmp",
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                import json as _json
+                _json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, str(sess_path))
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+        # 不置 force_reextract=True：要让 Node3 命中缓存读回刚才写的内容
+        graph.update_state(cfg, {}, as_node=NODE2)
+
+        emit = _make_progress_emitter(on_progress, seed=snap.values)
+        for event in graph.stream(None, cfg, stream_mode="updates"):
+            emit(event)
+            if "__interrupt__" in event:
+                _start_pre_extraction(thread_id)
+                return {
+                    "status": "pending_human_review",
+                    "thread_id": thread_id,
+                    "factory": factory,
+                    "file_path": str(file_path_obj),
+                    "pages": clean_pages,
+                    "review_data": event["__interrupt__"][0].value,
+                    "message": process_result.message,
+                }
+
+        final = graph.get_state(cfg)
+        return {
+            "status": "completed",
+            "thread_id": thread_id,
+            "factory": factory,
+            "file_path": str(file_path_obj),
+            "pages": clean_pages,
+            "final_output_path": final.values.get("final_output_path"),
+            "message": process_result.message,
+        }
+
+
 def get_order_state(thread_id: str) -> dict[str, Any]:
     """查询指定 thread_id 的当前状态（前端轮询/调试入口）。"""
     graph = get_graph()

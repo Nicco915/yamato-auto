@@ -351,10 +351,14 @@ def process_file(session: FactorySession, file_path: str) -> ProcessResult:
 
 
 def force_extract(session: FactorySession, file_path: str,
-                  pages: list[int] | None = None) -> ProcessResult:
+                  pages: list[int] | None = None,
+                  force_vision: bool = False) -> ProcessResult:
     """人工告知：强制提取指定文件（跳过一切身份判定）。
 
     pages: 可选，PDF 专用。指定页码时一律走视觉大模型识别。
+    force_vision: 可选，True 时跳过 has_text 探测直接走视觉通道（不管
+    文件有没有文字层）。两者独立：pages 控制页码范围，force_vision 控
+    制是否走视觉。
     """
     file_path = str(file_path)
     session.updated_at = time.time()
@@ -369,12 +373,13 @@ def force_extract(session: FactorySession, file_path: str,
         "path": file_path, "barcodes": barcodes,
         "name_score": 999, "forced": True,
         "pages": list(pages) if pages else None,
+        "force_vision": bool(force_vision),
     })
     session.no_pl_notified = False
     try:
-        # pages 有值 → 强制走视觉通道；否则按 _route_extract 自动路由
-        res = _route_extract(file_path, pages=pages,
-                             force_vision=bool(pages))
+        # 显式 force_vision 或 pages 非空 → 强制走视觉
+        use_vision = bool(force_vision or pages)
+        res = _route_extract(file_path, pages=pages, force_vision=use_vision)
     except Exception as e:  # noqa: BLE001
         session._log("blocking", "FORCE_EXTRACT_FAILED",
                      f"人工指定文件提取失败：{type(e).__name__}: {str(e)[:200]}", file=file_path)
