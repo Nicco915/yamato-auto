@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -36,7 +37,14 @@ from .target_identifier import (
     scan_file,
 )
 
-SESSIONS_DIR = Path(__file__).resolve().parents[2] / "data" / "sessions"
+# 测试子进程可用 YAMATO_SESSIONS_DIR 指向临时目录（血泪红线 2026-08-11：
+# 子进程隔离 env 会被 load_dotenv override 打回，sessions 目录不读 .env，
+# 必须走独立 env 变量）。service.py 以 from-import 引用本常量，
+# 在子进程 import 时拿到的即为本处隔离后的值。
+SESSIONS_DIR = Path(
+    os.environ.get("YAMATO_SESSIONS_DIR")
+    or (Path(__file__).resolve().parents[2] / "data" / "sessions")
+)
 
 
 def batch_session_dir(batch_id: str) -> Path:

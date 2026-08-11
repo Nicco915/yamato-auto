@@ -33,7 +33,16 @@ logger = logging.getLogger(__name__)
 # 加载项目根目录的 .env；override=True 表示 .env 中的值会覆盖已存在的同名环境变量。
 # 本文件位于 <project>/app/app/extraction/llm_client.py，项目根 = parents[2]，
 # 用 Path(__file__) 推导（而非 import app.config），避免循环依赖。
-_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+#
+# 血泪红线（2026-08-11）：pytest 以子进程跑 scripts/run_cli.py --reset 时，
+# 本行 override 会把父进程隔离用的临时 db 环境变量打回 .env 真实路径，
+# 曾因此删除生产 checkpoints.db / master.db。
+# 解法：测试子进程通过 YAMATO_DOTENV_PATH 指向一份"临时 .env"（db/output
+# 已指向临时目录），本模块优先尊重该变量。
+_ENV_PATH = Path(
+    os.environ.get("YAMATO_DOTENV_PATH")
+    or (Path(__file__).resolve().parents[2] / ".env")
+)
 load_dotenv(dotenv_path=_ENV_PATH, override=True)
 
 DEFAULT_BASE_URL = "https://api.siliconflow.cn/v1"
