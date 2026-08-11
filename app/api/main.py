@@ -546,10 +546,15 @@ class UpdateSessionRequest(BaseModel):
 
 
 @app.get("/api/v1/dispatcher/sessions")
-async def list_dispatcher_sessions(q: str | None = None):
+async def list_dispatcher_sessions(
+    q: str | None = None,
+    pinned_thread_id: str | None = None,
+):
     """列出所有会话，按 is_pinned DESC + updated_at DESC 排序（左侧 sidebar 数据源）。
 
-    支持按标题模糊搜索：q=关键词 过滤 title ILIKE %关键词%。
+    支持：
+    - 按标题模糊搜索：q=关键词 过滤 title ILIKE %关键词%
+    - 按关联批次精确过滤：pinned_thread_id=xxx（工作台"对话"复用已有会话）
     对每个有 pinned_thread_id 的会话，额外批量查询批次状态（batch_status）。
     """
     try:
@@ -558,6 +563,10 @@ async def list_dispatcher_sessions(q: str | None = None):
 
         with _get_db_session() as db:
             query = db.query(_ChatSessionOrm)
+            if pinned_thread_id and pinned_thread_id.strip():
+                query = query.filter(
+                    _ChatSessionOrm.pinned_thread_id == pinned_thread_id.strip()
+                )
             if q and q.strip():
                 query = query.filter(_ChatSessionOrm.title.ilike(f"%{q.strip()}%"))
             rows = query.order_by(_ChatSessionOrm.is_pinned.desc(),

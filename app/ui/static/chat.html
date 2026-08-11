@@ -1600,13 +1600,31 @@ async function loadHistory() {
 }
 
 /* ================= URL 深链（工作台"对话"按钮） ================= */
-/* 自动建 pinned 会话 + 渲染确定性进度气泡。完成后由用户输入首条消息（不自动发消息）。 */
+/* 自动建 pinned 会话 + 渲染确定性进度气泡。完成后由用户输入首条消息（不自动发消息）。
+   如果该批次已有绑定会话，优先复用原会话而非新建。 */
 async function maybePinFromUrl() {
   const tid = new URLSearchParams(location.search).get('thread_id');
   if (!tid) return false;
 
   stopBatchPoll(true);
   try {
+    /* 先查是否已有该批次的绑定会话：有则复用，避免重复创建。 */
+    const checkResp = await fetch(
+      "/api/v1/dispatcher/sessions?pinned_thread_id=" + encodeURIComponent(tid)
+    );
+    if (checkResp.ok) {
+      const existing = await checkResp.json();
+      if (existing.length > 0) {
+        const sid = existing[0].session_id;
+        if (sid) {
+          await switchSession(sid);
+          await renderPinnedBatchProgress(tid);
+          return true;
+        }
+      }
+    }
+
+    /* 无已绑定会话：按原逻辑新建。 */
     const resp = await fetch("/api/v1/dispatcher/sessions", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
