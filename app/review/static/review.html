@@ -24,6 +24,9 @@
   #btn-back { padding: 8px 18px; border: 1px solid #4b5563; border-radius: 6px;
               font-size: 14px; color: #e5e7eb; background: #374151; cursor: pointer; }
   #btn-back:hover { background: #4b5563; }
+  #btn-prev { padding: 8px 18px; border: 1px solid #4b5563; border-radius: 6px;
+              font-size: 14px; color: #e5e7eb; background: #374151; cursor: pointer; }
+  #btn-prev:hover { background: #4b5563; }
   /* 顶栏搜索与键盘提示 */
   #sku-search { padding: 5px 10px; border: 1px solid #4b5563; border-radius: 6px;
                 background: #374151; color: #fff; font-size: 13px; width: 170px; }
@@ -132,6 +135,7 @@
   <span class="spacer"></span>
   <span class="kbd-hint">↑↓ 切换 · Enter 下一条 · / 搜索</span>
   <span id="badge">挂起待审</span>
+  <button id="btn-prev" onclick="goPrevFactory()" title="返回上一工厂" style="display:none;">← 上一工厂</button>
   <button id="btn-back" onclick="goBackToBatch()" title="返回批次详情页" style="display:none;">返回批次</button>
   <button id="btn-submit" onclick="submitReview()">提交并继续</button>
 </div>
@@ -199,6 +203,8 @@ let searchMatches = [];    // 当前搜索命中的卡片下标
 let selectedIdx = 0;
 let curDoc = null;         // 当前左屏文件路径
 let curPage = 1, pageCount = 1;
+let factoryList = [];      // 当前批次所有工厂 [{factory, role}]
+let currentFactoryIndex = -1;  // 当前工厂在 factoryList 中的索引
 /* 缩放状态 */
 let zoomPerDoc = {};        // { path: zoom_ratio } 单据缩放记忆
 let curZoom = 1;            // 当前缩放比（1=适应宽度）
@@ -235,6 +241,8 @@ async function loadPayload() {
     $("badge").textContent = "挂起待审"; $("badge").className = "";
     $("btn-submit").textContent = "提交并继续";
     $("btn-back").style.display = "none";
+    // 加载工厂导航（正常审核模式才需要）
+    await loadFactoryList();
   }
   $("done-view").style.display = "none";
   renderMissingBar();
@@ -243,6 +251,42 @@ async function loadPayload() {
   // 默认选中第一条需要人工关注的（Error/Warning/新SKU优先），否则第一条
   const pri = items.findIndex(i => i.status !== "Normal" || i.is_new_sku);
   selectCard(pri >= 0 ? pri : 0);
+}
+
+async function loadFactoryList() {
+  try {
+    const r = await fetch("/api/v1/batches/" + encodeURIComponent(threadId));
+    if (!r.ok) return;
+    const data = await r.json();
+    factoryList = (data.factories || []).map(f => ({ factory: f.factory, role: f.role }));
+    currentFactoryIndex = factoryList.findIndex(f => f.factory === (payload.factory_name || ""));
+    updateNavButtons();
+  } catch (e) {
+    console.warn("加载工厂列表失败", e);
+  }
+}
+
+function updateNavButtons() {
+  const prevBtn = $("btn-prev");
+  if (!prevBtn) return;
+  if (currentFactoryIndex <= 0) {
+    prevBtn.style.display = "none";
+    return;
+  }
+  const prev = factoryList[currentFactoryIndex - 1];
+  if (prev && prev.role === "done") {
+    prevBtn.style.display = "";
+  } else {
+    prevBtn.style.display = "none";
+  }
+}
+
+function goPrevFactory() {
+  if (currentFactoryIndex <= 0) return;
+  const prev = factoryList[currentFactoryIndex - 1];
+  if (!prev) return;
+  location.href = "/review?thread_id=" + encodeURIComponent(threadId) +
+                  "&factory=" + encodeURIComponent(prev.factory);
 }
 
 function goBackToBatch() {
@@ -765,6 +809,8 @@ async function doSubmit() {
       $("tb-factory").textContent = "工厂: " + (payload.factory_name || "-");
       renderMissingBar(); renderCards(); renderDocSelect();
       selectCard(0);
+      // 推进到下一工厂后重新计算导航按钮
+      await loadFactoryList();
     } else {
       showDone(data);
     }
@@ -781,6 +827,8 @@ function showDone(data) {
   $("badge").textContent = isReopen ? "重新编辑已完成" : "已完成"; $("badge").className = "done";
   $("btn-submit").disabled = true;
   $("btn-back").style.display = "";
+  // 完成后仍可返回上一工厂（如果有）
+  updateNavButtons();
   $("done-view").style.display = "block";
   $("done-path").textContent = data.final_output_path ? ("最终文件：" + data.final_output_path) : (data.message || "");
   $("cards").innerHTML = "";
