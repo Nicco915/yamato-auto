@@ -135,15 +135,15 @@ def test_open_unsupported_extension():
     assert "不支持的文件类型" in r.json()["detail"]
 
 
-def test_open_returns_500_on_open_error():
-    """open_with_default_app 抛 OpenFileError → 500，detail 透传中文消息。"""
+def test_open_returns_503_on_open_error():
+    """open_with_default_app 抛 OpenFileError → 503，detail 透传中文消息。"""
     path = _make_output_file("test.xlsx")
     with patch("app.ui.router.service.get_batch_detail") as mock_detail, \
          patch("app.ui.router.open_with_default_app") as mock_open:
         mock_detail.return_value = {"final_output_path": str(path)}
         mock_open.side_effect = OpenFileError("中文消息")
         r = local_client.post("/api/v1/batches/TEST/open")
-    assert r.status_code == 500
+    assert r.status_code == 503
     assert r.json()["detail"] == "中文消息"
 
 

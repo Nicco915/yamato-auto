@@ -173,12 +173,14 @@ async function openWithExcel(btn) {
     var resp = await fetch("/api/v1/batches/" + encodeURIComponent(threadId) + "/open", { method: "POST" });
     var data = null;
     try { data = await resp.json(); } catch (e) { data = null; }
-    if (resp.ok) {
-      var p = (data && data.path) || (btn.getAttribute("data-path") || "");
+    if (resp.ok && data && data.ok) {
+      var p = data.path || btn.getAttribute("data-path") || "";
       showToast("已用 Excel 打开：" + baseName(p));
-    } else {
+    } else if (!resp.ok) {
       var detail = (data && data.detail) ? String(data.detail) : ("打开失败（HTTP " + resp.status + "）");
       showToast(detail);
+    } else {
+      showToast("打开响应异常，请检查文件是否已正常打开");
     }
   } catch (e) {
     showToast("网络异常，请稍后重试：" + (e && e.message ? e.message : e));

@@ -239,7 +239,11 @@ async def _resolve_batch_output(thread_id: str) -> Path:
     final_output_path = detail.get("final_output_path")
     if not final_output_path:
         raise HTTPException(status_code=404, detail="批次没有最终输出文件路径")
-    path = Path(final_output_path).expanduser().resolve()
+    try:
+        path = Path(final_output_path).expanduser().resolve()
+    except OSError as e:
+        # 循环 symlink / 无权限父目录 等，无法解析为合法路径
+        raise HTTPException(status_code=404, detail=f"输出路径无法解析: {e}") from e
 
     # 输出目录白名单：必须落在 settings.output_dir_abs 之下。
     # 注意：output_dir_abs 自身只走 Settings.resolve()（相对→绝对），
@@ -301,7 +305,8 @@ async def open_batch_output(thread_id: str, request: Request):
     try:
         await asyncio.to_thread(open_with_default_app, path)
     except OpenFileError as e:
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        # 503 更合适：不是服务端 bug，而是本地环境缺程序/文件被占用/超时等
+        raise HTTPException(status_code=503, detail=str(e)) from e
     return {"ok": True, "path": str(path)}
 
 
