@@ -11,37 +11,19 @@ resume 数据约定：
              新 SKU 必须补齐 name_cn / hs_code / inspection_required） ... ]
 }
 """
-import json
 import logging
-from pathlib import Path
 
 from langgraph.types import interrupt
 
-from app.config import get_settings
 from app.logging_config import bind_factory_from_state
 from app.nodes.compute_align import _safe_div
+from app.nodes.review_payload import build_review_payload
 from app.state import AgentState
 
 logger = logging.getLogger(__name__)
 
-# 工厂商检默认值配置（从 JSON 加载，未配置的工厂默认 0）
-_FACTORY_INSPECTION_CACHE: dict[str, int] | None = None
-
-def _load_factory_inspection_defaults() -> dict[str, int]:
-    """加载 factory_inspection_defaults.json，缓存到模块级变量。"""
-    global _FACTORY_INSPECTION_CACHE
-    if _FACTORY_INSPECTION_CACHE is not None:
-        return _FACTORY_INSPECTION_CACHE
-    config_path = Path(__file__).parents[1] / "config" / "factory_inspection_defaults.json"
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            _FACTORY_INSPECTION_CACHE = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        logger.warning("[Node5] 加载工厂商检配置失败，使用默认值: %s", e)
-        _FACTORY_INSPECTION_CACHE = {}
-    return _FACTORY_INSPECTION_CACHE
-
-# 新 SKU 需人工补录的合规字段清单（《第三阶段.md》改造点 B）
+# 新 SKU 需人工补录的合规字段清单（《第三阶段.md》改造点 B）；
+# 实际定义在 app/nodes/review_payload.py 里，reopen 复用同一份
 NEW_SKU_REQUIRED_FIELDS = ["name_cn", "hs_code", "inspection_required"]
 
 
@@ -92,59 +74,11 @@ def human_review(state: AgentState) -> dict:
     cur = dict(state.get("current_factory_data") or {})
 
     # ---- 构建审核负载（第一阶段.md 第 6 节结构）----
-    factory_name = cur.get("factory_name")
-    inspection_defaults = _load_factory_inspection_defaults()
-    default_inspection = inspection_defaults.get(factory_name, 0)
-
-    items_payload = []
-    for item in cur.get("calculated_items") or []:
-        entry = {
-            "sku": item.get("sku"),
-            "extracted_data": item.get("extracted_data"),
-            "calculation": item.get("calculation"),
-            "status": item.get("status"),
-            "is_human_edited": item.get("is_human_edited", False),
-            "is_new_sku": item.get("is_new_sku", False),
-            "db_record": item.get("db_record") or {},
-            # 透传 Node4 的异常详情，让前端能向操作员解释 Error/Warning 原因
-            "error_msg": item.get("error_msg"),
-            "unexpected_sku": item.get("unexpected_sku", False),
-        }
-        if item.get("is_new_sku"):
-            # 新 SKU：前端展示需补录字段，inspection_required 按工厂配置设默认值
-            entry["fields_to_fill"] = NEW_SKU_REQUIRED_FIELDS
-            entry["inspection_required"] = default_inspection
-        else:
-            # 老 SKU：主库三字段提升到顶层，作为前端编辑框初值（本批次可改；
-            # 留空提交时 Node6 写入回退 db_record 主库值，见 writer.py）
-            db = entry["db_record"]
-            entry["name_cn"] = db.get("name_cn")
-            entry["hs_code"] = db.get("hs_code")
-            entry["inspection_required"] = db.get("inspection_required")
-        items_payload.append(entry)
-
-    review_payload = {
-        "factory_name": cur.get("factory_name"),
-        "folder_path": cur.get("folder_path"),
-        "source_documents": cur.get("source_documents") or [],
-        "missing_skus": cur.get("missing_skus") or [],
-        "items": items_payload,
-        # Node3 提取 Agent 的结构化反馈与覆盖率（暂无箱单/目标为空/改单等）
-        "extraction_issues": cur.get("extraction_issues") or [],
-        "extraction_coverage": cur.get("extraction_coverage") or {},
-        # 单重差异预警阈值，供审核页对照列实时高亮（Node4 判 Warning 同口径）
-        "weight_diff_warn_ratio": get_settings().weight_diff_warn_ratio,
-    }
-
-    # W6a：暂缓二遍重试仍失败的最终挂起，透传标记供审核页提示
-    # 「已重试仍失败，请人工补录或告知对照文件夹」（前端渲染本期不做）；
-    # 无此情形不加键，payload 结构对既有消费者保持兼容
-    if cur.get("is_final_attempt") and cur.get("extraction_ok") is False:
-        review_payload["final_attempt"] = True
-        review_payload["failure_reason"] = cur.get("failure_reason") or "unknown"
+    # 公共构建函数 review_payload.py：与 reopen 共用同一份逻辑
+    review_payload = build_review_payload(cur)
 
     logger.info("[Node5] 🔴 挂起等待人工审核：工厂「%s」，%d 个 SKU",
-                cur.get('factory_name'), len(items_payload))
+                cur.get('factory_name'), len(review_payload["items"]))
 
     # 🔴 系统在此暂停！resume 值为人类反馈数据
     human_feedback = interrupt(review_payload)
