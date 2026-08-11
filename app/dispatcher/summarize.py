@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 
 def _links_for(thread_id: str | None) -> list[dict]:
     """批次相关跳转链接：审核页 /review?thread_id= + 批次详情 /batch/{tid}。"""
@@ -184,6 +186,55 @@ def _sum_retry_factory(args: dict, result: dict) -> dict:
             "links": _links_for(str(tid) if tid else None)}
 
 
+def _sum_force_extract_file(args: dict, result: dict) -> dict:
+    """force_extract_file：指定文件（含可选页码）强制重新提取后挂起待审核。
+
+    文案点出用了哪个文件的哪几页；与 retry_factory 同型返回结构，
+    复用 _review_lines / _progress_line 显示当前工厂 SKU/批次进度。
+    """
+    tid = result.get("thread_id") or args.get("thread_id")
+    status = result.get("status")
+    file_path = result.get("file_path") or args.get("file_path") or ""
+    pages = result.get("pages") or args.get("pages")
+    file_name = Path(file_path).name if file_path else "（未指定）"
+    pages_text = f"第 {','.join(str(p) for p in pages)} 页" if pages else "整份"
+
+    if status == "pending_human_review":
+        review_data = result.get("review_data") or {}
+        factory = review_data.get("factory_name") or result.get("factory") or "未知"
+        lines = _review_lines(review_data)
+        prog = _progress_line(str(tid)) if tid else None
+        if prog:
+            lines.append(prog)
+        message = (
+            f"批次 {tid} 工厂「{factory}」已用「{file_name}」的 {pages_text} "
+            f"重新提取，待人工审核。"
+        )
+        return {"message": message, "summary_lines": lines,
+                "links": _links_for(str(tid) if tid else None)}
+
+    if status == "completed":
+        factory = result.get("factory") or "未知"
+        out = result.get("final_output_path")
+        lines: list[str] = []
+        if out:
+            lines.append(f"最终输出：{out}")
+        message = (
+            f"批次 {tid} 工厂「{factory}」已用「{file_name}」的 {pages_text} "
+            f"重新提取，全部工厂处理完成，无需人工审核。"
+        )
+        return {"message": message, "summary_lines": lines,
+                "links": ([{"label": "看批次", "href": f"/batch/{tid}"}]
+                          if tid else [])}
+
+    # 状态不认识：通用兜底但带上已知信息
+    message = (
+        f"批次 {tid} 指定文件提取已执行（状态：{status or '未知'}，"
+        f"文件：{file_name}，{pages_text}）。"
+    )
+    return {"message": message, "summary_lines": [], "links": _links_for(str(tid) if tid else None)}
+
+
 # 环境变量名 → 人可读中文标签，避免向用户暴露内部变量名
 ENV_LABELS: dict[str, str] = {
     "UPSTREAM_ROOT": "上游工厂文件夹",
@@ -323,6 +374,8 @@ def summarize_applied(tool: str, args: dict | None, result: dict | None) -> dict
             return _sum_batch_like(tool, result)
         if tool == "retry_factory":
             return _sum_retry_factory(args, result)
+        if tool == "force_extract_file":
+            return _sum_force_extract_file(args, result)
         if tool == "submit_review":
             return _sum_submit_review(args, result)
         if tool == "set_paths":

@@ -119,6 +119,16 @@ _WRITE_PROMPT = r"""
   folder 参数调用；folder 是一级子目录名不是完整路径。操作员明确说
   "以后都这样""记住这个对照"时 save=true（永久保存，后续批次自动生效），
   否则默认 false 仅本次批次生效。
+- force_extract_file：指定某个文件（可指定页码）强制重新提取。参数
+  thread_id（必填）、file_path（必填，绝对路径）、pages（可选，PDF 页码
+  数组从 1 开始）、force_vision（可选，true=整份走视觉大模型）。
+  操作员说"识别错文件了，应该用 XX 这份""这份箱单是扫描件识别不出来"
+  "只要第 3 到 5 页""用看图的方式重新识别一下"时使用。
+  ⚠️ 与 retry_factory 的区别：retry_factory 重跑整个工厂文件夹的自动识别，
+  force_extract_file 只针对操作员点名的这一个文件、跳过自动识别。
+  操作员点名了具体文件就用本工具，没点名文件只说"重试"就用 retry_factory。
+  操作员没给绝对路径时，先用 list_directory 浏览该工厂文件夹帮他定位，
+  或用 request_file_selection 让他在界面选，禁止编造路径。
 - submit_review：提交人工审核结果。参数 thread_id（必填）、approved
   （必填，true=通过 / false=驳回）、items（必填，审核后的完整明细）。
   items 契约：先调 get_review_payload 拿到当前 items，按操作员口述修改
@@ -341,6 +351,7 @@ _TOOL_CN = {
     "create_batch": "发起新批次",
     "rerun": "整批重跑",
     "retry_factory": "重试当前工厂",
+    "force_extract_file": "指定文件重新提取",
     "submit_review": "提交审核",
     "set_paths": "修改路径配置",
     "curate_kb": "排查知识库",

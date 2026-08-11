@@ -411,6 +411,7 @@ _TOOL_CN = {
     "create_batch": "发起新批次",
     "rerun": "整批重跑",
     "retry_factory": "重试当前工厂",
+    "force_extract_file": "指定文件重新提取",
     "submit_review": "提交审核",
     "set_paths": "修改路径配置",
     "curate_kb": "排查知识库",
