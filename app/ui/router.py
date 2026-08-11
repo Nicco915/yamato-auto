@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from app.api import service
@@ -191,6 +191,35 @@ async def batch_detail(thread_id: str):
     if progress is not None:
         detail["pre_extraction"] = progress
     return detail
+
+
+@router.api_route("/api/v1/batches/{thread_id}/output", methods=["GET", "HEAD"])
+async def download_batch_output(thread_id: str):
+    """下载/打开批次最终输出 Excel.
+
+    返回 final_output_path 指向的 Excel 文件，浏览器根据系统设置决定
+    直接打开或下载。文件必须存在且是 .xlsx/.xls 类型，否则 404。
+    """
+    try:
+        detail = await asyncio.to_thread(service.get_batch_detail, thread_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    final_output_path = detail.get("final_output_path")
+    if not final_output_path:
+        raise HTTPException(status_code=404, detail="批次没有最终输出文件路径")
+    path = Path(final_output_path).expanduser().resolve()
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail=f"文件不存在: {path}")
+    if path.suffix.lower() not in (".xlsx", ".xls"):
+        raise HTTPException(
+            status_code=415,
+            detail=f"不支持的文件类型: {path.suffix}",
+        )
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=path.name,
+    )
 
 
 @router.delete("/api/v1/batches/{thread_id}")
