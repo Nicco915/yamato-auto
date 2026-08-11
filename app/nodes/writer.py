@@ -71,9 +71,8 @@ def _ensure_output_copy(state: AgentState) -> Path:
             shutil.copy2(src, dst)
         except OSError as e:
             # 原件被占用时也走中文提示；优先指向原文件路径（用户日常认知的是原件）
-            errno_no = getattr(e, "errno", None)
-            if errno_no in _FILE_LOCK_ERRNOS or isinstance(e, PermissionError):
-                raise RuntimeError(_format_file_busy_msg(src, e)) from e
+            if _is_file_lock_error(e):
+                raise RuntimeError(_format_file_busy_msg(src)) from e
             raise
         logger.info("[Node6] 已复制原件到 %s（绝不覆盖原件）", dst)
     return dst
@@ -84,6 +83,10 @@ def _probe_writable(path: Path) -> None:
 
     Excel/LibreOffice 在 Windows 下打开 xlsx 会独占锁，此时以「a」模式打开仍会
     抛 PermissionError(EBUSY)；文件不存在则跳过探测，由后续真实写入走相同异常路径。
+
+    注意：只有 PermissionError 或 _FILE_LOCK_ERRNOS 中的错误才会被翻译成
+    「文件被占用」提示；IsADirectoryError/FileNotFoundError/EIO 等仍原样抛出，
+    避免误导用户。
     """
     if not path.exists():
         return
@@ -91,10 +94,18 @@ def _probe_writable(path: Path) -> None:
         with path.open("a"):
             pass
     except OSError as e:
-        raise RuntimeError(_format_file_busy_msg(path, e)) from e
+        if _is_file_lock_error(e):
+            raise RuntimeError(_format_file_busy_msg(path)) from e
+        raise
 
 
-def _format_file_busy_msg(path: Path, exc: BaseException) -> str:
+def _is_file_lock_error(exc: OSError) -> bool:
+    """判断异常是否属于「文件被占用 / 权限拒绝」类错误。"""
+    errno_no = getattr(exc, "errno", None)
+    return errno_no in _FILE_LOCK_ERRNOS or isinstance(exc, PermissionError)
+
+
+def _format_file_busy_msg(path: Path) -> str:
     """把 PermissionError/OSError(EACCES/EBUSY) 翻译成可读的中文提示。
 
     Windows 下 EBUSY/EACCES 几乎都意味着 Excel/LibreOffice 独占锁；
@@ -171,9 +182,8 @@ def _write_excel(state: AgentState, out_path: Path) -> int:
     try:
         wb.save(out_path)
     except (PermissionError, OSError) as e:
-        errno_no = getattr(e, "errno", None)
-        if errno_no in _FILE_LOCK_ERRNOS or isinstance(e, PermissionError):
-            raise RuntimeError(_format_file_busy_msg(out_path, e)) from e
+        if _is_file_lock_error(e):
+            raise RuntimeError(_format_file_busy_msg(out_path)) from e
         raise
     return written
 
