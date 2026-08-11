@@ -884,13 +884,36 @@ def retry_factory_extraction(
     if save and folder is None:
         raise ValueError("save=true 必须同时提供 folder（无对照可保存）")
 
-    # 对照注入：校验 folder 并组装 update（校验失败 ValueError 直接上抛）
+    # 对照注入 / 自动重匹配：先尝试确定 folder_path
     validated_path: Path | None = None
+    matched_folder_name: str | None = None
+
     if folder is not None:
         from app.factory_match import validate_subfolder
         upstream_root = (
             snap.values.get("upstream_root") or get_settings().upstream_root)
         validated_path = validate_subfolder(upstream_root, folder)
+        matched_folder_name = folder
+    elif not cur.get("folder_path"):
+        # 该工厂首次 folder_router 未匹配到文件夹（folder_path 为空），
+        # retry 时自动重跑一次文件夹匹配，避免 update_state(as_node=NODE2)
+        # 跳过 Node2 后永远 no_folder_matched。
+        from app.factory_match import load_alias_map, match_factory_folder
+        upstream_root = (
+            snap.values.get("upstream_root") or get_settings().upstream_root)
+        root_path = Path(upstream_root).expanduser()
+        if root_path.is_dir():
+            folders = [d.name for d in root_path.iterdir() if d.is_dir()]
+            alias_map = load_alias_map()
+            cutoff = get_settings().fuzzy_match_score_cutoff
+            folder_name, score, method = match_factory_folder(
+                factory, folders, alias_map, cutoff=cutoff)
+            if folder_name:
+                validated_path = root_path / folder_name
+                matched_folder_name = folder_name
+                logger.info(
+                    "retry 自动重匹配到文件夹: %s -> %s (%s, %.1f)",
+                    factory, folder_name, method, score)
 
     # L2 日志关联：单厂重试也是一次跑图，绑定批次号（工厂名由 Node3 重绑）
     with logging_context(thread_id=thread_id):
@@ -899,13 +922,13 @@ def retry_factory_extraction(
         # 不清 extracted_items——Node3 各分支都会覆写 cur["extracted_items"]
         update: dict[str, Any] = {"force_reextract": True}
         if validated_path is not None:
-            # 对照注入：folder_path 直接指向校验后的目录；
+            # 对照注入：folder_path 直接指向校验/重匹配后的目录；
             # 批次级 factory_alias_overrides 同步写入，仅本次生效不落盘
             cur2 = dict(cur)
             cur2["folder_path"] = str(validated_path)
             update["current_factory_data"] = cur2
             overrides = dict(snap.values.get("factory_alias_overrides") or {})
-            overrides[factory] = folder
+            overrides[factory] = matched_folder_name
             update["factory_alias_overrides"] = overrides
         graph.update_state(cfg, update, as_node=NODE2)
 
