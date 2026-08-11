@@ -162,6 +162,32 @@ async function startSplit() {
   }
 }
 
+/* 用 Excel 打开：调后端 /open 端点，本地拉起 Excel */
+async function openWithExcel(btn) {
+  if (!btn) return;
+  if (btn.disabled) return;                // 防连点：禁用态直接吞掉
+  var originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "打开中…";
+  try {
+    var resp = await fetch("/api/v1/batches/" + encodeURIComponent(threadId) + "/open", { method: "POST" });
+    var data = null;
+    try { data = await resp.json(); } catch (e) { data = null; }
+    if (resp.ok) {
+      var p = (data && data.path) || (btn.getAttribute("data-path") || "");
+      showToast("已用 Excel 打开：" + baseName(p));
+    } else {
+      var detail = (data && data.detail) ? String(data.detail) : ("打开失败（HTTP " + resp.status + "）");
+      showToast(detail);
+    }
+  } catch (e) {
+    showToast("网络异常，请稍后重试：" + (e && e.message ? e.message : e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText || "用 Excel 打开";
+  }
+}
+
 /* thread_id：取 /batch/ 之后部分 */
 var threadId = "";
 try {
@@ -200,7 +226,8 @@ function renderHead(d) {
   if (d.final_output_path) {
     var outLink = '';
     if (d.status === 'completed') {
-      outLink = '<a class="mono c-green" href="/api/v1/batches/' + encodeURIComponent(threadId) + '/output" target="_blank">' + _esc(d.final_output_path) + '</a>';
+      outLink = '<span class="mono c-green">' + _esc(d.final_output_path) + '</span> ' +
+        '<button class="btn lbtn primary open-excel" data-path="' + _esc(d.final_output_path) + '">用 Excel 打开</button>';
     } else {
       outLink = '<span class="mono c-green">' + _esc(d.final_output_path) + '</span>';
     }
@@ -505,16 +532,21 @@ async function load() {
   }
 }
 
-/* 审计详情展开/收起（事件委托） */
+/* 审计详情展开/收起 + Excel 打开（事件委托） */
 document.addEventListener("click", function (ev) {
   var t = ev.target;
-  if (t && t.classList && t.classList.contains("audit-toggle")) {
+  if (!t || !t.classList) return;
+  if (t.classList.contains("audit-toggle")) {
     var row = document.getElementById("audit-detail-" + t.dataset.idx);
     if (row) {
       var show = row.style.display === "none";
       row.style.display = show ? "" : "none";
       t.textContent = show ? "收起" : "展开";
     }
+    return;
+  }
+  if (t.classList.contains("open-excel")) {
+    openWithExcel(t);
   }
 });
 
