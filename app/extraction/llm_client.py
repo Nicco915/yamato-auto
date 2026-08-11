@@ -234,6 +234,18 @@ def _create_with_retry(kwargs: dict, model: str, kind: str,
     client = _get_client()
     label = _call_label(kind, source_file)
     last_exc: Exception | None = None
+    # 排查日志：endpoint + 实际 model + messages 总长度（脱敏后）
+    try:
+        msgs_chars = sum(
+            len(json.dumps(m, ensure_ascii=False, default=str))
+            for m in _sanitize_messages(kwargs.get("messages", []))
+        )
+    except Exception:
+        msgs_chars = -1
+    logger.info(
+        "LLM 端点确认 | %s | model=%s | base_url=%s | messages_chars=%d",
+        label, model, client.base_url, msgs_chars,
+    )
     logger.debug(
         "LLM 请求 | %s | model=%s | messages=%s",
         label, model,

@@ -91,6 +91,22 @@ def _extract_batch(
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": content},
     ]
+
+    # 排查日志：统计每批请求体体积
+    text_len = sum(len(str(p.get("text", ""))) for p in content if p.get("type") == "text")
+    image_lens = [len(uri) for uri in image_uris]
+    total_image_len = sum(image_lens)
+    logger.info(
+        "视觉请求体积 | %s | 图片数=%d | 单张base64长度=%s | "
+        "图片总长度=%d | 文本长度=%d | 估算总长度=%d",
+        source_name,
+        len(image_uris),
+        "/".join(str(l) for l in image_lens) if image_lens else "0",
+        total_image_len,
+        text_len,
+        text_len + total_image_len,
+    )
+
     for attempt in range(3):
         result.json_attempts += 1
         raw = llm_client.chat_completion(
