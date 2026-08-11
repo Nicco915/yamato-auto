@@ -320,6 +320,20 @@ function sourceFileOf(item) {
 }
 function baseName(p) { return p ? p.split("/").pop() : ""; }
 
+/* 来源路径占位符（非真实文件）：不可传给 document 端点，否则 403 */
+const DOC_PATH_MARKERS = new Set([
+  "reconstructed_from_output_excel",
+  "no_items_extracted",
+  "no_folder_matched",
+]);
+function isRealDocPath(p) {
+  if (!p || typeof p !== "string") return false;
+  if (DOC_PATH_MARKERS.has(p)) return false;
+  if (p.startsWith("extraction_error:")) return false;
+  // 跨平台真实路径特征：含 / 或 \，或 Windows 盘符 X:
+  return p.includes("/") || p.includes("\\") || /^[A-Za-z]:/.test(p);
+}
+
 function renderCards() {
   const box = $("cards");
   box.innerHTML = "";
@@ -503,7 +517,13 @@ function renderDocSelect() {
 function onDocSelect(path) { loadDocument(path, 1); }
 
 async function loadDocument(path, page) {
-  if (!path) { $("doc-view").innerHTML = "<span style='color:#9ca3af;margin-top:40px'>该 SKU 无来源文件</span>"; $("zoom-bar").style.display = "none"; return; }
+  if (!isRealDocPath(path)) {
+    $("doc-view").innerHTML = "<span style='color:#9ca3af;margin-top:40px'>该 SKU 无有效来源文件，请从上方单据列表手动选择</span>";
+    $("zoom-bar").style.display = "none";
+    $("pager").style.display = "none";
+    curDoc = null; curPage = 1; pageCount = 1;
+    return;
+  }
   curDoc = path; curPage = page;
   $("doc-select").value = path;
   const url = `/api/v1/review/${encodeURIComponent(threadId)}/document?path=${encodeURIComponent(path)}&page=${page}`;
@@ -682,12 +702,15 @@ $("doc-view").addEventListener("gestureend", (e) => {
   e.preventDefault();
 });
 
-/* 点击卡片：左屏跳到该 SKU 的 source_file */
+/* 点击卡片：左屏跳到该 SKU 的 source_file；若 source_file 是占位符则回退到工厂单据列表 */
 function selectCard(idx) {
   selectedIdx = idx;
   seenIdx.add(idx);
   document.querySelectorAll(".card").forEach((c, i) => c.classList.toggle("selected", i === idx));
-  const src = sourceFileOf(items[idx]);
+  let src = sourceFileOf(items[idx]);
+  if (!isRealDocPath(src)) {
+    src = (payload.source_documents || [])[0] || "";
+  }
   if (src && src !== curDoc) loadDocument(src, 1);
 }
 
@@ -836,8 +859,10 @@ function showDone(data) {
   toast(isReopen ? "重新提交完成" : "本批次全部完成");
 }
 
-/* 兜底：刷新页面后轮询 state 恢复现场（生产环境用） */
+/* 兜底：刷新页面后轮询 state 恢复现场（生产环境用）。
+   reopen 模式下批次必然已结束（next_nodes 为空），不应触发"全部完成"弹窗。 */
 async function pollState() {
+  if (isReopen) return;
   try {
     const r = await fetch(`/api/v1/orders/${encodeURIComponent(threadId)}/state`);
     if (!r.ok) return;
