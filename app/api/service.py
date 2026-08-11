@@ -1259,60 +1259,158 @@ def _rebuild_items_from_output_excel(state: dict[str, Any], factory_name: str) -
 
 
 def reopen_factory_for_edit(thread_id: str, factory_name: str) -> dict[str, Any] | None:
-    """重开已审核工厂：从 checkpoint state + ReviewAudit 反向构建可编辑 payload。
+    """重开已审核工厂：复用 Node5 同一份 payload 构建逻辑，与首次审核字段一致。
 
-    适用：用户从批次详情页点「重新打开」已审核工厂，进入 reopen 模式 review。
-    不调 graph.update_state / 不调 Command(resume=...)——纯只读，
-    让 LangGraph state 保持原状（已审核工厂 state.next 为空，但
-    current_factory_data 仍在 state.values 中可读）。
-    找不到工厂或数据时返回 None。
+    数据源优先级：
+    1. factory_outputs[factory_name] 快照（dict 格式，新批次）
+    2. factory_outputs[factory_name] 旧格式列表（兼容旧批次）
+    3. Excel 兜底重建（snapshot 缺失）
+
+    步骤：
+    1. 取快照 → 兼容旧格式 → 缺失则 Excel 兜底
+    2. 刷新 db_record（与首次审核对齐）
+    3. 调 build_review_payload 走与 Node5 同一路径
+    4. 标 reopen_mode=True
     """
     graph = get_graph()
     snap = graph.get_state(_config(thread_id))
     values = snap.values or {}
     cur = values.get("current_factory_data") or {}
 
-    # 优先用当前工厂的 calculated_items；否则从已审核快照 factory_outputs 读取；
-    # 都没有则尝试从最终输出 Excel 重建。
-    state_factory = cur.get("factory_name")
-    if state_factory == factory_name:
-        factory_items = cur.get("calculated_items") or []
-    else:
-        factory_items = (values.get("factory_outputs") or {}).get(factory_name) or []
-        if not factory_items:
-            factory_items = _rebuild_items_from_output_excel(values, factory_name)
+    snapshot = _resolve_factory_snapshot(values, factory_name, cur)
 
-    items_payload = _build_reopen_items_payload(factory_items, thread_id, factory_name)
+    if snapshot is None:
+        # 无快照且 Excel 兜底也无数据 → 404
+        return None
 
-    if state_factory == factory_name:
-        factory_meta = cur
-        missing_skus = cur.get("missing_skus") or []
-    else:
+    # 主库刷新：让老 SKU 的 db_record 与首次审核一致
+    snapshot["calculated_items"] = _enrich_items_with_db_records(
+        snapshot.get("calculated_items") or [], factory_name,
+    )
+
+    # 复用 Node5 同一份 payload 构建
+    from app.nodes.review_payload import build_review_payload
+    payload = build_review_payload(snapshot)
+    payload["reopen_mode"] = True
+    return payload
+
+
+def _resolve_factory_snapshot(
+    values: dict[str, Any],
+    factory_name: str,
+    cur: dict[str, Any],
+) -> dict[str, Any] | None:
+    """解析 reopen 用的工厂快照（dict 格式，与 current_factory_data 同构）。
+
+    优先级：
+    1. factory_outputs[factory_name] 快照（dict）
+    2. factory_outputs[factory_name] 旧格式（list）→ 包成 dict
+    3. 当前工厂 current_factory_data（factory_name 匹配）
+    4. Excel 兜底重建
+    """
+    factory_outputs = values.get("factory_outputs") or {}
+    raw = factory_outputs.get(factory_name)
+
+    # 1) 新格式快照
+    if isinstance(raw, dict) and raw:
+        # 浅拷贝避免污染原 state
+        snap = dict(raw)
+        snap.setdefault("factory_name", factory_name)
+        return snap
+
+    # 2) 旧格式列表（仅 calculated_items）→ 补默认上下文
+    if isinstance(raw, list) and raw:
         folder_path = _resolve_reopen_factory_folder(values, factory_name)
-        source_documents = _list_source_documents(folder_path)
-        factory_meta = {
-            "factory_name": factory_name,
-            "folder_path": folder_path,
-            "source_documents": source_documents,
-        }
         expected = set(
             (values.get("downstream_requirements") or {}).get(factory_name) or []
         )
-        have = {str(i.get("sku") or "") for i in items_payload}
-        missing_skus = sorted(expected - have)
+        have = {str(i.get("sku") or "") for i in raw}
+        return {
+            "factory_name": factory_name,
+            "calculated_items": raw,
+            "folder_path": folder_path,
+            "source_documents": _list_source_documents(folder_path),
+            "missing_skus": sorted(expected - have),
+            "extraction_issues": [],
+            "extraction_coverage": {},
+        }
 
-    payload = {
+    # 3) 当前工厂是目标工厂
+    if cur.get("factory_name") == factory_name and cur.get("calculated_items"):
+        return dict(cur)
+
+    # 4) Excel 兜底重建
+    items = _rebuild_items_from_output_excel(values, factory_name)
+    if not items:
+        return None
+    folder_path = _resolve_reopen_factory_folder(values, factory_name)
+    return {
         "factory_name": factory_name,
-        "folder_path": factory_meta.get("folder_path"),
-        "source_documents": factory_meta.get("source_documents") or [],
-        "missing_skus": missing_skus,
-        "items": items_payload,
-        "extraction_issues": cur.get("extraction_issues") or [],
-        "extraction_coverage": cur.get("extraction_coverage") or {},
-        "weight_diff_warn_ratio": get_settings().weight_diff_warn_ratio,
-        "reopen_mode": True,  # 标记前端进入 reopen 模式（提交走 reopen 端点）
+        "calculated_items": items,
+        "folder_path": folder_path,
+        "source_documents": _list_source_documents(folder_path),
+        "missing_skus": [],
+        "extraction_issues": [],
+        "extraction_coverage": {},
     }
-    return payload
+
+
+def _enrich_items_with_db_records(
+    items: list[dict], factory_name: str,
+) -> list[dict]:
+    """用主库刷新 items 的 db_record，让 reopen 字段与首次审核对齐。
+
+    老 SKU：合并主库字段到 db_record（与 compute_align.py 同口径）
+    新 SKU：保持 db_record={}，由 build_review_payload 补 fields_to_fill
+    """
+    from app.db.models import Factory, FactorySKU
+
+    db_records: dict[str, dict] = {}
+    try:
+        with get_session() as session:
+            factory = session.scalar(
+                select(Factory).where(Factory.factory_name == factory_name)
+            )
+            if factory:
+                rows = session.scalars(
+                    select(FactorySKU).where(
+                        FactorySKU.factory_id == factory.factory_id,
+                    )
+                ).all()
+                db_records = {
+                    r.sku_code: {
+                        "name_cn": r.name_cn,
+                        "name_en": r.name_en,
+                        "name_jp": r.name_jp,
+                        "hs_code": r.hs_code,
+                        "inspection_required": r.inspection_required,
+                        "unit_net_weight": (
+                            float(r.unit_net_weight)
+                            if r.unit_net_weight is not None else None
+                        ),
+                        "unit_gross_weight": (
+                            float(r.unit_gross_weight)
+                            if r.unit_gross_weight is not None else None
+                        ),
+                    }
+                    for r in rows
+                }
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "reopen 主库刷新失败（继续使用 items 原 db_record）: "
+            "factory=%s: %s: %s", factory_name, type(e).__name__, e,
+        )
+        return items
+
+    for item in items:
+        sku = str(item.get("sku") or "")
+        record = db_records.get(sku)
+        if record is None:
+            # 新 SKU：保持 db_record={}，build_review_payload 补 fields_to_fill
+            item["db_record"] = {}
+        else:
+            item["db_record"] = record
+    return items
 
 
 def _looks_like_path(value: str) -> bool:
@@ -1458,13 +1556,12 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
     # 构造临时 state（最小字段集供 _write_excel / _upsert_db 使用）
     items = (resume_data or {}).get("items") or []
 
-    # 取原始 items 做 diff：当前工厂直接取；已审核工厂从 factory_outputs 或 Excel 重建
+    # 取原始 items 做 diff：当前工厂直接取；已审核工厂从快照/旧格式列表/Excel 重建
     if cur.get("factory_name") == factory_name:
         original_items = cur.get("calculated_items") or []
     else:
-        original_items = (values.get("factory_outputs") or {}).get(factory_name) or []
-        if not original_items:
-            original_items = _rebuild_items_from_output_excel(values, factory_name)
+        snapshot = _resolve_factory_snapshot(values, factory_name, cur)
+        original_items = (snapshot or {}).get("calculated_items") or []
 
     fake_state: dict[str, Any] = {
         "batch_id": values.get("batch_id") or thread_id,
