@@ -1493,14 +1493,17 @@ def list_batches() -> dict[str, Any]:
     return {"batches": batches}
 
 
-def _load_factory_session(factory: str) -> dict[str, Any] | None:
-    """加载工厂提取会话摘要（data/sessions/{工厂名}.json 同名匹配）。
+def _load_factory_session(batch_id: str, factory: str) -> dict[str, Any] | None:
+    """加载指定批次的工厂提取会话摘要。
 
-    会话语义是"该工厂最近一次提取记录"，不专属任何批次。
-    文件不存在或损坏时返回 None。coverage 由 items 键集 vs expected_skus
-    重算（与 extraction/session.py 的 coverage() 口径一致）。
+    读取路径为 per-batch 目录 ``data/sessions/{safe(batch_id)}/{factory}.json``，
+    不再使用全局旧缓存 ``data/sessions/{factory}.json``，避免把上一批次文件错误
+    展示给当前批次。per-batch 会话文件不存在或损坏时返回 None。
+
+    coverage 由 items 键集 vs expected_skus 重算（与 extraction/session.py
+    的 coverage() 口径一致）。
     """
-    path = SESSIONS_DIR / f"{factory}.json"
+    path = SESSIONS_DIR / get_settings().safe_path_tag(batch_id) / f"{factory}.json"
     if not path.is_file():
         return None
     try:
@@ -1578,7 +1581,7 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
         factories.append({
             "factory": name,
             "role": role,
-            "session": _load_factory_session(name),
+            "session": _load_factory_session(thread_id, name),
         })
 
     with get_session() as session:
