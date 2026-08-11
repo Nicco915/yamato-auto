@@ -13,7 +13,12 @@
 2. 写数据库（Upsert）：
    - 新 SKU：INSERT 人工补录的多语言品名/HS 编码/单件重量；
    - 老 SKU：人工微调过重量时 UPDATE 刷新历史重量。
+
+写盘保护（2026-08-11）：落盘前做可写探测 + 捕获 PermissionError/OSError(EACCES/EBUSY)，
+把英文 traceback 转成中文提示。Windows 下 Excel/LibreOffice 独占锁文件时，
+裸 PermissionError 会让用户不知所措；探测可以在做完一堆耗时工作之前先发现问题。
 """
+import errno
 import logging
 import shutil
 from copy import copy
@@ -30,6 +35,9 @@ from app.logging_config import bind_factory_from_state
 from app.state import AgentState
 
 logger = logging.getLogger(__name__)
+
+# Windows 共享冲突（Excel/LibreOffice 独占打开产生的 EBUSY）也归为「文件被占用」一类提示
+_FILE_LOCK_ERRNOS = frozenset({errno.EACCES, errno.EBUSY, errno.EPERM, errno.ETXTBSY})
 
 # 待添加的三列（插入到 SHOHIN_MEI_E 之后，与既有填好文件布局一致）
 NEW_COL_NAMES = ("中文品名", "净重", "毛重")
@@ -59,9 +67,43 @@ def _ensure_output_copy(state: AgentState) -> Path:
     src = Path(state["downstream_file_path"])
     dst = out_dir / f"{src.stem}_filled{src.suffix}"
     if not dst.exists():
-        shutil.copy2(src, dst)
+        try:
+            shutil.copy2(src, dst)
+        except OSError as e:
+            # 原件被占用时也走中文提示；优先指向原文件路径（用户日常认知的是原件）
+            errno_no = getattr(e, "errno", None)
+            if errno_no in _FILE_LOCK_ERRNOS or isinstance(e, PermissionError):
+                raise RuntimeError(_format_file_busy_msg(src, e)) from e
+            raise
         logger.info("[Node6] 已复制原件到 %s（绝不覆盖原件）", dst)
     return dst
+
+
+def _probe_writable(path: Path) -> None:
+    """以追加模式短暂打开再关闭，验证可写。绝不以「w」模式探测（会清空文件）。
+
+    Excel/LibreOffice 在 Windows 下打开 xlsx 会独占锁，此时以「a」模式打开仍会
+    抛 PermissionError(EBUSY)；文件不存在则跳过探测，由后续真实写入走相同异常路径。
+    """
+    if not path.exists():
+        return
+    try:
+        with path.open("a"):
+            pass
+    except OSError as e:
+        raise RuntimeError(_format_file_busy_msg(path, e)) from e
+
+
+def _format_file_busy_msg(path: Path, exc: BaseException) -> str:
+    """把 PermissionError/OSError(EACCES/EBUSY) 翻译成可读的中文提示。
+
+    Windows 下 EBUSY/EACCES 几乎都意味着 Excel/LibreOffice 独占锁；
+    macOS/Linux 下若出现则多是目录权限或罕见共享冲突。
+    """
+    return (
+        f"输出文件正被 Excel 或其他程序占用，请先关闭该文件后重试。"
+        f"文件路径：{path}"
+    )
 
 
 def _ensure_three_columns(ws) -> None:
@@ -124,7 +166,15 @@ def _write_excel(state: AgentState, out_path: Path) -> int:
                 cell = ws.cell(row=excel_row, column=col_gross, value=round(unit_gross * qty, 2))
                 _apply_write_format(cell)
             written += 1
-    wb.save(out_path)
+    # 落盘前可写探测：让 Excel 独占锁导致的失败尽早冒泡，避免做完耗时写操作才报错
+    _probe_writable(out_path)
+    try:
+        wb.save(out_path)
+    except (PermissionError, OSError) as e:
+        errno_no = getattr(e, "errno", None)
+        if errno_no in _FILE_LOCK_ERRNOS or isinstance(e, PermissionError):
+            raise RuntimeError(_format_file_busy_msg(out_path, e)) from e
+        raise
     return written
 
 
