@@ -48,8 +48,10 @@ class AgentState(TypedDict, total=False):
 
     # ----- 当前批次 -----
     current_factory_data: CurrentFactoryData
-    # 已审核通过的工厂计算结果快照，供 reopen 已审核工厂时恢复数据使用
-    factory_outputs: Dict[str, List[Dict[str, Any]]]  # {工厂名: calculated_items}
+    # 已审核通过的工厂计算结果快照，供 reopen 已审核工厂时恢复数据使用；
+    # 新格式：{工厂名: dict(current_factory_data 完整快照)}；
+    # 旧格式兼容：{工厂名: list(calculated_items)}（Step 4 兼容）
+    factory_outputs: Dict[str, Any]  # {工厂名: dict | list}
 
     # ----- 人机协同 -----
     validation_status: str                # Pending / Approved / Rejected

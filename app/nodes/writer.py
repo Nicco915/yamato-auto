@@ -208,5 +208,7 @@ def writer(state: AgentState) -> dict:
                 "落库 INSERT %d / UPDATE %d", factory, written, inserted, updated)
 
     factory_outputs = state.get("factory_outputs") or {}
-    factory_outputs[factory] = list(cur.get("calculated_items") or [])
+    # 存完整 current_factory_data 快照（reopen 时全文恢复，与首次审核字段一致）；
+    # 旧格式列表（仅 calculated_items）由 reopen 层兼容读取
+    factory_outputs[factory] = dict(cur)
     return {"final_output_path": str(out_path), "factory_outputs": factory_outputs}
