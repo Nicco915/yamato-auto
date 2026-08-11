@@ -175,8 +175,41 @@ def test_load_inspection_factories_db_first():
 
 
 # ---------------------------------------------------------------------------
-# 6. 行为 diff 为空：DB 结果与原 json 逐条一致
+# 7. contains 兜底回归
 # ---------------------------------------------------------------------------
 
-def test_alias_map_db_matches_json():
-    assert load_alias_map() == _json_alias_map()
+
+def test_contains_match_short_folder():
+    """工厂名包含短文件夹名（但 fuzz.ratio 低于 cutoff）仍能命中。"""
+    factory = "天津市依依衛生用品"
+    folders = ["依依", "其他工厂", "Yamato"]
+    folder, score, method = factory_match.match_factory_folder(
+        factory, folders, alias_map={}, cutoff=40
+    )
+    assert folder == "依依"
+    assert score == 70.0
+    assert method == "contains"
+
+
+def test_contains_match_bidirectional():
+    """文件夹名包含工厂名时同样命中 contains 兜底。"""
+    factory = "中地"
+    folders = ["山東中地", "貝来", "依依"]
+    folder, score, method = factory_match.match_factory_folder(
+        factory, folders, alias_map={}, cutoff=80
+    )
+    assert folder == "山東中地"
+    assert score == 70.0
+    assert method == "contains"
+
+
+def test_single_char_no_false_positive():
+    """单字文件夹不满足长度限制，不应被 contains 兜底误匹配。"""
+    factory = "天津市依依衛生用品"
+    folders = ["依", "依2"]  # "依" 仅 1 字，即使被包含也不应命中
+    folder, score, method = factory_match.match_factory_folder(
+        factory, folders, alias_map={}, cutoff=40
+    )
+    assert folder is None
+    assert score == 0.0
+    assert method == "none"

@@ -1,8 +1,8 @@
 """工厂名匹配唯一事实来源（W5）：规范化 / alias 读写 / 分档匹配 / 候选推荐。
 
 Node2（folder_router）与批次预扫（service/tools）共用本模块：
-- match_factory_folder：五档查找 —— 批次覆盖(override) → alias 精确 →
-  alias 大小写不敏感 → 规范化精确 → rapidfuzz 模糊匹配；
+- match_factory_folder：六档查找 —— 批次覆盖(override) → alias 精确 →
+  alias 大小写不敏感 → 规范化精确 → rapidfuzz 模糊匹配 → 规范化包含兜底；
 - recommend_candidates：预扫「低置信推荐」档的候选生成，
   rapidfuzz top-N + 包含强信号（如 天津市依依衛生用品 ⊃ 依依）保底 70 分；
 - validate_subfolder：上游根目录下一级子目录名的防注入校验，
@@ -104,7 +104,7 @@ def match_factory_folder(
     """按五档顺序为工厂名匹配本地文件夹。
 
     返回 (文件夹名|None, 得分, 方式)。方式为
-    override / alias / alias_ci / exact / fuzzy / none 之一。
+    override / alias / alias_ci / exact / fuzzy / contains / none 之一。
     override/alias 指向的文件夹不存在时落到后续档位（不硬失败）。
     """
     if not folders:
@@ -154,6 +154,14 @@ def match_factory_folder(
     )
     if hit:
         return norm_map[hit[0]], hit[1], "fuzzy"
+
+    # 6) 规范化后包含关系兜底：短文件夹名（>=2 字）被工厂名包含，
+    #    或工厂名被文件夹名包含，均视为可信命中。
+    for norm_name, folder in norm_map.items():
+        if len(norm_name) >= 2 and (
+            norm_name in norm_factory or norm_factory in norm_name
+        ):
+            return folder, 70.0, "contains"
 
     return None, 0.0, "none"
 
