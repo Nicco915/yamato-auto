@@ -41,6 +41,16 @@ TARGET_FACTORY = "山東中地"  # 下游文件中的真实工厂名（日文）
 
 def reset_env():
     """清掉 checkpoint / 主数据 / 输出副本，保证冒烟结果确定性。"""
+    # 血泪红线（2026-08-11）：pytest 全量跑 tests/smoke_test.py 时，
+    # 子进程 import 链的 load_dotenv(override=True) 会把父进程隔离用的
+    # 临时 db 环境变量打回 .env 真实路径，--reset 曾因此删除生产
+    # checkpoints.db / master.db。
+    # 防线：pytest 环境下必须经 YAMATO_DOTENV_PATH 指向临时 .env 才允许删库。
+    if "PYTEST_CURRENT_TEST" in os.environ and "YAMATO_DOTENV_PATH" not in os.environ:
+        raise SystemExit(
+            "[reset] 检测到 pytest 环境但未用 YAMATO_DOTENV_PATH 隔离，"
+            "拒绝删除（防止误删生产库）"
+        )
     settings = get_settings()
     for p in (settings.checkpoint_db_abs, settings.master_db_abs):
         if p.exists():
