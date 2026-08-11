@@ -329,9 +329,15 @@ function renderFactories(d) {
       var ss = String(sess.status);
       sessBadge = badge(SESS_STATUS_MAP[ss] || ss, "b-gray");
     }
+    var reopenLink = "";
+    if (f.role === "done" && threadId) {
+      reopenLink = '<a class="btn btn-sm" href="/review?thread_id=' +
+        encodeURIComponent(threadId) + '&factory=' + encodeURIComponent(fname) +
+        '" style="margin-left:8px">重新打开</a>';
+    }
     return '<details class="card fcard' + (f.role === "current" ? " cur" : "") + '"' + open + ">" +
       "<summary><span class=\"fname\">" + _esc(fname) + "</span>" +
-      badge(role[0], role[1]) + sessBadge + "</summary>" +
+      badge(role[0], role[1]) + sessBadge + reopenLink + "</summary>" +
       '<div class="fbody">' +
       '<div class="note" style="margin-top:8px">会话为该工厂最近一次提取记录，不专属本批次</div>' +
       renderSession(sess) +
