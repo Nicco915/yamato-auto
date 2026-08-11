@@ -117,6 +117,81 @@ class TestReopenFactoryForEdit:
         skus = {i["sku"] for i in payload["items"]}
         assert "4549509515197" in skus
 
+    def test_non_current_factory_source_documents_from_own_folder(
+        self, monkeypatch, tmp_path
+    ):
+        """非当前工厂 reopen 时，source_documents 应来自 reopened 工厂自己的文件夹。"""
+        own_docs = [str(tmp_path / "doc1.pdf"), str(tmp_path / "doc2.xlsx")]
+        monkeypatch.setattr(
+            service, "_list_source_documents", lambda folder: list(own_docs)
+        )
+        monkeypatch.setattr(service, "_latest_approved_audit", lambda tid, fn: None)
+
+        factory_outputs = {
+            "山東中地": [
+                {
+                    "sku": "4549509515197",
+                    "extracted_data": {
+                        "total_quantity": 500,
+                        "total_net_weight": 3100,
+                        "total_gross_weight": 3600,
+                        "source_file": str(tmp_path / "source.pdf"),
+                    },
+                }
+            ]
+        }
+        values = {
+            "current_factory_data": {
+                "factory_name": "青島達安",
+                "source_documents": ["/current/factory/other.pdf"],
+            },
+            "factory_outputs": factory_outputs,
+        }
+        monkeypatch.setattr(
+            service, "get_graph", lambda: self._make_mock_graph(values)
+        )
+
+        payload = service.reopen_factory_for_edit("thread-1", "山東中地")
+        assert payload["source_documents"] == own_docs
+        assert "/current/factory/other.pdf" not in payload["source_documents"]
+
+    def test_non_current_factory_missing_skus_computed_per_factory(
+        self, monkeypatch
+    ):
+        """非当前工厂 reopen 时，missing_skus 按该工厂自己的 downstream_requirements 计算。"""
+        monkeypatch.setattr(service, "_latest_approved_audit", lambda tid, fn: None)
+        monkeypatch.setattr(service, "_list_source_documents", lambda folder: [])
+
+        factory_outputs = {
+            "山東中地": [
+                {
+                    "sku": "4549509515197",
+                    "extracted_data": {
+                        "total_quantity": 500,
+                        "total_net_weight": 3100,
+                        "total_gross_weight": 3600,
+                    },
+                }
+            ]
+        }
+        values = {
+            "current_factory_data": {
+                "factory_name": "青島達安",
+                "missing_skus": ["should_not_appear"],
+            },
+            "factory_outputs": factory_outputs,
+            "downstream_requirements": {
+                "山東中地": ["4549509515197", "missing_sku_1"],
+            },
+        }
+        monkeypatch.setattr(
+            service, "get_graph", lambda: self._make_mock_graph(values)
+        )
+
+        payload = service.reopen_factory_for_edit("thread-1", "山東中地")
+        assert payload["missing_skus"] == ["missing_sku_1"]
+        assert "should_not_appear" not in payload["missing_skus"]
+
 
 class TestRebuildItemsFromOutputExcel:
     """_rebuild_items_from_output_excel 聚合解析测试（test-3 实际输出回归）。"""
@@ -138,7 +213,8 @@ class TestRebuildItemsFromOutputExcel:
         assert ext["total_net_weight"] == 3100.0
         assert ext["total_gross_weight"] == 3600.0
         assert ext["weight_unit"] == "KG"
-        assert ext["source_file"] == state["final_output_path"]
+        assert ext["source_file"] != state["final_output_path"]
+        assert ext["source_file"] == "reconstructed_from_output_excel"
         assert ext["sku_name"] == "◆ボリューム寝具３点セット　Ｓ"
 
         calc = item["calculation"]

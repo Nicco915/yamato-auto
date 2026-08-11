@@ -1238,7 +1238,7 @@ def _rebuild_items_from_output_excel(state: dict[str, Any], factory_name: str) -
                 "total_net_weight": net,
                 "total_gross_weight": gross,
                 "weight_unit": "KG",
-                "source_file": str(path),
+                "source_file": "reconstructed_from_output_excel",
                 "sku_name": agg["sku_name"],
             },
             "calculation": {
@@ -1282,19 +1282,30 @@ def reopen_factory_for_edit(thread_id: str, factory_name: str) -> dict[str, Any]
         if not factory_items:
             factory_items = _rebuild_items_from_output_excel(values, factory_name)
 
-    factory_meta = cur if state_factory == factory_name else {
-        "factory_name": factory_name,
-        "folder_path": cur.get("folder_path"),
-        "source_documents": cur.get("source_documents") or [],
-    }
-
     items_payload = _build_reopen_items_payload(factory_items, thread_id, factory_name)
+
+    if state_factory == factory_name:
+        factory_meta = cur
+        missing_skus = cur.get("missing_skus") or []
+    else:
+        folder_path = _resolve_reopen_factory_folder(values, factory_name)
+        source_documents = _list_source_documents(folder_path)
+        factory_meta = {
+            "factory_name": factory_name,
+            "folder_path": folder_path,
+            "source_documents": source_documents,
+        }
+        expected = set(
+            (values.get("downstream_requirements") or {}).get(factory_name) or []
+        )
+        have = {str(i.get("sku") or "") for i in items_payload}
+        missing_skus = sorted(expected - have)
 
     payload = {
         "factory_name": factory_name,
         "folder_path": factory_meta.get("folder_path"),
         "source_documents": factory_meta.get("source_documents") or [],
-        "missing_skus": cur.get("missing_skus") or [],
+        "missing_skus": missing_skus,
         "items": items_payload,
         "extraction_issues": cur.get("extraction_issues") or [],
         "extraction_coverage": cur.get("extraction_coverage") or {},
@@ -1302,6 +1313,65 @@ def reopen_factory_for_edit(thread_id: str, factory_name: str) -> dict[str, Any]
         "reopen_mode": True,  # 标记前端进入 reopen 模式（提交走 reopen 端点）
     }
     return payload
+
+
+def _looks_like_path(value: str) -> bool:
+    """判断字符串是否为真实文件路径（与 extraction_node 逻辑一致）。"""
+    if "/" in value or "\\" in value:
+        return True
+    return len(value) >= 2 and value[0].isalpha() and value[1] == ":"
+
+
+def _resolve_reopen_factory_folder(state: dict[str, Any], factory_name: str) -> str | None:
+    """为重开的已审核工厂定位其上游文件夹。
+
+    优先从 factory_outputs 里该工厂 item 的 source_file 反推原始文件夹；
+    无法反推时回退到 match_factory_folder 在 upstream_root 下重新匹配。
+    """
+    settings = get_settings()
+    upstream_root = Path(state.get("upstream_root") or settings.upstream_root).expanduser()
+
+    # 1) 从已审核 item 的 source_file 反推
+    factory_outputs = state.get("factory_outputs") or {}
+    for item in factory_outputs.get(factory_name) or []:
+        source_file = (item.get("extracted_data") or {}).get("source_file") or ""
+        if not _looks_like_path(source_file):
+            continue
+        try:
+            rel = Path(source_file).resolve().relative_to(upstream_root.resolve())
+            folder_name = rel.parts[0]
+            folder_path = upstream_root / folder_name
+            if folder_path.is_dir():
+                return str(folder_path)
+        except (ValueError, IndexError):
+            continue
+
+    # 2) fallback：用工厂名重新匹配文件夹
+    if upstream_root.is_dir():
+        from app.factory_match import load_alias_map, match_factory_folder
+        folders = [d.name for d in upstream_root.iterdir() if d.is_dir()]
+        alias_map = load_alias_map()
+        folder_name, _score, _method = match_factory_folder(
+            factory_name, folders, alias_map, cutoff=settings.fuzzy_match_score_cutoff
+        )
+        if folder_name:
+            return str(upstream_root / folder_name)
+
+    return None
+
+
+def _list_source_documents(folder_path: str | None) -> list[str]:
+    """按 folder_router 同样的扩展名过滤列出单据文件。"""
+    if not folder_path:
+        return []
+    root = Path(folder_path).expanduser()
+    if not root.is_dir():
+        return []
+    from app.nodes.folder_router import SUPPORTED_EXTS
+    return sorted(
+        str(p) for p in root.rglob("*")
+        if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS
+    )
 
 
 def _build_reopen_items_payload(items: list[dict], thread_id: str,
