@@ -207,4 +207,6 @@ def writer(state: AgentState) -> dict:
     logger.info("[Node6] 工厂「%s」：写入 %d 行 Excel；"
                 "落库 INSERT %d / UPDATE %d", factory, written, inserted, updated)
 
-    return {"final_output_path": str(out_path)}
+    factory_outputs = state.get("factory_outputs") or {}
+    factory_outputs[factory] = list(cur.get("calculated_items") or [])
+    return {"final_output_path": str(out_path), "factory_outputs": factory_outputs}

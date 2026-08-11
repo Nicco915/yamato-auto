@@ -48,6 +48,8 @@ class AgentState(TypedDict, total=False):
 
     # ----- 当前批次 -----
     current_factory_data: CurrentFactoryData
+    # 已审核通过的工厂计算结果快照，供 reopen 已审核工厂时恢复数据使用
+    factory_outputs: Dict[str, List[Dict[str, Any]]]  # {工厂名: calculated_items}
 
     # ----- 人机协同 -----
     validation_status: str                # Pending / Approved / Rejected
