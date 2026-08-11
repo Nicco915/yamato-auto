@@ -36,6 +36,16 @@ _BARCODE_RE = re.compile(r"\b\d{13}\b")
 # 内容信号（均为关键词级别，不解析数值）
 _NET_RE = re.compile(r"(?i)net\s*weight|n\.?w\.?|净重")
 _GROSS_RE = re.compile(r"(?i)gross\s*weight|g\.?w\.?|毛重")
+# fast-fallback：A 方案 — 容忍 PDF 文本层断行/空格/标点的"NET ... WEIGHT"/"GROSS ... WEIGHT"断行写法。
+# fast 路径（_NET_RE/_GROSS_RE）不变；fallback 在 fast.search 失败时启用，
+# 容忍 250 字符内任意字符（含换行，覆盖空格、Tab、括号、单位、标点、断行）。
+# 典型场景：PACKING LIST 三行错位表头（NET 在最顶行、WEIGHT 在第三行，
+# 中间夹着 PACKAGES / MESUREMENT / BAR CODE / DESCRIPTION 等跨行列名）。
+# 实测正达 XD INV PL .pdf 中 NET→WEIGHT 距离 ~178 字符，故 250 留余量。
+# (?is) 让 . 匹配 \n；不限制段数（250 字符保护已足够防止长篇说明误判——
+# 普通装箱单全文不超过 5KB，长篇商业邮件才需要更宽窗口）。
+_NET_RE_FALLBACK = re.compile(r"(?is)\bnet\b.{0,250}?\bweight\b")
+_GROSS_RE_FALLBACK = re.compile(r"(?is)\bgross\b.{0,250}?\bweight\b")
 # 毛净重同格表头（如 "GROSS/NET WEIGHT"、"毛/净重"）——同时满足净+毛两个信号
 _COMBINED_WEIGHT_RE = re.compile(
     r"(?i)gross\s*/\s*net|net\s*/\s*gross|g\.?w\.?\s*/\s*n\.?w\.?|n\.?w\.?\s*/\s*g\.?w\.?|毛\s*/\s*净|净\s*/\s*毛"
@@ -67,10 +77,17 @@ class FileProfile:
 
 def _scan_text(text: str) -> tuple[set[str], bool, bool, bool]:
     combined = bool(_COMBINED_WEIGHT_RE.search(text))
+    net_hit = bool(_NET_RE.search(text)) or combined
+    if not net_hit:
+        # fast 失败 → fallback 接管（容忍 PDF 文本层断行/单位括号等）
+        net_hit = bool(_NET_RE_FALLBACK.search(text))
+    gross_hit = bool(_GROSS_RE.search(text)) or combined
+    if not gross_hit:
+        gross_hit = bool(_GROSS_RE_FALLBACK.search(text))
     return (
         set(_BARCODE_RE.findall(text)),
-        bool(_NET_RE.search(text)) or combined,
-        bool(_GROSS_RE.search(text)) or combined,
+        net_hit,
+        gross_hit,
         bool(_QTY_RE.search(text)),
     )
 
