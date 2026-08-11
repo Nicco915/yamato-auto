@@ -1103,7 +1103,7 @@ def get_order_state(thread_id: str) -> dict[str, Any]:
 def get_review_payload(thread_id: str) -> dict[str, Any] | None:
     """从 checkpoint 读取当前挂起的 interrupt payload（审核界面刷新后恢复现场用）。
 
-    注意：payload 不在 state.values 里，而在 tasks[].interrupts 中。
+    注意：payload 不在 state.values 里，而是在 tasks[].interrupts 中。
     未挂起或 thread_id 不存在时返回 None。
     """
     graph = get_graph()
@@ -1112,6 +1112,230 @@ def get_review_payload(thread_id: str) -> dict[str, Any] | None:
         if task.interrupts:
             return task.interrupts[0].value
     return None
+
+
+def reopen_factory_for_edit(thread_id: str, factory_name: str) -> dict[str, Any] | None:
+    """重开已审核工厂：从 checkpoint state + ReviewAudit 反向构建可编辑 payload。
+
+    适用：用户从批次详情页点「重新打开」已审核工厂，进入 reopen 模式 review。
+    不调 graph.update_state / 不调 Command(resume=...)——纯只读，
+    让 LangGraph state 保持原状（已审核工厂 state.next 为空，但
+    current_factory_data 仍在 state.values 中可读）。
+    找不到工厂或数据时返回 None。
+    """
+    graph = get_graph()
+    snap = graph.get_state(_config(thread_id))
+    values = snap.values or {}
+    cur = values.get("current_factory_data") or {}
+
+    # 已审核工厂 state 可能在 END 状态，但 current_factory_data 仍保留；
+    # 若当前不是该工厂则取历史 factory_outputs（state.values 直接挂的字段）
+    state_factory = cur.get("factory_name")
+    if state_factory != factory_name:
+        # 尝试从 state.values 中拿；找不到则从 ReviewAudit 反向构造基础骨架
+        factory_items = (values.get("factory_outputs") or {}).get(factory_name) or []
+        if not factory_items:
+            # 再退一步：用 ReviewAudit 拼接最小可编辑骨架（items 为空）
+            factory_items = []
+        factory_meta = cur if state_factory == factory_name else {
+            "factory_name": factory_name,
+            "folder_path": cur.get("folder_path"),
+            "source_documents": cur.get("source_documents") or [],
+        }
+    else:
+        factory_items = cur.get("calculated_items") or []
+        factory_meta = cur
+
+    items_payload = _build_reopen_items_payload(factory_items, thread_id, factory_name)
+
+    payload = {
+        "factory_name": factory_name,
+        "folder_path": factory_meta.get("folder_path"),
+        "source_documents": factory_meta.get("source_documents") or [],
+        "missing_skus": cur.get("missing_skus") or [],
+        "items": items_payload,
+        "extraction_issues": cur.get("extraction_issues") or [],
+        "extraction_coverage": cur.get("extraction_coverage") or {},
+        "weight_diff_warn_ratio": get_settings().weight_diff_warn_ratio,
+        "reopen_mode": True,  # 标记前端进入 reopen 模式（提交走 reopen 端点）
+    }
+    return payload
+
+
+def _build_reopen_items_payload(items: list[dict], thread_id: str,
+                                factory_name: str) -> list[dict]:
+    """把 calculated_items 转成 review_data.items 形状 + ReviewAudit 反向填充。
+
+    反向填充：
+    - changes_json 中的 diff → 覆写 extracted_data 对应字段
+    - new_skus_json → 补 name_cn / hs_code / inspection_required / name_en / name_jp
+    """
+    audit = _latest_approved_audit(thread_id, factory_name)
+    changes = json.loads(audit.changes_json or "[]") if audit else []
+    new_skus = json.loads(audit.new_skus_json or "[]") if audit else []
+
+    by_sku_changes: dict[str, list[dict]] = {}
+    for c in changes:
+        by_sku_changes.setdefault(str(c.get("sku") or ""), []).append(c)
+    by_sku_new = {str(n.get("sku") or ""): n for n in new_skus}
+
+    out: list[dict] = []
+    for item in items:
+        sku = str(item.get("sku") or "")
+        ed = dict(item.get("extracted_data") or {})
+        # 反向覆写人工改过的字段
+        for c in by_sku_changes.get(sku, []):
+            field = c.get("field")
+            if field:
+                ed[field] = c.get("new")
+        # 反向补新 SKU 的人工补录字段
+        ns = by_sku_new.get(sku)
+        rebuilt = dict(item)
+        rebuilt["extracted_data"] = ed
+        rebuilt["is_human_edited"] = bool(by_sku_changes.get(sku)) or bool(ns)
+        if ns:
+            for f in ("name_cn", "name_en", "name_jp",
+ "hs_code", "inspection_required"):
+                v = ns.get(f)
+                if v is not None:
+                    rebuilt[f] = v
+        out.append(rebuilded)
+    return out
+
+
+def _latest_approved_audit(thread_id: str, factory_name: str) -> ReviewAudit | None:
+    """查本批次本工厂最近一条已批准的 ReviewAudit。无返回 None。"""
+    try:
+        with get_session() as db:
+            return db.scalar(
+                select(ReviewAudit)
+                .where(
+                    ReviewAudit.thread_id == thread_id,
+                    ReviewAudit.factory_name == factory_name,
+                    ReviewAudit.approved.is_(True),
+                )
+                .order_by(ReviewAudit.ts.desc())
+                .limit(1)
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "查 ReviewAudit 失败（reopen 不阻塞）| thread=%s | factory=%s | %s",
+            thread_id, factory_name, e,
+        )
+        return None
+
+
+def apply_reopen_payload(thread_id: str, factory_name: str,
+                         resume_data: dict) -> dict[str, Any]:
+    """把 reopen 模式的编辑结果写回 Excel + master.db，不污染 LangGraph state。
+
+    通过构造临时 state dict 复用现有 writer._write_excel / _upsert_db 逻辑，
+    不重构 writer.py。调 _write_audit 留痕（同 resume_order 审计契约）。
+    """
+    from app.nodes import writer as writer_mod  # 延迟导入避免循环
+
+    graph = get_graph()
+    snap = graph.get_state(_config(thread_id))
+    values = snap.values or {}
+    cur = values.get("current_factory_data") or {}
+
+    if cur.get("factory_name") != factory_name:
+        raise ValueError(
+            f"当前批次最后处理的工厂是「{cur.get('factory_name')}」，"
+            f"与请求的「{factory_name}」不一致，禁止 reopen")
+    if not values.get("downstream_file_path"):
+        raise ValueError(f"批次 {thread_id} 缺少 downstream_file_path，无法 reopen")
+
+    # 构造临时 state（最小字段集供 _write_excel / _upsert_db 使用）
+    items = (resume_data or {}).get("items") or []
+    fake_state: dict[str, Any] = {
+        "batch_id": values.get("batch_id") or thread_id,
+        "downstream_file_path": values["downstream_file_path"],
+        "downstream_row_map": values.get("downstream_row_map") or {},
+        "validation_status": "Approved",  # reopen 视为通过
+        "current_factory_data": {
+            **cur,
+            "factory_name": factory_name,
+            "calculated_items": items,
+        },
+    }
+
+    with logging_context(thread_id=thread_id, factory=factory_name):
+        out_path = writer_mod._ensure_output_copy(fake_state)
+        written = writer_mod._write_excel(fake_state, out_path)
+        inserted, updated = writer_mod._upsert_db(fake_state)
+
+    # 审计留痕：复用 _prepare_audit + _write_audit（仅 approved=True 路径）
+    try:
+        prepared = {
+            "thread_id": thread_id,
+            "factory_name": factory_name,
+            "approved": bool((resume_data or {}).get("approved", True)),
+            "edited_count": sum(
+                1 for i in items
+                if i.get("is_human_edited") or i.get("is_new_sku")
+            ),
+            "changes": _prepare_audit_changes_from_items(
+                items, values.get("current_factory_data") or {}
+            ),
+            "new_skus": _prepare_audit_new_skus(items),
+        }
+        _write_audit(prepared, "reopen")
+    except Exception as e:  # noqa: BLE001 同 _write_audit 兜底
+        logger.warning("⚠️ reopen 审计落库失败: %s: %s", type(e).__name__, e)
+
+    logger.info(
+        "[reopen] thread=%s factory=%s written=%d insert=%d update=%d",
+        thread_id, factory_name, written, inserted, updated,
+    )
+    return {
+        "status": "success",
+        "message": (
+            f"工厂「{factory_name}」重新提交完成："
+            f"写入 {written} 行 Excel / INSERT {inserted} / UPDATE {updated}"
+        ),
+        "thread_id": thread_id,
+        "factory_name": factory_name,
+        "final_output_path": str(out_path),
+        "written": written,
+        "inserted": inserted,
+        "updated": updated,
+    }
+
+
+def _prepare_audit_changes_from_items(new_items: list[dict],
+                                     old_cur: dict) -> list[dict]:
+    """对比 new_items 与 old_cur 的 calculated_items，提取 diff（_prepare_audit 简化版）。"""
+    old_items = {str(i.get("sku") or ""): i for i in (old_cur.get("calculated_items") or [])}
+    changes: list[dict] = []
+    for item in new_items:
+        sku = str(item.get("sku") or "")
+        old = old_items.get(sku) or {}
+        old_ext = old.get("extracted_data") or {}
+        new_ext = item.get("extracted_data") or {}
+        for f in ("total_quantity", "total_net_weight", "total_gross_weight"):
+            new_v = new_ext.get(f)
+            if new_v is not None and new_v != old_ext.get(f):
+                changes.append({"sku": sku, "field": f,
+                                "old": old_ext.get(f), "new": new_v})
+    return changes
+
+
+def _prepare_audit_new_skus(items: list[dict]) -> list[dict]:
+    """提取 new_skus_json 字段。"""
+    out: list[dict] = []
+    for item in items:
+        if not item.get("is_new_sku"):
+            continue
+        out.append({
+            "sku": item.get("sku"),
+            "name_cn": item.get("name_cn"),
+            "name_en": item.get("name_en"),
+            "name_jp": item.get("name_jp"),
+            "hs_code": item.get("hs_code"),
+            "inspection_required": item.get("inspection_required"),
+        })
+    return out
 
 
 # ---------------------------------------------------------------------------

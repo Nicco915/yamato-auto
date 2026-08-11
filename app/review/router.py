@@ -344,6 +344,44 @@ async def get_payload(thread_id: str) -> dict[str, Any]:
     return payload
 
 
+@router.get("/api/v1/review/{thread_id}/reopen/{factory_name}")
+async def get_reopen_payload(thread_id: str, factory_name: str) -> dict[str, Any]:
+    """重开已审核工厂的可编辑 payload（reopen 模式）。
+
+    从 checkpoint state + ReviewAudit 反向构建，不污染 LangGraph state。
+    找不到工厂或数据时返回 404。
+    """
+    from app.api import service
+    payload = service.reopen_factory_for_edit(thread_id, factory_name)
+    if payload is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"未找到工厂 {factory_name} 的审核数据",
+        )
+    return payload
+
+
+@router.post("/api/v1/review/{thread_id}/reopen/{factory_name}")
+async def post_reopen_payload(thread_id: str, factory_name: str,
+                              request: dict[str, Any]) -> dict[str, Any]:
+    """把 reopen 模式的编辑结果写回 Excel + master.db（不污染 LangGraph state）。
+
+    request 结构同 resume_data：{"approved": bool, "items": [...]}
+    """
+    from app.api import service
+    try:
+        return await __import__("asyncio").to_thread(
+            service.apply_reopen_payload, thread_id, factory_name, request,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=500,
+            detail=f"reopen 写回失败: {type(e).__name__}: {e}",
+        )
+
+
 @router.get("/api/v1/review/{thread_id}/document")
 async def get_document(
     thread_id: str,
