@@ -356,6 +356,7 @@ let sending = false;
 /* sidRestored 须在生成新 sid 之前取值：本次加载是否带着旧 sid 而来 */
 const sidRestored = !!localStorage.getItem("yamato_chat_sid");
 let sessionId = localStorage.getItem("yamato_chat_sid");
+let sessionPinnedThreadId = null;  // 当前会话关联的批次号
 /* sessionId 可能为 null（首次访问），由 initChat 决定是否新建 */
 
 /* ================= 气泡渲染 ================= */
@@ -886,24 +887,23 @@ function startBatchPoll(action, onFirstTick) {
   batchPollTimer = setInterval(tick, 5000);
 }
 
-/* 页面加载恢复：上次操作的批次仍在 running/pending_review 时自动启动进度轮询 */
+/* 页面加载恢复：按 sessionPinnedThreadId 或 last_operation 恢复批次进度气泡 */
 async function resumeBatchPolling() {
   try {
-    const resp = await fetch(
-      "/api/v1/dispatcher/last_operation?session_id=" + encodeURIComponent(sessionId)
-    );
-    if (!resp.ok) return;
-    const data = await resp.json();
-    const tid = data && data.thread_id;
-    if (!tid) return;
-    // 先查一次状态：仅 running/pending_review 才挂进度条（已完成/被删不打扰）
-    const r = await fetch("/api/v1/batches/" + encodeURIComponent(tid));
-    if (!r.ok) return;
-    const d = await r.json();
-    if (d.status === "running" || d.status === "pending_review") {
-      startBatchPoll({ args: { thread_id: tid } });
+    let tid = sessionPinnedThreadId;
+    if (!tid) {
+      const resp = await fetch(
+        "/api/v1/dispatcher/last_operation?session_id=" + encodeURIComponent(sessionId)
+      );
+      if (!resp.ok) return;
+      const data = await resp.json();
+      tid = data && data.thread_id;
     }
-  } catch (e) { /* 进度恢复是辅助功能，失败静默 */ }
+    if (!tid) return;
+    await renderPinnedBatchProgress(tid);
+  } catch (e) {
+    console.warn("恢复批次轮询失败:", e);
+  }
 }
 
 /* 进度气泡定格（去脉动动画与旋转指示器，保留已渲染的进度行与最终进度条） */
@@ -1528,6 +1528,7 @@ async function loadHistory() {
     );
     if (resp.ok) {
       const detail = await resp.json();
+      sessionPinnedThreadId = detail.pinned_thread_id || null;
       /* 将 detail 转换成 loadHistory 渲染所需的 data 格式 */
       data = {
         found: true,
@@ -1634,6 +1635,7 @@ async function maybePinFromUrl() {
     const data = await resp.json();
 
     sessionId = data.session_id;
+    sessionPinnedThreadId = tid;
     localStorage.setItem("yamato_chat_sid", sessionId);
     history.length = 0;
     $("msgs").innerHTML = "";
