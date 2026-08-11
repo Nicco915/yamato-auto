@@ -22,6 +22,7 @@ from typing import Any
 
 import ormsgpack
 from langgraph.types import Command
+from openpyxl import load_workbook
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -37,6 +38,15 @@ logger = logging.getLogger(__name__)
 
 def _config(thread_id: str) -> dict:
     return {"configurable": {"thread_id": thread_id}}
+
+
+def _safe_div(total, qty):
+    """安全除法：返回 (结果, 公式字符串, 错误信息)。"""
+    try:
+        formula = f"{total} / {qty}"
+        return total / qty, formula, None
+    except (ZeroDivisionError, TypeError) as e:
+        return None, f"{total} / {qty}", f"{type(e).__name__}: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -1114,6 +1124,117 @@ def get_review_payload(thread_id: str) -> dict[str, Any] | None:
     return None
 
 
+def _rebuild_items_from_output_excel(state: dict[str, Any], factory_name: str) -> list[dict]:
+    """从最终输出 Excel 按工厂+SKU 聚合重建 calculated_items（兜底）。
+
+    读取 state.values 中的 final_output_path，按 MAKER_MEI_KJ 过滤指定工厂，
+    按 SHOHIN_CD 聚合 D_HACCHU_SU / 净重 / 毛重，并反算单件重量。
+    读取失败时只记 warning，返回空列表，不阻塞 reopen。
+    """
+    path = state.get("final_output_path")
+    if not path:
+        return []
+    try:
+        wb = load_workbook(path, data_only=True)
+        ws = wb[wb.sheetnames[0]]
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "reopen Excel 兜底读取失败: %s: %s", type(e).__name__, e
+        )
+        return []
+
+    settings = get_settings()
+    header = [c.value for c in ws[1]]
+
+    def _idx(name: str) -> int | None:
+        try:
+            return header.index(name)
+        except ValueError:
+            return None
+
+    col_factory = _idx(settings.col_factory)
+    col_sku = _idx(settings.col_sku)
+    col_qty = _idx("D_HACCHU_SU")
+    col_net = _idx(settings.col_net)
+    col_gross = _idx(settings.col_gross)
+    col_name_kj = _idx("SHOHIN_MEI_KJ")
+    col_name_e = _idx("SHOHIN_MEI_E")
+    col_name_cn = _idx(settings.col_name_cn)
+
+    if col_factory is None or col_sku is None or col_qty is None \
+            or col_net is None or col_gross is None:
+        logger.warning("reopen Excel 兜底缺少必要列")
+        return []
+
+    aggregated: dict[str, dict] = {}
+    max_idx = max(col_factory, col_sku, col_qty, col_net, col_gross)
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if not row or len(row) <= max_idx:
+            continue
+        if row[col_factory] != factory_name:
+            continue
+        sku = str(row[col_sku] or "")
+        if not sku:
+            continue
+        try:
+            qty = float(row[col_qty] or 0)
+            net = float(row[col_net] or 0)
+            gross = float(row[col_gross] or 0)
+        except (TypeError, ValueError):
+            continue
+        if sku not in aggregated:
+            sku_name = None
+            if col_name_kj is not None:
+                sku_name = row[col_name_kj]
+            if not sku_name and col_name_e is not None:
+                sku_name = row[col_name_e]
+            aggregated[sku] = {
+                "sku": sku,
+                "qty": qty,
+                "net": net,
+                "gross": gross,
+                "sku_name": sku_name,
+                "name_cn": row[col_name_cn] if col_name_cn is not None else None,
+            }
+        else:
+            aggregated[sku]["qty"] += qty
+            aggregated[sku]["net"] += net
+            aggregated[sku]["gross"] += gross
+
+    out: list[dict] = []
+    for agg in aggregated.values():
+        qty = agg["qty"]
+        net = agg["net"]
+        gross = agg["gross"]
+        unit_net, net_formula, _ = _safe_div(net, qty)
+        unit_gross, gross_formula, _ = _safe_div(gross, qty)
+        out.append({
+            "sku": agg["sku"],
+            "extracted_data": {
+                "total_quantity": qty,
+                "total_net_weight": net,
+                "total_gross_weight": gross,
+                "weight_unit": "KG",
+                "source_file": str(path),
+                "sku_name": agg["sku_name"],
+            },
+            "calculation": {
+                "net_formula": net_formula,
+                "gross_formula": gross_formula,
+                "calculated_unit_net": unit_net,
+                "calculated_unit_gross": unit_gross,
+            },
+            "status": "Normal",
+            "error_msg": None,
+            "is_human_edited": False,
+            "is_new_sku": False,
+            "unexpected_sku": False,
+            "db_record": {},
+            "name_cn": agg["name_cn"],
+        })
+    return out
+
+
 def reopen_factory_for_edit(thread_id: str, factory_name: str) -> dict[str, Any] | None:
     """重开已审核工厂：从 checkpoint state + ReviewAudit 反向构建可编辑 payload。
 
@@ -1128,23 +1249,21 @@ def reopen_factory_for_edit(thread_id: str, factory_name: str) -> dict[str, Any]
     values = snap.values or {}
     cur = values.get("current_factory_data") or {}
 
-    # 已审核工厂 state 可能在 END 状态，但 current_factory_data 仍保留；
-    # 若当前不是该工厂则取历史 factory_outputs（state.values 直接挂的字段）
+    # 优先用当前工厂的 calculated_items；否则从已审核快照 factory_outputs 读取；
+    # 都没有则尝试从最终输出 Excel 重建。
     state_factory = cur.get("factory_name")
-    if state_factory != factory_name:
-        # 尝试从 state.values 中拿；找不到则从 ReviewAudit 反向构造基础骨架
+    if state_factory == factory_name:
+        factory_items = cur.get("calculated_items") or []
+    else:
         factory_items = (values.get("factory_outputs") or {}).get(factory_name) or []
         if not factory_items:
-            # 再退一步：用 ReviewAudit 拼接最小可编辑骨架（items 为空）
-            factory_items = []
-        factory_meta = cur if state_factory == factory_name else {
-            "factory_name": factory_name,
-            "folder_path": cur.get("folder_path"),
-            "source_documents": cur.get("source_documents") or [],
-        }
-    else:
-        factory_items = cur.get("calculated_items") or []
-        factory_meta = cur
+            factory_items = _rebuild_items_from_output_excel(values, factory_name)
+
+    factory_meta = cur if state_factory == factory_name else {
+        "factory_name": factory_name,
+        "folder_path": cur.get("folder_path"),
+        "source_documents": cur.get("source_documents") or [],
+    }
 
     items_payload = _build_reopen_items_payload(factory_items, thread_id, factory_name)
 
@@ -1199,7 +1318,7 @@ def _build_reopen_items_payload(items: list[dict], thread_id: str,
                 v = ns.get(f)
                 if v is not None:
                     rebuilt[f] = v
-        out.append(rebuilded)
+        out.append(rebuilt)
     return out
 
 
@@ -1239,15 +1358,21 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
     values = snap.values or {}
     cur = values.get("current_factory_data") or {}
 
-    if cur.get("factory_name") != factory_name:
-        raise ValueError(
-            f"当前批次最后处理的工厂是「{cur.get('factory_name')}」，"
-            f"与请求的「{factory_name}」不一致，禁止 reopen")
+    # 目标工厂不一定是当前工厂；允许 reopen 已审核过的其他工厂
     if not values.get("downstream_file_path"):
         raise ValueError(f"批次 {thread_id} 缺少 downstream_file_path，无法 reopen")
 
     # 构造临时 state（最小字段集供 _write_excel / _upsert_db 使用）
     items = (resume_data or {}).get("items") or []
+
+    # 取原始 items 做 diff：当前工厂直接取；已审核工厂从 factory_outputs 或 Excel 重建
+    if cur.get("factory_name") == factory_name:
+        original_items = cur.get("calculated_items") or []
+    else:
+        original_items = (values.get("factory_outputs") or {}).get(factory_name) or []
+        if not original_items:
+            original_items = _rebuild_items_from_output_excel(values, factory_name)
+
     fake_state: dict[str, Any] = {
         "batch_id": values.get("batch_id") or thread_id,
         "downstream_file_path": values["downstream_file_path"],
@@ -1275,9 +1400,7 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
                 1 for i in items
                 if i.get("is_human_edited") or i.get("is_new_sku")
             ),
-            "changes": _prepare_audit_changes_from_items(
-                items, values.get("current_factory_data") or {}
-            ),
+            "changes": _prepare_audit_changes_from_items(items, original_items),
             "new_skus": _prepare_audit_new_skus(items),
         }
         _write_audit(prepared, "reopen")
@@ -1304,13 +1427,13 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
 
 
 def _prepare_audit_changes_from_items(new_items: list[dict],
-                                     old_cur: dict) -> list[dict]:
-    """对比 new_items 与 old_cur 的 calculated_items，提取 diff（_prepare_audit 简化版）。"""
-    old_items = {str(i.get("sku") or ""): i for i in (old_cur.get("calculated_items") or [])}
+                                     old_items: list[dict]) -> list[dict]:
+    """对比 new_items 与 old_items，提取 diff（_prepare_audit 简化版）。"""
+    old_by_sku = {str(i.get("sku") or ""): i for i in old_items}
     changes: list[dict] = []
     for item in new_items:
         sku = str(item.get("sku") or "")
-        old = old_items.get(sku) or {}
+        old = old_by_sku.get(sku) or {}
         old_ext = old.get("extracted_data") or {}
         new_ext = item.get("extracted_data") or {}
         for f in ("total_quantity", "total_net_weight", "total_gross_weight"):
