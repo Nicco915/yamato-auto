@@ -706,6 +706,80 @@ def _exec_retry_factory(args: dict,
         return _err(e)
 
 
+def _preview_force_extract_file(args: dict, session_id: str | None = None) -> dict:
+    """force_extract_file 预览：展示指定文件、页码、识别方式。
+
+    校验失败（路径穿越/页码越界/session 缺失/批次未挂起）由 service 层抛
+    ValueError，preview 兜底转清晰错误展示，不走确认门。
+    """
+    try:
+        thread_id = args.get("thread_id")
+        file_path = args.get("file_path")
+        if not thread_id or not file_path:
+            return _preview(
+                "无法指定文件提取", [],
+                ["必须同时提供 thread_id 与 file_path"])
+
+        payload = service.get_review_payload(thread_id)
+        if payload is None:
+            return _preview(
+                "无法指定文件提取", [],
+                [f"批次 {thread_id} 当前未挂起待审核（不存在或已流转），"
+                 "仅挂起批次可指定文件"])
+
+        factory = payload.get("factory_name") or "（未知工厂）"
+        items = payload.get("items") or []
+
+        pages = args.get("pages")
+        force_vision = bool(args.get("force_vision"))
+        page_summary = ""
+        if pages:
+            page_summary = f"的第 {','.join(str(p) for p in pages)} 页"
+        vision_note = "视觉大模型（看图识别）" if (pages or force_vision) else "自动路由（有文本层走文本/无文本层走视觉）"
+
+        file_name = Path(file_path).name
+        lines = [
+            f"批次 {thread_id} 当前挂起工厂: {factory}（现有 {len(items)} 个 SKU）",
+            f"指定文件: {file_name}",
+        ]
+        if pages:
+            lines.append(f"指定页码: 第 {','.join(str(p) for p in pages)} 页（共 {len(pages)} 页）")
+        lines.append(f"识别方式: {vision_note}")
+
+        warnings = _merge_pinned_warning(args, session_id, [
+            f"提取结果会并入当前工厂「{factory}」已有数据；同一个 SKU 数值不同时以本次为准，"
+            "旧值会记入改单历史并标记需人工确认。",
+        ])
+
+        return _preview(
+            f"将用「{file_name}」{page_summary}重新提取批次 {thread_id} 当前工厂「{factory}」的数据",
+            lines, warnings,
+        )
+    except Exception as e:
+        return _preview(
+            "预览生成失败", [],
+            [f"{type(e).__name__}: {e}"])
+
+
+def _exec_force_extract_file(args: dict,
+                             on_progress: Callable[[dict], None] | None = None
+                             ) -> dict:
+    """force_extract_file 执行：service.force_extract_file 内部校验挂起状态、
+    路径白名单、页码 sanity，异常转 {"error": ...}。"""
+    try:
+        return service.force_extract_file(
+            args["thread_id"],
+            file_path=args["file_path"],
+            pages=args.get("pages"),
+            force_vision=bool(args.get("force_vision")),
+            on_progress=_wrap_on_progress("force_extract_file", args, on_progress),
+        )
+    except ValueError as e:
+        return {"error": str(e)}
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
 # 内部字段名 → 用户可读中文名映射
 _FIELD_LABEL: dict[str, str] = {
     "total_quantity": "总件数",
@@ -2102,6 +2176,58 @@ TOOLS: dict[str, Tool] = {
         risk="write",
         preview=_preview_retry_factory,
         execute=_exec_retry_factory,
+    ),
+    "force_extract_file": Tool(
+        name="force_extract_file",
+        description="对操作员指定的单个文件强制重新提取（跳过自动目标识别），"
+                    "可选指定页码范围只提取其中几页，指定页码时一律走视觉大模型识别。"
+                    "适用场景：①自动识别选错了箱单文件（比如挑了报关汇总版而不是"
+                    "SKU 级箱单），操作员告知正确文件；②箱单是扫描件/图片，"
+                    "自动识别扫不出内容；③一份 PDF 里混了多份单据，操作员只要其中几页；"
+                    "④文本层识别把数字读错了，要改用看图的方式重新识别。"
+                    "提取结果并入当前工厂的已有结果（同 SKU 数值不同按改单覆盖，"
+                    "并标记需人工确认），随后自动重新挂起待审核。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。"
+                    "仅挂起待审核批次可用；文件必须在本批次上游工厂文件夹之下。"
+                    "注意：本工具只处理一个文件，不重跑整个工厂——要重跑整个工厂的"
+                    "识别请用 retry_factory。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "thread_id": _THREAD_ID_PROP,
+                "file_path": {
+                    "type": "string",
+                    "description":
+                                "要强制提取的文件绝对路径，必须位于本批次上游"
+                                "工厂文件夹之下。操作员没给绝对路径时，先用 "
+                                "list_directory 浏览该工厂文件夹帮他定位，"
+                                "或用 request_file_selection 让他在界面选择，"
+                                "禁止编造路径",
+                },
+                "pages": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description":
+                                "可选，只提取这几页（PDF 专用，页码从 1 开始，"
+                                "最多 12 页）。传了页码就一定走视觉大模型识别。"
+                                "不传=整份文件按常规规则识别。"
+                                "操作员说「第 3 到 5 页」时传 [3,4,5]；"
+                                "对 Excel/图片文件不适用，不要传",
+                },
+                "force_vision": {
+                    "type": "boolean",
+                    "description":
+                                "可选，默认 false。true=不管文件有没有文字层，"
+                                "一律用视觉大模型看图识别。操作员说"
+                                "「用看图的方式再试」「识别的数字不对，换个方式」"
+                                "时设 true；传了 pages 时自动为 true，无需重复指定",
+                },
+            },
+            "required": ["thread_id", "file_path"],
+        },
+        risk="write",
+        preview=_preview_force_extract_file,
+        execute=_exec_force_extract_file,
     ),
     "submit_review": Tool(
         name="submit_review",
