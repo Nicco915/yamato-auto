@@ -17,9 +17,13 @@
   #topbar .spacer { flex: 1; }
   #badge { padding: 3px 10px; border-radius: 10px; font-size: 12px; background: #b45309; }
   #badge.done { background: #15803d; }
+  #badge.reopen { background: #7c3aed; }
   #btn-submit { padding: 8px 22px; border: 0; border-radius: 6px; font-size: 14px;
                 font-weight: 600; color: #fff; background: #2563eb; cursor: pointer; }
   #btn-submit:disabled { background: #64748b; cursor: not-allowed; }
+  #btn-back { padding: 8px 18px; border: 1px solid #4b5563; border-radius: 6px;
+              font-size: 14px; color: #e5e7eb; background: #374151; cursor: pointer; }
+  #btn-back:hover { background: #4b5563; }
   /* 顶栏搜索与键盘提示 */
   #sku-search { padding: 5px 10px; border: 1px solid #4b5563; border-radius: 6px;
                 background: #374151; color: #fff; font-size: 13px; width: 170px; }
@@ -128,6 +132,7 @@
   <span class="spacer"></span>
   <span class="kbd-hint">↑↓ 切换 · Enter 下一条 · / 搜索</span>
   <span id="badge">挂起待审</span>
+  <button id="btn-back" onclick="goBackToBatch()" title="返回批次详情页" style="display:none;">返回批次</button>
   <button id="btn-submit" onclick="submitReview()">提交并继续</button>
 </div>
 
@@ -184,6 +189,8 @@
 "use strict";
 /* ================= 全局状态 ================= */
 const threadId = new URLSearchParams(location.search).get("thread_id") || "demo";
+const reopenFactory = new URLSearchParams(location.search).get("factory") || null;
+const isReopen = !!reopenFactory;
 let payload = null;        // 当前审核 payload
 let items = [];            // 可编辑的 items（与 payload.items 同构）
 let origItems = [];        // 加载时深拷贝留存的原始 items（提交前 diff 对照用）
@@ -210,13 +217,25 @@ function toast(msg, ms = 2600) {
 
 /* ================= 数据加载 ================= */
 async function loadPayload() {
-  const r = await fetch(`/api/v1/review/${encodeURIComponent(threadId)}/payload`);
+  let url = `/api/v1/review/${encodeURIComponent(threadId)}/payload`;
+  if (isReopen) {
+    url = `/api/v1/review/${encodeURIComponent(threadId)}/reopen/${encodeURIComponent(reopenFactory)}`;
+  }
+  const r = await fetch(url);
   if (!r.ok) { toast("获取审核数据失败：" + r.status); return; }
   payload = await r.json();
   initItems();
   $("tb-thread").textContent = "thread: " + threadId;
   $("tb-factory").textContent = "工厂: " + (payload.factory_name || "-");
-  $("badge").textContent = "挂起待审"; $("badge").className = "";
+  if (isReopen) {
+    $("badge").textContent = "重新编辑"; $("badge").className = "reopen";
+    $("btn-submit").textContent = "重新提交";
+    $("btn-back").style.display = "";
+  } else {
+    $("badge").textContent = "挂起待审"; $("badge").className = "";
+    $("btn-submit").textContent = "提交并继续";
+    $("btn-back").style.display = "none";
+  }
   $("done-view").style.display = "none";
   renderMissingBar();
   renderCards();
@@ -224,6 +243,10 @@ async function loadPayload() {
   // 默认选中第一条需要人工关注的（Error/Warning/新SKU优先），否则第一条
   const pri = items.findIndex(i => i.status !== "Normal" || i.is_new_sku);
   selectCard(pri >= 0 ? pri : 0);
+}
+
+function goBackToBatch() {
+  location.href = "/batch/" + encodeURIComponent(threadId);
 }
 
 /* 每次载入新 payload（含提交后进入下一工厂）时重置编辑副本/原始快照/过目记录/搜索 */
@@ -708,7 +731,7 @@ function submitReview() {
 
 async function doSubmit() {
   const btn = $("btn-submit");
-  btn.disabled = true; btn.textContent = "提交中…";
+  btn.disabled = true; btn.textContent = isReopen ? "重新提交中…" : "提交中…";
   // 清理前端临时标记；有改动的项显式带上 is_human_edited（后端比对之外的冗余保险）
   const submitItems = items.map((it) => {
     const c = { ...it };
@@ -717,7 +740,13 @@ async function doSubmit() {
     return c;
   });
   try {
-    const r = await fetch(`/api/v1/orders/${encodeURIComponent(threadId)}/resume`, {
+    let url = `/api/v1/orders/${encodeURIComponent(threadId)}/resume`;
+    let okText = "已写入";
+    if (isReopen) {
+      url = `/api/v1/review/${encodeURIComponent(threadId)}/reopen/${encodeURIComponent(reopenFactory)}`;
+      okText = "重新提交完成";
+    }
+    const r = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ approved: true, items: submitItems }),
@@ -725,7 +754,10 @@ async function doSubmit() {
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
 
-    if (data.status === "pending_human_review") {
+    if (isReopen) {
+      toast(okText + "：" + (data.message || ""), 4000);
+      showDone(data);
+    } else if (data.status === "pending_human_review") {
       // 多工厂循环：图在下一个工厂的 Node5 再次挂起
       toast("已写入，进入下一工厂审核");
       payload = data.review_data;
@@ -740,19 +772,20 @@ async function doSubmit() {
     toast("提交失败：" + e.message, 4000);
     btn.disabled = false;
   } finally {
-    btn.textContent = "提交并继续";
+    btn.textContent = isReopen ? "重新提交" : "提交并继续";
     refreshSubmitState();
   }
 }
 
 function showDone(data) {
-  $("badge").textContent = "已完成"; $("badge").className = "done";
+  $("badge").textContent = isReopen ? "重新编辑已完成" : "已完成"; $("badge").className = "done";
   $("btn-submit").disabled = true;
+  $("btn-back").style.display = "";
   $("done-view").style.display = "block";
   $("done-path").textContent = data.final_output_path ? ("最终文件：" + data.final_output_path) : (data.message || "");
   $("cards").innerHTML = "";
   $("missing-bar").style.display = "none";
-  toast("本批次全部完成");
+  toast(isReopen ? "重新提交完成" : "本批次全部完成");
 }
 
 /* 兜底：刷新页面后轮询 state 恢复现场（生产环境用） */
