@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -166,6 +167,9 @@ class FactorySession:
         return cls(factory=factory)
 
 
+_SKU_13_RE = re.compile(r'^\d{13}$')
+
+
 # ---------------------------------------------------------------------------
 # 内部：合并（改单语义）
 # ---------------------------------------------------------------------------
@@ -174,6 +178,14 @@ def _merge(session: FactorySession, new_items: list[ExtractedItem], from_file: s
     new_skus: list[str] = []
     updated: list[str] = []
     for it in new_items:
+        if it.sku_code is not None and not _SKU_13_RE.fullmatch(it.sku_code):
+            dump = it.model_dump()
+            dump["needs_human_review"] = True
+            dump["review_reason"] = (it.review_reason or "") + "；SKU_NON_13_DIGIT：非空 SKU 编码不是 13 位数字"
+            session.no_code_items.append(dump)
+            session._log("warning", "SKU_NON_13_DIGIT",
+                         f"非空 SKU 编码不是 13 位数字：{it.sku_code}", file=from_file)
+            continue
         if not it.sku_code:
             session.no_code_items.append(it.model_dump())
             continue
@@ -297,25 +309,39 @@ def process_file(session: FactorySession, file_path: str) -> ProcessResult:
                              message=msg, coverage=session.coverage(), status=session.status)
 
     # --- 候选：与现有 targets 做集合比较 ---
+    superseded = False
+    current_score = _name_score(file_path)
     for t in session.targets:
         tset = set(t["barcodes"])
-        if profile.barcodes <= tset:
-            relation = "duplicate" if profile.barcodes == tset else "subset"
-            session.file_records[file_path] = {"role": relation, "note": f"已被 {Path(t['path']).name} 覆盖"}
+        if profile.barcodes < tset:
+            session.file_records[file_path] = {"role": "subset", "note": f"已被 {Path(t['path']).name} 覆盖"}
             session._refresh_status()
-            return ProcessResult(file=file_path, action=f"ignored_{relation}",
+            return ProcessResult(file=file_path, action="ignored_subset",
                                  message=f"条码集合已被现有目标覆盖，忽略（不调 LLM）",
                                  coverage=session.coverage(), status=session.status)
+        if profile.barcodes == tset:
+            old_score = t.get("name_score", -1000)
+            if current_score <= old_score:
+                session.file_records[file_path] = {"role": "duplicate", "note": f"已被 {Path(t['path']).name} 覆盖"}
+                session._refresh_status()
+                return ProcessResult(file=file_path, action="ignored_duplicate",
+                                     message=f"条码集合已被现有目标覆盖，忽略（不调 LLM）",
+                                     coverage=session.coverage(), status=session.status)
+            session.targets.remove(t)
+            superseded = True
+            session._log("info", "TARGET_SUPERSEDED",
+                         f"更高路径评分目标到达，取代：{Path(t['path']).name}", file=file_path)
+            break
 
     # 新目标（可能取代若干子集 targets）
     replaced = [t for t in session.targets if set(t["barcodes"]) < profile.barcodes]
     session.targets = [t for t in session.targets if t not in replaced]
     session.targets.append({
         "path": file_path, "barcodes": sorted(profile.barcodes),
-        "name_score": _name_score(file_path), "forced": False,
+        "name_score": current_score, "forced": False,
     })
     session.no_pl_notified = False
-    action = "replaced_target" if replaced else "extracted"
+    action = "replaced_target" if replaced or superseded else "extracted"
     if replaced:
         session._log("info", "TARGET_SUPERSEDED",
                      f"更优目标到达，取代：{'、'.join(Path(t['path']).name for t in replaced)}")
