@@ -134,6 +134,10 @@ def _df_to_markdown(df: pd.DataFrame) -> str:
     """DataFrame → Markdown 表格纯文本（无表头概念，全部按数据行处理）。"""
     if df.empty:
         return ""
+    # A1：行内相邻同值长字符串压缩（在转为字符串前操作 DataFrame 原值）
+    df = _compress_adjacent_dup_strings(df)
+    # A2a：单射形态条码回填（在压缩后做，新增列会被 text_df.map 自动转字符串）
+    df = _bind_orphan_barcode(df)
     text_df = df.map(lambda v: "" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v).replace("\n", " ").replace("|", "｜").strip())
     buf = io.StringIO()
     ncols = len(text_df.columns)
@@ -216,6 +220,158 @@ def excel_to_markdown(file_path: str) -> str:
 
 _NUM_RE = re.compile(r"^-?\d[\d,]*\.?\d*$")
 _BARCODE_RE = re.compile(r"^\d{8,14}$")
+# 条码标签前缀（如 "BARCODE:4936695359672"、"BARCODE  4936695359672"）
+_BARCODE_LABEL_RE = re.compile(r"^\s*(?:BARCODE|BAR\s*CODE|BAR-NO|BAR\s*NO|条码)\s*:?\s*(\d{8,14})\s*$", re.IGNORECASE)
+# 主行 / 合计行的关键词黑名单
+_TOTAL_KEYWORDS = ("TOTAL", "合计", "小计", "SUBTOTAL", "SUB-TOTAL")
+
+
+def _is_main_sku_row(row_values: list) -> bool:
+    """判定一行是否为 SKU 主行：含 ≥1 个长文本 cell（≥6 且不含 TOTAL/合计/小计/SUBTOTAL）+ ≥2 个数值 cell。
+
+    长文本定义：strip() 后长度 ≥ 6（避免被 `KGS`/`CTNS`/空品名等短串误判为品名）。
+    数值定义：去掉 None/NaN 后，整型或浮点型 / 字符串形式的纯数字。
+    """
+    has_long_text = False
+    num_count = 0
+    for v in row_values:
+        if v is None:
+            continue
+        if isinstance(v, float) and pd.isna(v):
+            continue
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                continue
+            upper = s.upper()
+            if any(kw.upper() in upper for kw in _TOTAL_KEYWORDS):
+                # 含 TOTAL/合计/小计/SUBTOTAL 的 cell 直接否
+                return False
+            if len(s) >= 6:
+                has_long_text = True
+            # 短数值串（如 "120"、"3.5"）计入数值
+            if _NUM_RE.match(s):
+                num_count += 1
+        elif isinstance(v, (int,)):
+            # bool 是 int 的子类，要排除
+            num_count += 1
+        elif isinstance(v, float):
+            num_count += 1
+    return has_long_text and num_count >= 2
+
+
+def _is_barcode_row(row_values: list) -> tuple[bool, str | None]:
+    """判定一行是否为条码行；返回 (是否, 提取出的条码串)。
+
+    优先级：
+      1. cell 文本匹配 "BARCODE[: ](\\d{8,14})"
+      2. cell 为纯 \\d{13}（13 位 EAN/JAN）独立成行
+    """
+    extracted: str | None = None
+    for v in row_values:
+        if v is None:
+            continue
+        if isinstance(v, float) and pd.isna(v):
+            continue
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                continue
+            m = _BARCODE_LABEL_RE.match(s)
+            if m:
+                return True, m.group(1)
+            if _BARCODE_RE.match(s):
+                # 纯 13 位数字的 cell 暂存；最后统一看是不是"全行只有这一个数字 cell"
+                extracted = extracted or s
+    return (extracted is not None), extracted
+
+
+def _bind_orphan_barcode(df: pd.DataFrame) -> pd.DataFrame:
+    """单射形态条码回填（参见方案 §3.2 / 2026-08-11）。
+
+    触发条件（全满足才启用）：
+      1. 全表有且仅有 1 个 SKU 主行（含 ≥1 个长文本 cell + ≥2 个数值 cell）；
+      2. 全表有且仅有 1 个条码行（BARCODE:xxxx 或纯 13 位数字），且不是主行；
+      3. 条码行在主行下方（只向上绑定）。
+
+    动作：把条码追加到主行末尾新 cell；条码行保留不删（宁冗勿漏）。
+
+    不覆盖形态（不触发）：多主行 / 多条码 / 条码在主行上方 / 一条码多 SKU。
+    """
+    if df.empty or len(df) < 2:
+        return df
+
+    # 收集行级特征
+    main_indices: list[int] = []
+    barcode_indices: list[tuple[int, str]] = []  # (行索引, 条码数字)
+    for idx, (_, row) in enumerate(df.iterrows()):
+        vals = row.tolist()
+        if _is_main_sku_row(vals):
+            main_indices.append(idx)
+        is_bc, bc = _is_barcode_row(vals)
+        if is_bc and bc is not None:
+            barcode_indices.append((idx, bc))
+
+    if len(main_indices) != 1 or len(barcode_indices) != 1:
+        return df
+    main_idx = main_indices[0]
+    bc_idx, bc_value = barcode_indices[0]
+    if bc_idx == main_idx or bc_idx <= main_idx:
+        # 条码行必须在主行下方；同一行 / 在主行上方 → 不触发
+        return df
+
+    # 复制避免原 DataFrame 被改写（pandas 链式赋值警告）
+    df = df.copy()
+    # 主行末尾追加一列：扩展到 df.shape[1]
+    new_col_idx = df.shape[1]
+    df.loc[main_idx, new_col_idx] = bc_value
+    logger.info(
+        "条码行回填 | sheet=%s 条码=%s 主行=%d 条码行=%d",
+        "?", bc_value, main_idx, bc_idx,
+    )
+    return df
+
+
+def _compress_adjacent_dup_strings(df: pd.DataFrame) -> pd.DataFrame:
+    """A1 同行相邻同值长字符串压缩（参见方案 §3.1）。
+
+    规则（仅对 DataFrame 行内字符串 cell）：
+      - 只处理字符串 cell；数字（int / float）一律不动（N.W.=G.W. 是合法同值错位）
+      - 只处理 strip() 后长度 ≥ 6 的串（KGS / CTNS / 净重 等短串保持列对齐）
+      - 相邻同值 run：保留第一个，其余 cell 置空字符串
+
+    DEBUG 日志：行内同值压缩 | sheet=%s 行=%d 值=%s 重复=%d
+    """
+    if df.empty:
+        return df
+
+    def _compress_row(row: pd.Series) -> pd.Series:
+        prev_val: object = None
+        prev_is_str = False
+        prev_normalized: str = ""
+        for col in df.columns:
+            v = row[col]
+            is_str = isinstance(v, str)
+            if is_str:
+                stripped = v.strip()
+                if len(stripped) >= 6 and prev_is_str and stripped == prev_normalized:
+                    # 同值 run 的非首 cell → 置空
+                    row[col] = ""
+                    logger.debug(
+                        "行内同值压缩 | sheet=%s 行=%d 值=%s 重复=%d",
+                        "?", int(row.name) if not isinstance(row.name, str) else row.name,
+                        stripped, 2,
+                    )
+                    continue
+                prev_is_str = True
+                prev_normalized = stripped
+            else:
+                prev_is_str = False
+                prev_normalized = ""
+            prev_val = v
+        return row
+
+    return df.apply(_compress_row, axis=1)
 
 
 def _drop_zero_rows(markdown_text: str) -> str:
