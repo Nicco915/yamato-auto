@@ -1,0 +1,1 @@
+# scripts 子包占位文件（用于 -m app.scripts.extraction_snapshot 调用）。

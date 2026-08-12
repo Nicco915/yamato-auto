@@ -1,0 +1,41 @@
+{
+ "factory_slug": "zhaofeng",
+ "source_filename": "Packing XD-261830-001-1.28.xlsx",
+ "source_path": "/var/folders/d2/xyj99s1j57bghnnhqgn235j00000gn/T/yamato_extraction_snapshot_p7n4ommn/zhaofeng/Packing XD-261830-001-1.28.xlsx",
+ "suffix": ".xlsx",
+ "selected_sheets": [
+  "Sheet1"
+ ],
+ "markdown": "### 工作表: Sheet1\n| c0 | c1 | c2 | c3 | c4 | c5 | c6 | c7 | c8 | c9 | c10 | c11 |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| QINGDAO ZHAOFENG HOME FURNISHINGS CO.,LTD. |  |  |  |  |  |  |  |  |  |  |  |\n| Unit 1210, Building 2,International Development Centre, No.36 Miaoling Road,Laoshan District,Qingdao,Shandong, China, 266061 Tel: +86-532-68721025 Fax: +86-532-68721055 |  |  |  |  |  |  |  |  |  |  |  |\n| PACKING LIST |  |  |  |  |  |  |  |  |  |  |  |\n| TO:   CAINZ CORPORATION |  |  |  |  |  |  |  |  | INVOICE No. | VK26F01F2-1 |  |\n| 1-2-1 WASEDANOMORI, HONJO-SHI, SAITAMA, JAPAN |  |  |  |  |  |  |  |  | DATE | 2026-01-28 00:00:00 | 2026-01-28 00:00:00 |\n|  |  |  |  |  |  |  |  |  | FROM | QINGDAO, CHINA |  |\n| VESSEL & VOY No. |  |  |  |  |  |  |  |  | PO NO. | XD-261830-001 |  |\n| MARKS & NUMBERS: N/M |  |  |  |  |  |  |  |  |  |  |  |\n| JAN CODE No. | DESCRIPTION OF GOODS |  |  |  |  | QUANTITY | UNIT | PACKAGES | NET WEIGHT | GROSS WEIGHT | MESUREMENT |\n|  |  |  |  |  |  |  |  | (CTN) | (KG) | (KG) | (M3) |\n| 4549509623861 | インナーボックス ＰＰ（ブラウン） |  |  |  |  | 1200 | PCS | 200 | 778.6 | 972 | 22.68 |\n| 4549509623878 | インナーボックス ＰＰ（ブラウン）　浅型 |  |  |  |  | 870 | PCS | 145 | 441.96 | 551 | 11.59536 |\n| 4549509623885 | インナーボックス ＰＰ（ブラウン）　ハーフ |  |  |  |  | 300 | PCS | 50 | 141.65 | 179 | 4.34 |\n| 4549509623892 | インナーボックス ＰＰ（ブラウン）　Ｓ |  |  |  |  | 416 | PCS | 52 | 144.248 | 174.2 | 3.0576 |\n| 4549509623908 | インナーボックス　ＰＰ（ベージュ） |  |  |  |  | 0 | PCS | 0 | 0 | 0 | 0 |\n| 4549509623915 | インナーボックス　ＰＰ（ベージュ）　浅型 |  |  |  |  | 0 | PCS | 0 | 0 | 0 | 0 |\n| 4549509623922 | インナーボックス　ＰＰ（ベージュ）　ハーフ |  |  |  |  | 0 | PCS | 0 | 0 | 0 | 0 |\n| 4549509623939 | インナーボックス　ＰＰ（ベージュ）　Ｓ |  |  |  |  | 0 | PCS | 0 | 0 | 0 | 0 |\n| 4549509729358 | インナーボックス用フタ ＰＰ（ブラウン） |  |  |  |  | 0 | PCS | 0 | 0 | 0 | 0 |\n| 4549509729365 | インナーボックス用フタ ＰＰ（ベージュ） |  |  |  |  | 0 | PCS | 0 | 0 | 0 | 0 |\n| 4549509769378 | 持ち運べるスリムインナーボックスPP BR |  |  |  |  | 0 | PCS | 0 | 0 | 0 | 0 |\n| 4549509769385 | 持ち運べるスリムインナーボックスPP BE |  |  |  |  | 0 | PCS | 0 | 0 | 0 | 0 |\n| 4550596103495 | ラタン風インナ-ボックス BR |  |  |  |  | 0 | PCS | 0 | 0 | 0 | 0 |\n| 4550596103501 | ラタン風インナ-ボックス 浅型 BR |  |  |  |  | 0 | PCS | 0 | 0 | 0 | 0 |\n|  | SUBTOTAL |  |  |  |  | 2786 |  | 447 | 1506.458 | 1876.2 | 41.67296 |\n|  |  |  | TOTAL | TOTAL | TOTAL | 2786 | PCS | 447CTNS | 1506.458 | 1876.2 | 41.67296 |\n| MADE IN CHINA |  |  |  |  |  |  |  |  |  |  |  |\n",
+ "markdown_lines": 31,
+ "markdown_after_zero_filter": "### 工作表: Sheet1\n| c0 | c1 | c2 | c3 | c4 | c5 | c6 | c7 | c8 | c9 | c10 | c11 |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| QINGDAO ZHAOFENG HOME FURNISHINGS CO.,LTD. |  |  |  |  |  |  |  |  |  |  |  |\n| Unit 1210, Building 2,International Development Centre, No.36 Miaoling Road,Laoshan District,Qingdao,Shandong, China, 266061 Tel: +86-532-68721025 Fax: +86-532-68721055 |  |  |  |  |  |  |  |  |  |  |  |\n| PACKING LIST |  |  |  |  |  |  |  |  |  |  |  |\n| TO:   CAINZ CORPORATION |  |  |  |  |  |  |  |  | INVOICE No. | VK26F01F2-1 |  |\n| 1-2-1 WASEDANOMORI, HONJO-SHI, SAITAMA, JAPAN |  |  |  |  |  |  |  |  | DATE | 2026-01-28 00:00:00 | 2026-01-28 00:00:00 |\n|  |  |  |  |  |  |  |  |  | FROM | QINGDAO, CHINA |  |\n| VESSEL & VOY No. |  |  |  |  |  |  |  |  | PO NO. | XD-261830-001 |  |\n| MARKS & NUMBERS: N/M |  |  |  |  |  |  |  |  |  |  |  |\n| JAN CODE No. | DESCRIPTION OF GOODS |  |  |  |  | QUANTITY | UNIT | PACKAGES | NET WEIGHT | GROSS WEIGHT | MESUREMENT |\n|  |  |  |  |  |  |  |  | (CTN) | (KG) | (KG) | (M3) |\n| 4549509623861 | インナーボックス ＰＰ（ブラウン） |  |  |  |  | 1200 | PCS | 200 | 778.6 | 972 | 22.68 |\n| 4549509623878 | インナーボックス ＰＰ（ブラウン）　浅型 |  |  |  |  | 870 | PCS | 145 | 441.96 | 551 | 11.59536 |\n| 4549509623885 | インナーボックス ＰＰ（ブラウン）　ハーフ |  |  |  |  | 300 | PCS | 50 | 141.65 | 179 | 4.34 |\n| 4549509623892 | インナーボックス ＰＰ（ブラウン）　Ｓ |  |  |  |  | 416 | PCS | 52 | 144.248 | 174.2 | 3.0576 |\n|  | SUBTOTAL |  |  |  |  | 2786 |  | 447 | 1506.458 | 1876.2 | 41.67296 |\n|  |  |  | TOTAL | TOTAL | TOTAL | 2786 | PCS | 447CTNS | 1506.458 | 1876.2 | 41.67296 |\n| MADE IN CHINA |  |  |  |  |  |  |  |  |  |  |  |\n",
+ "markdown_after_zero_filter_lines": 21,
+ "markdown_after_bind": "### 工作表: Sheet1\n| c0 | c1 | c2 | c3 | c4 | c5 | c6 | c7 | c8 | c9 | c10 | c11 |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n| QINGDAO ZHAOFENG HOME FURNISHINGS CO.,LTD. |  |  |  |  |  |  |  |  |  |  |  |\n| Unit 1210, Building 2,International Development Centre, No.36 Miaoling Road,Laoshan District,Qingdao,Shandong, China, 266061 Tel: +86-532-68721025 Fax: +86-532-68721055 |  |  |  |  |  |  |  |  |  |  |  |\n| PACKING LIST |  |  |  |  |  |  |  |  |  |  |  |\n| TO:   CAINZ CORPORATION |  |  |  |  |  |  |  |  | INVOICE No. | VK26F01F2-1 |  |\n| 1-2-1 WASEDANOMORI, HONJO-SHI, SAITAMA, JAPAN |  |  |  |  |  |  |  |  | DATE | 2026-01-28 00:00:00 | 2026-01-28 00:00:00 |\n|  |  |  |  |  |  |  |  |  | FROM | QINGDAO, CHINA |  |\n| VESSEL & VOY No. |  |  |  |  |  |  |  |  | PO NO. | XD-261830-001 |  |\n| MARKS & NUMBERS: N/M |  |  |  |  |  |  |  |  |  |  |  |\n| JAN CODE No. | DESCRIPTION OF GOODS |  |  |  |  | QUANTITY | UNIT | PACKAGES | NET WEIGHT | GROSS WEIGHT | MESUREMENT |\n|  |  |  |  |  |  |  |  | (CTN) | (KG) | (KG) | (M3) |\n| 4549509623861 | インナーボックス ＰＰ（ブラウン） |  |  |  |  | 1200 | PCS | 200 | 778.6 | 972 | 22.68 |\n| 4549509623878 | インナーボックス ＰＰ（ブラウン）　浅型 |  |  |  |  | 870 | PCS | 145 | 441.96 | 551 | 11.59536 |\n| 4549509623885 | インナーボックス ＰＰ（ブラウン）　ハーフ |  |  |  |  | 300 | PCS | 50 | 141.65 | 179 | 4.34 |\n| 4549509623892 | インナーボックス ＰＰ（ブラウン）　Ｓ |  |  |  |  | 416 | PCS | 52 | 144.248 | 174.2 | 3.0576 |\n|  | SUBTOTAL |  |  |  |  | 2786 |  | 447 | 1506.458 | 1876.2 | 41.67296 |\n|  |  |  | TOTAL | TOTAL | TOTAL | 2786 | PCS | 447CTNS | 1506.458 | 1876.2 | 41.67296 |\n| MADE IN CHINA |  |  |  |  |  |  |  |  |  |  |  |\n",
+ "markdown_after_bind_lines": 21,
+ "last_col_after_bind": 12,
+ "profile": {
+  "path": "/var/folders/d2/xyj99s1j57bghnnhqgn235j00000gn/T/yamato_extraction_snapshot_p7n4ommn/zhaofeng/Packing XD-261830-001-1.28.xlsx",
+  "channel": "excel",
+  "barcodes": [
+   "4549509623861",
+   "4549509623878",
+   "4549509623885",
+   "4549509623892",
+   "4549509623908",
+   "4549509623915",
+   "4549509623922",
+   "4549509623939",
+   "4549509729358",
+   "4549509729365",
+   "4549509769378",
+   "4549509769385",
+   "4550596103495",
+   "4550596103501"
+  ],
+  "has_net": true,
+  "has_gross": true,
+  "has_qty": true,
+  "is_candidate": true,
+  "error": ""
+ }
+}
