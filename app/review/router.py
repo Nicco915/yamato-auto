@@ -20,11 +20,15 @@
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import html
 import logging
 import mimetypes
+import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -33,6 +37,8 @@ from typing import Any, Protocol
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, Response
+
+from app.ui.open_file import OpenFileError
 
 from app.config import get_settings
 from app.extraction.excel_channel import excel_to_markdown
@@ -457,3 +463,128 @@ async def get_document(
         raise HTTPException(status_code=500, detail=f"单据渲染失败: {e}") from e
 
     raise HTTPException(status_code=415, detail=f"不支持的文件类型: {suffix}")
+
+
+# ---------------------------------------------------------------------------
+# 「打开本地文件」端点：左屏 doc-toolbar 触发
+# ---------------------------------------------------------------------------
+
+# 与前端 isRealDocPath() 对齐的占位符集合——禁止传给后端去开系统程序
+# （前端已经会先灰显按钮，后端再做一道防御：避免外部伪造请求）
+_DENY_PATH_MARKERS = {
+    "reconstructed_from_output_excel",
+    "no_items_extracted",
+    "no_folder_matched",
+}
+
+
+def _is_placeholder_path(p: str) -> bool:
+    """路径是不是审核页 source_documents 里的「占位符」（非真实文件）？
+
+    - extraction_error:xxx           提取失败留痕
+    - reconstructed_from_output_excel / no_items_extracted / no_folder_matched
+    - 空串
+    """
+    if not p or not p.strip():
+        return True
+    if p in _DENY_PATH_MARKERS:
+        return True
+    if p.startswith("extraction_error:"):
+        return True
+    return False
+
+
+def _launch_local(path: Path) -> None:
+    """跨平台「用系统默认程序打开本地文件」（模块顶层独立函数便于测试 mock）。
+
+    分派规则（与 app/ui/open_file.open_with_default_app 同源，差异：
+    - 这里用 subprocess.Popen（异步启动，立即返回，不等默认程序退出），
+      避免 os.startfile 之外还阻塞在 subprocess.run 的 timeout 上；
+    - 错误以 OpenFileError 统一包装。
+    """
+    # Windows：os.startfile 非阻塞
+    if sys.platform == "win32":
+        try:
+            os.startfile(str(path))  # type: ignore[attr-defined]  # Windows-only
+        except OSError as e:
+            raise OpenFileError(f"Windows 系统启动默认程序失败: {e}") from e
+        return
+
+    cmd: list[str]
+    if sys.platform == "darwin":
+        cmd = ["open", str(path)]
+        err_label = "macOS open 命令"
+    elif sys.platform.startswith("linux"):
+        cmd = ["xdg-open", str(path)]
+        err_label = "xdg-open 命令"
+    else:
+        raise OpenFileError(
+            f"不支持的操作系统平台: sys.platform={sys.platform}, os.name={os.name}"
+        )
+
+    try:
+        # shell=False + list args 防命令注入；截断 stderr 防止意外信息泄露
+        subprocess.Popen(
+            cmd,
+            shell=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError as e:
+        # 命令不存在（Linux 上 xdg-utils 未装最常见）
+        raise OpenFileError(f"{err_label}不存在，无法打开文件: {e}") from e
+    except Exception as e:
+        raise OpenFileError(f"{err_label}执行失败: {e}") from e
+
+
+@router.post("/api/v1/review/{thread_id}/open")
+async def open_local(
+    thread_id: str,
+    path: str = Query(..., description="单据文件绝对路径（必须在白名单内）"),
+) -> dict[str, Any]:
+    """左屏 doc-toolbar「打开本地文件」按钮：服务端启动系统默认程序。
+
+    与 GET /document（PNG 渲染回浏览器）相对——本端点把文件丢给本机默认
+    程序（Excel / WPS / Adobe / 图片查看器等），用户编辑保存后直接回到
+    服务器上的原文件。
+
+    安全：
+    - path 占位符（前端 isRealDocPath 为 false 的四种值）→ 400，不调系统；
+    - 复用 _resolve_whitelisted 走全局白名单 + thread 二级 upstream_root，
+      越权 403；
+    - 文件不存在 404；
+    - subprocess.Popen shell=False + list args 防命令注入；
+    - 失败仅记录 logger.warning（路径+原因），前端只看到 5xx 的中文 detail
+      （不泄露命令细节）。
+
+    异常：
+    - 400：path 是占位符
+    - 403：路径越权（_resolve_whitelisted 抛）
+    - 404：文件不存在（_resolve_whitelisted 抛）
+    - 503：OpenFileError（命令不存在 / 启动失败）
+    - 500：其他未捕获异常
+    """
+    # 1) 占位符防御（早于白名单，避免白名单 resolve 把 ext 异常当 500）
+    if _is_placeholder_path(path):
+        raise HTTPException(
+            status_code=400,
+            detail="该路径是占位符，无法打开本地文件",
+        )
+
+    # 2) 白名单 + 存在性（thread_id 仅参与批次 upstream_root 二级查询）
+    p = _resolve_whitelisted(path, thread_id=thread_id)
+
+    # 3) 异步启动系统默认程序（放线程池，不阻塞事件循环）
+    try:
+        await asyncio.to_thread(_launch_local, p)
+    except OpenFileError as e:
+        # logger 留痕（含路径与原因，运维排障用），前端只看到 503 中文 detail
+        logger.warning("[打开本地文件] 启动默认程序失败 path=%s: %s", p, e)
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[打开本地文件] 未预期异常 path=%s: %s: %s",
+                       p, type(e).__name__, e)
+        raise HTTPException(status_code=500, detail="启动默认程序失败") from e
+
+    return {"ok": True, "path": str(p)}
+

@@ -146,6 +146,7 @@
     <div id="doc-toolbar">
       <span>单据:</span>
       <select id="doc-select" onchange="onDocSelect(this.value)"></select>
+      <button id="btn-open-local" onclick="openLocalDoc()" title="用本机默认程序打开当前单据" disabled>打开</button>
       <span class="pager" id="pager" style="display:none">
         <button onclick="gotoPage(curPage-1)">◀</button>
         <span id="page-info">1 / 1</span>
@@ -516,16 +517,58 @@ function renderDocSelect() {
 
 function onDocSelect(path) { loadDocument(path, 1); }
 
+/* 「打开本地文件」按钮：把当前 curDoc 交给后端 → 后端启动系统默认程序。
+   curDoc 为占位符（extraction_error: / reconstructed_from_output_excel /
+   no_items_extracted / no_folder_matched）时按钮置灰。*/
+function updateOpenLocalBtn() {
+  const btn = $("btn-open-local");
+  if (!btn) return;
+  const ok = isRealDocPath(curDoc);
+  btn.disabled = !ok;
+  btn.title = ok ? "用本机默认程序打开当前单据" : "当前单据不是真实文件，无法在本地打开";
+}
+
+async function openLocalDoc() {
+  if (!isRealDocPath(curDoc)) {
+    toast("当前单据不是真实文件，无法在本地打开");
+    return;
+  }
+  const btn = $("btn-open-local");
+  if (btn) btn.disabled = true;
+  try {
+    const r = await fetch(
+      `/api/v1/review/${encodeURIComponent(threadId)}/open?path=${encodeURIComponent(curDoc)}`,
+      { method: "POST" },
+    );
+    if (!r.ok) {
+      let msg = "HTTP " + r.status;
+      try {
+        const j = await r.json();
+        if (j && j.detail) msg = j.detail;
+      } catch (_) { /* ignore */ }
+      toast("打开失败：" + msg, 4000);
+      return;
+    }
+    toast("已交给系统默认程序打开", 2000);
+  } catch (e) {
+    toast("请求失败：" + e.message, 4000);
+  } finally {
+    updateOpenLocalBtn();
+  }
+}
+
 async function loadDocument(path, page) {
   if (!isRealDocPath(path)) {
     $("doc-view").innerHTML = "<span style='color:#9ca3af;margin-top:40px'>该 SKU 无有效来源文件，请从上方单据列表手动选择</span>";
     $("zoom-bar").style.display = "none";
     $("pager").style.display = "none";
     curDoc = null; curPage = 1; pageCount = 1;
+    updateOpenLocalBtn();
     return;
   }
   curDoc = path; curPage = page;
   $("doc-select").value = path;
+  updateOpenLocalBtn();
   const url = `/api/v1/review/${encodeURIComponent(threadId)}/document?path=${encodeURIComponent(path)}&page=${page}`;
   const suffix = path.split(".").pop().toLowerCase();
   const view = $("doc-view");
