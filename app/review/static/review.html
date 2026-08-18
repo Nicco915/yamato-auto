@@ -60,6 +60,17 @@
   /* 右屏卡片 */
   #missing-bar { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5;
                  border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; }
+  /* D3 缺失 SKU chip + 全部添加 */
+  #missing-bar .missing-chips { display: inline-flex; flex-wrap: wrap; gap: 6px; margin: 0 8px; }
+  .missing-chip { font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+                  padding: 1px 8px; border: 1px solid #b91c1c; border-radius: 10px;
+                  background: #fff; color: #b91c1c; cursor: pointer; }
+  .missing-chip:hover:not(:disabled) { background: #fecaca; }
+  .missing-chip:disabled { border-color: #d1d5db; color: #9ca3af; background: #f3f4f6;
+                           cursor: not-allowed; }
+  #btn-add-all-missing { padding: 2px 10px; border: 0; border-radius: 4px; font-size: 12px;
+                         font-weight: 600; color: #fff; background: #b91c1c; cursor: pointer; }
+  #btn-add-all-missing:disabled { background: #d1d5db; cursor: not-allowed; }
   .card { background: #fff; border: 1px solid #d1d5db; border-left: 5px solid #9ca3af;
           border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; cursor: pointer; }
   .card.selected { outline: 2px solid #2563eb; }
@@ -71,7 +82,12 @@
   .card.edited { background: #eff6ff; }
   .card.dim { opacity: .35; }
   .card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-  .sku { font-weight: 700; font-size: 14px; }
+  /* B：SKU 可编辑输入框（替代原只读 .sku 文本） */
+  .sku-input { font-weight: 700; font-size: 14px; width: 150px; padding: 2px 6px;
+               border: 1px solid #cbd5e1; border-radius: 4px; font-family: inherit; }
+  .sku-input:focus { outline: 2px solid #93c5fd; border-color: #2563eb; }
+  .sku-input.invalid { border-color: #dc2626; outline: 1px solid #dc2626; }
+  .sku-hint { font-size: 11px; color: #dc2626; white-space: nowrap; }
   .status { font-size: 12px; padding: 1px 8px; border-radius: 8px; background: #e5e7eb; }
   .status.st-Error { background: #fecaca; color: #991b1b; }
   .status.st-Warning { background: #fde68a; color: #92400e; }
@@ -80,6 +96,8 @@
   .tag { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: #ffedd5;
          color: #9a3412; }
   .tag.modified { background: #dbeafe; color: #1d4ed8; }
+  .tag.renamed { background: #fef9c3; color: #854d0e; }
+  .tag.reextract { background: #ede9fe; color: #6d28d9; }
   .src { margin-left: auto; font-size: 11px; color: #6b7280; max-width: 40%;
          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 12px; font-size: 13px; }
@@ -147,6 +165,7 @@
       <span>单据:</span>
       <select id="doc-select" onchange="onDocSelect(this.value)"></select>
       <button id="btn-open-local" onclick="openLocalDoc()" title="用本机默认程序打开当前单据" disabled>打开</button>
+      <button id="btn-reextract" onclick="reextractDoc()" title="强制重新识别当前单据，结果合并到右侧卡片" disabled>重新识别</button>
       <span class="pager" id="pager" style="display:none">
         <button onclick="gotoPage(curPage-1)">◀</button>
         <span id="page-info">1 / 1</span>
@@ -206,6 +225,8 @@ let curDoc = null;         // 当前左屏文件路径
 let curPage = 1, pageCount = 1;
 let factoryList = [];      // 当前批次所有工厂 [{factory, role}]
 let currentFactoryIndex = -1;  // 当前工厂在 factoryList 中的索引
+let missingSkus = [];      // D3：缺失 SKU 前端状态（添加后移除，红条联动）
+let reextractBusy = false; // D2：重提请求进行中（防重复点击，5-40s）
 /* 缩放状态 */
 let zoomPerDoc = {};        // { path: zoom_ratio } 单据缩放记忆
 let curZoom = 1;            // 当前缩放比（1=适应宽度）
@@ -297,7 +318,9 @@ function goBackToBatch() {
 /* 每次载入新 payload（含提交后进入下一工厂）时重置编辑副本/原始快照/过目记录/搜索 */
 function initItems() {
   items = JSON.parse(JSON.stringify(payload.items || []));
+  items.forEach((it) => { it._sku0 = it.sku ?? ""; });  // B：改名判定基准快照
   origItems = JSON.parse(JSON.stringify(payload.items || []));
+  missingSkus = [...(payload.missing_skus || [])];
   seenIdx = new Set();
   searchMatches = [];
   const s = $("sku-search");
@@ -306,13 +329,61 @@ function initItems() {
   if (sc) sc.textContent = "";
 }
 
+/* D3：缺失红条 = 每个缺失条码的可点击 chip（单个添加）+「全部添加」；
+   已在卡片中的 sku chip 置灰防重复添加；全部移除后红条消失 */
 function renderMissingBar() {
-  const m = payload.missing_skus || [];
   const bar = $("missing-bar");
-  if (m.length) {
-    bar.style.display = "block";
-    bar.textContent = "⚠ 下游要求但未提取到的 SKU：" + m.join("、") + "（请人工在左屏原始单据中确认）";
-  } else { bar.style.display = "none"; }
+  if (!missingSkus.length) { bar.style.display = "none"; return; }
+  const onCard = new Set(
+    items.map((i) => String(i.sku ?? "").trim()).filter(Boolean));
+  const chips = missingSkus.map((sku) => {
+    const s = String(sku);
+    const exists = onCard.has(s);
+    return `<button class="missing-chip" data-sku="${esc(s)}" ` +
+      (exists ? 'disabled title="该 SKU 已在卡片中"' : 'title="点击补空卡"') +
+      ` onclick="addMissingSku(this.dataset.sku)">${esc(s)}</button>`;
+  }).join("");
+  const allOnCard = missingSkus.every((s) => onCard.has(String(s)));
+  bar.style.display = "block";
+  bar.innerHTML = "⚠ 下游要求但未提取到的 SKU（点击条码补空卡，数值人工手填）：" +
+    `<span class="missing-chips">${chips}</span>` +
+    `<button id="btn-add-all-missing" onclick="addAllMissingSkus()"` +
+    `${allOnCard ? " disabled" : ""}>全部添加</button>`;
+}
+
+/* D3：为缺失条码补一张空卡（契约形状），按新 SKU 显示品名/HS/商检补录框 */
+function addMissingSku(sku) {
+  sku = String(sku ?? "").trim();
+  if (!sku) return;
+  if (items.some((i) => String(i.sku ?? "").trim() === sku)) {
+    toast("该 SKU 已在卡片中");
+    return;
+  }
+  items.push({
+    sku,
+    extracted_data: { total_quantity: null, total_net_weight: null,
+                      total_gross_weight: null, weight_unit: "KG", source_file: "" },
+    calculation: { net_formula: "", gross_formula: "",
+                   calculated_unit_net: null, calculated_unit_gross: null },
+    status: "Normal",
+    is_new_sku: true,
+    db_record: {},
+    name_cn: "", hs_code: "", inspection_required: "",
+    _added: true, _from_missing: true, _modified: true, _sku0: sku,
+  });
+  missingSkus = missingSkus.filter((s) => String(s) !== sku);
+  renderMissingBar();
+  renderCards();
+  selectCard(items.length - 1);
+  const c = $("card-" + (items.length - 1));
+  if (c) c.scrollIntoView({ block: "nearest" });
+}
+
+function addAllMissingSkus() {
+  const todo = missingSkus.filter((s) =>
+    !items.some((i) => String(i.sku ?? "").trim() === String(s)));
+  todo.forEach((s) => addMissingSku(s));
+  if (todo.length) toast(`已补 ${todo.length} 张空卡，请逐项填数值与合规字段`, 3500);
 }
 
 /* ================= 右屏卡片 ================= */
@@ -366,9 +437,14 @@ function renderCards() {
 
     card.innerHTML = `
       <div class="card-head">
-        <span class="sku">${esc(item.sku)}</span>
+        <input class="sku-input" data-idx="${idx}" value="${esc(item.sku ?? "")}"
+               oninput="onSkuEdit(this)" maxlength="13" inputmode="numeric" spellcheck="false"
+               title="SKU（13 位数字，可直接修改）">
+        <span class="sku-hint" id="hint-sku-${idx}"></span>
         <span class="status st-${item.status}">${esc(item.status || "")}</span>
         ${item.is_new_sku ? '<span class="tag">新SKU</span>' : ""}
+        ${item._sku_renamed ? '<span class="tag renamed">已改SKU</span>' : ""}
+        ${item._reextract ? '<span class="tag reextract">重提</span>' : ""}
         ${item._modified ? '<span class="tag modified">已修改</span>' : ""}
         <span class="src" title="${esc(sourceFileOf(item))}">${esc(baseName(sourceFileOf(item)))}</span>
       </div>
@@ -483,25 +559,90 @@ function markCardModified(idx) {
   }
 }
 
-/* 弱警告：新 SKU 字段留空时显示提示，不阻断提交 */
+/* B：SKU 输入编辑。改名判定基准是载入快照 _sku0；D3/重提新增卡无 base 可对应，
+   改 sku 不算改名（不携带 orig_sku）。改名卡视同新 SKU 显示合规字段弱警告。 */
+function onSkuEdit(input) {
+  const idx = +input.dataset.idx;
+  const it = items[idx];
+  if (!it) return;
+  const v = input.value.trim();
+  it.sku = v;
+  it._sku_renamed = !it._added && v !== String(it._sku0 ?? "");
+  it._modified = true;
+  markCardModified(idx);
+  // "已改SKU" tag 动态增删（不整卡重渲染，避免输入框失焦）
+  const card = $("card-" + idx);
+  let tag = card.querySelector(".tag.renamed");
+  if (it._sku_renamed && !tag) {
+    tag = document.createElement("span");
+    tag.className = "tag renamed"; tag.textContent = "已改SKU";
+    card.querySelector(".card-head").insertBefore(tag, card.querySelector(".src"));
+  } else if (!it._sku_renamed && tag) {
+    tag.remove();
+  }
+  renderMissingBar();   // 缺失 chip 置灰联动
+  refreshSubmitState();
+}
+
+/* B：SKU 校验（与后端守卫同口径）：非空必须 13 位纯数字、不得与其他卡片重复。
+   红字提示到卡头 hint，返回错误数（>0 时禁用提交按钮）。空 sku（无条码条目）放行。 */
+function validateSkuInputs() {
+  const counts = {};
+  items.forEach((it) => {
+    const v = String(it.sku ?? "").trim();
+    if (v) counts[v] = (counts[v] || 0) + 1;
+  });
+  let errs = 0;
+  items.forEach((it, idx) => {
+    const card = $("card-" + idx);
+    const inp = card ? card.querySelector(".sku-input") : null;
+    const hint = $("hint-sku-" + idx);
+    const v = String(it.sku ?? "").trim();
+    let msg = "";
+    if (v && !/^\d{13}$/.test(v)) msg = "SKU 必须是 13 位数字";
+    else if (v && counts[v] > 1) msg = "SKU 与其他卡片重复";
+    if (msg) errs++;
+    if (inp) inp.classList.toggle("invalid", !!msg);
+    if (hint) hint.textContent = msg;
+  });
+  return errs;
+}
+
+/* 改名卡视同新 SKU 显示合规字段弱警告：hint span 初始只给 is_new_sku 渲染，
+   改名发生时按需在对应 label 内补建（避免整卡重渲染导致输入框失焦） */
+function ensureMetaHintSpans(idx) {
+  const card = $("card-" + idx);
+  if (!card) return;
+  [["name_cn", "hint-name_cn-"], ["inspection_required", "hint-inspection-"]].forEach(([f, prefix]) => {
+    if ($(prefix + idx)) return;
+    const inp = card.querySelector(`input[data-field="${f}"]`);
+    if (!inp) return;
+    const span = document.createElement("span");
+    span.className = "field-hint"; span.id = prefix + idx;
+    inp.parentElement.appendChild(span);
+  });
+}
+
+/* 弱警告：新 SKU / 改过 SKU 的卡字段留空时显示提示，不阻断提交；
+   SKU 校验错误（非 13 位/重复）则禁用提交按钮（前端守卫，后端仍有硬守卫兜底） */
 function refreshSubmitState() {
-  for (const it of items) {
-    if (!it.is_new_sku) continue;
-    const idx = items.indexOf(it);
-    // name_cn 留空提示
+  items.forEach((it, idx) => {
+    const showHints = it.is_new_sku || it._sku_renamed;
+    if (showHints) ensureMetaHintSpans(idx);
     const hintName = $("hint-name_cn-" + idx);
     if (hintName) {
-      hintName.textContent = (!it.name_cn) ? "⚠ 下游单据将缺少中文品名" : "";
+      hintName.textContent = (showHints && !it.name_cn) ? "⚠ 下游单据将缺少中文品名" : "";
     }
-    // inspection_required 留空提示
     const hintInsp = $("hint-inspection-" + idx);
     if (hintInsp) {
       const v = it.inspection_required;
-      hintInsp.textContent = (v === undefined || v === "" || v === null) ? "⚠ 未指定，默认无需商检" : "";
+      hintInsp.textContent = (showHints && (v === undefined || v === "" || v === null))
+        ? "⚠ 未指定，默认无需商检" : "";
     }
-  }
-  $("btn-submit").disabled = false;
-  $("btn-submit").title = "";
+  });
+  const skuErrs = validateSkuInputs();
+  $("btn-submit").disabled = skuErrs > 0;
+  $("btn-submit").title = skuErrs ? "请先修正 SKU 输入错误（13 位数字且不重复）" : "";
 }
 
 /* ================= 左屏查看器 ================= */
@@ -522,10 +663,100 @@ function onDocSelect(path) { loadDocument(path, 1); }
    no_items_extracted / no_folder_matched）时按钮置灰。*/
 function updateOpenLocalBtn() {
   const btn = $("btn-open-local");
+  if (btn) {
+    const ok = isRealDocPath(curDoc);
+    btn.disabled = !ok;
+    btn.title = ok ? "用本机默认程序打开当前单据" : "当前单据不是真实文件，无法在本地打开";
+  }
+  updateReextractBtn();
+}
+
+/* D2「重新识别」按钮：与「打开本地文件」同口径，占位符路径禁用；
+   请求进行中（reextractBusy）保持禁用防重复点击 */
+function updateReextractBtn() {
+  const btn = $("btn-reextract");
   if (!btn) return;
-  const ok = isRealDocPath(curDoc);
-  btn.disabled = !ok;
-  btn.title = ok ? "用本机默认程序打开当前单据" : "当前单据不是真实文件，无法在本地打开";
+  const real = isRealDocPath(curDoc);
+  btn.disabled = !real || reextractBusy;
+  btn.title = real ? "强制重新识别当前单据，结果合并到右侧卡片（耗时约 5-40 秒）"
+                   : "当前单据不是真实文件，无法重新识别";
+}
+
+/* D2：强制重提当前单据（5-40s），返回 items 与 Node5 payload 同构，前端按 sku 合并 */
+async function reextractDoc() {
+  if (!isRealDocPath(curDoc)) {
+    toast("当前单据不是真实文件，无法重新识别");
+    return;
+  }
+  if (reextractBusy) return;
+  const btn = $("btn-reextract");
+  reextractBusy = true;
+  if (btn) { btn.disabled = true; btn.textContent = "识别中…"; }
+  try {
+    const r = await fetch(`/api/v1/review/${encodeURIComponent(threadId)}/reextract`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path: curDoc,
+        factory_name: (payload && payload.factory_name) || "",
+      }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
+    mergeReextracted(data.items || []);
+  } catch (e) {
+    toast("重新识别失败：" + e.message, 5000);
+  } finally {
+    reextractBusy = false;
+    if (btn) btn.textContent = "重新识别";
+    updateReextractBtn();
+  }
+}
+
+/* D2 合并策略（方案 §5.3）：sku 不在当前卡片 → 新建卡（标"重提"tag）；
+   已存在 → 弹确认：保留当前值 / 用重提值覆盖（覆盖标 _modified），不静默覆盖。
+   数值/单重由 renderCalc 即时算，最终以 Node5 重算为准（计算隔离不变）。 */
+function mergeReextracted(newItems) {
+  if (!newItems.length) {
+    toast("重新识别完成：该文件未提取到条目", 3500);
+    return;
+  }
+  const fmt = (v) => (v === undefined || v === null || v === "") ? "—" : v;
+  let added = 0, overwritten = 0, kept = 0;
+  newItems.forEach((ni) => {
+    const sku = String(ni.sku ?? "").trim();
+    const idx = sku ? items.findIndex((i) => String(i.sku ?? "").trim() === sku) : -1;
+    if (idx < 0) {
+      const item = JSON.parse(JSON.stringify(ni));
+      item._added = true; item._reextract = true; item._modified = true; item._sku0 = sku;
+      items.push(item);
+      added++;
+    } else {
+      const cur = items[idx];
+      const ced = cur.extracted_data || {};
+      const ned = ni.extracted_data || {};
+      const msg = `SKU ${sku} 已在卡片中。\n` +
+        `当前值：件数 ${fmt(ced.total_quantity)} / 净重 ${fmt(ced.total_net_weight)} / 毛重 ${fmt(ced.total_gross_weight)}\n` +
+        `重提值：件数 ${fmt(ned.total_quantity)} / 净重 ${fmt(ned.total_net_weight)} / 毛重 ${fmt(ned.total_gross_weight)}\n\n` +
+        "确定 = 用重提值覆盖；取消 = 保留当前值";
+      if (!confirm(msg)) { kept++; return; }
+      cur.extracted_data = { ...ced, ...ned };
+      if (ni.calculation) cur.calculation = ni.calculation;
+      if (ni.db_record !== undefined) cur.db_record = ni.db_record;
+      if (ni.is_new_sku !== undefined) cur.is_new_sku = ni.is_new_sku;
+      if (ni.status) cur.status = ni.status;
+      ["name_cn", "hs_code", "inspection_required"].forEach((f) => {
+        if (ni[f] !== undefined) cur[f] = ni[f];
+      });
+      cur._modified = true; cur._reextract = true;
+      overwritten++;
+    }
+    // 重提命中缺失列表 → 从 missing 前端状态移除（红条联动）
+    if (sku) missingSkus = missingSkus.filter((s) => String(s) !== sku);
+  });
+  renderMissingBar();
+  renderCards();
+  toast(`重新识别完成：新增 ${added} 项，覆盖 ${overwritten} 项，保留 ${kept} 项`, 4000);
 }
 
 async function openLocalDoc() {
@@ -764,9 +995,18 @@ function buildDiffSummary() {
   const metaFields = [["name_cn", "中文品名"], ["hs_code", "HS 编码"], ["inspection_required", "商检状态"]];
   const changes = [];
   const newSkus = [];
+  const addedMissing = [];    // D3：人工补录缺失 SKU 空卡
+  const reextractAdded = [];  // D2：重提新增卡片
   items.forEach((it, idx) => {
+    // 新增卡（D3 空卡 / D2 重提新卡）无 origItems 对照基线，走下方专区展示
+    if (it._added && it._from_missing) { addedMissing.push(it); return; }
+    if (it._added && it._reextract) { reextractAdded.push(it); return; }
     const origEd = (origItems[idx] && origItems[idx].extracted_data) || {};
     const ed = it.extracted_data || {};
+    // B：sku 改名进"字段改动"表（旧→新高亮）
+    if (it._sku_renamed) {
+      changes.push({ sku: it.sku, field: "SKU 改名", oldV: it._sku0 || "—", newV: it.sku });
+    }
     if (it._modified) {
       numFields.forEach(([f, label]) => {
         const ov = origEd[f] ?? null, nv = ed[f] ?? null;
@@ -795,7 +1035,22 @@ function buildDiffSummary() {
     }
   });
   const unseen = Math.max(0, items.length - seenIdx.size);
-  return { changes, newSkus, unseen, total: items.length };
+  return { changes, newSkus, addedMissing, reextractAdded, unseen, total: items.length };
+}
+
+/* D3 空卡 / D2 重提新卡的 diff 专区表格（无 origItems 基线，全量列出当前值） */
+function addedSkuTable(list) {
+  const cell = (v) => esc((v === undefined || v === null || v === "") ? "—" : v);
+  let html = `<table class="diff-table"><tr><th>SKU</th><th>总件数</th><th>总净重</th>` +
+    `<th>总毛重</th><th>中文品名</th><th>HS 编码</th><th>商检</th></tr>`;
+  list.forEach((it) => {
+    const ed = it.extracted_data || {};
+    html += `<tr><td>${cell(it.sku)}</td><td>${cell(ed.total_quantity)}</td>` +
+      `<td>${cell(ed.total_net_weight)}</td><td>${cell(ed.total_gross_weight)}</td>` +
+      `<td>${cell(it.name_cn)}</td><td>${cell(it.hs_code)}</td>` +
+      `<td>${cell(it.inspection_required)}</td></tr>`;
+  });
+  return html + "</table>";
 }
 
 function renderDiffModal(s) {
@@ -820,6 +1075,14 @@ function renderDiffModal(s) {
     });
     html += "</table>";
   }
+  if (s.addedMissing.length) {
+    html += `<h4 style="margin-top:12px">人工补录缺失 SKU（${s.addedMissing.length} 项）</h4>` +
+      addedSkuTable(s.addedMissing);
+  }
+  if (s.reextractAdded.length) {
+    html += `<h4 style="margin-top:12px">重新识别新增 SKU（${s.reextractAdded.length} 项）</h4>` +
+      addedSkuTable(s.reextractAdded);
+  }
   if (s.unseen > 0) {
     html += `<p class="unseen-note">⚠ 尚有 ${s.unseen} / ${s.total} 项未逐条过目，请确认是否仍要提交。</p>`;
   } else {
@@ -834,7 +1097,8 @@ function confirmSubmit() { closeDiffModal(); doSubmit(); }
 /* 提交入口：有改动才弹摘要弹窗，无改动直接提交（减少日常点击） */
 function submitReview() {
   const s = buildDiffSummary();
-  if (!s.changes.length && !s.newSkus.length) { doSubmit(); return; }
+  if (!s.changes.length && !s.newSkus.length &&
+      !s.addedMissing.length && !s.reextractAdded.length) { doSubmit(); return; }
   renderDiffModal(s);
   $("diff-modal").style.display = "flex";
 }
@@ -846,7 +1110,14 @@ async function doSubmit() {
   const submitItems = items.map((it) => {
     const c = { ...it };
     if (c._modified) c.is_human_edited = true;
+    // B 改名契约：携带 orig_sku（改名前的值），后端按 orig_sku or sku pop 找 base
+    if (c._sku_renamed && !c._added && c._sku0) c.orig_sku = c._sku0;
     delete c._modified;
+    delete c._added;
+    delete c._sku_renamed;
+    delete c._reextract;
+    delete c._from_missing;
+    delete c._sku0;
     return c;
   });
   try {

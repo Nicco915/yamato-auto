@@ -3,6 +3,9 @@
 - 使用 MockBackend 提供两份 mock 审核 payload（模拟两个工厂连续挂起）；
 - mock 版 /api/v1/orders/{thread_id}/resume 与 /state，让单页可以完整走通
   "审核 → 提交 → 下一工厂 → 完成" 的流转；
+- mock 版 /api/v1/review/{thread_id}/reextract（批次3 D2）：先于真实 router
+  注册以遮蔽真实端点，返回固定条目（一条命中已有卡片触发覆盖确认、一条命中
+  missing 触发新增+红条联动），避免 demo 环境调用真实 LLM；
 - document 接口指向真实工厂文件夹文件（PDF/Excel/JPG 各一），用于验证渲染链路。
 
 运行（macOS，当前开发机）：cd /Users/nz/Downloads/yamato/app && python -m app.review.demo_server
@@ -58,10 +61,10 @@ MOCK_PAYLOADS: list[dict[str, Any]] = [
             XLSX_ZHONGDI,
             PDF_ZHONGDI,
         ],
-        "missing_skus": ["SKU-MISSING-001"],
+        "missing_skus": ["4901234567894", "4901234567900"],
         "items": [
             {
-                "sku": "ITEM-100",
+                "sku": "4549509623861",
                 "extracted_data": {
                     "total_quantity": 50,
                     "total_net_weight": 250.0,
@@ -86,7 +89,7 @@ MOCK_PAYLOADS: list[dict[str, Any]] = [
                 "inspection_required": 1,
             },
             {
-                "sku": "ITEM-200",
+                "sku": "4549509623878",
                 "extracted_data": {
                     "total_quantity": 120,
                     "total_net_weight": 1180.5,
@@ -111,7 +114,7 @@ MOCK_PAYLOADS: list[dict[str, Any]] = [
                 "inspection_required": 0,
             },
             {
-                "sku": "ITEM-NEW-9",
+                "sku": "4549509623885",
                 "extracted_data": {
                     "total_quantity": None,
                     "total_net_weight": None,
@@ -143,7 +146,7 @@ MOCK_PAYLOADS: list[dict[str, Any]] = [
         "missing_skus": [],
         "items": [
             {
-                "sku": "DA-3001",
+                "sku": "4936695359672",
                 "extracted_data": {
                     "total_quantity": 80,
                     "total_net_weight": 400.0,
@@ -193,6 +196,63 @@ class ReviewSubmitRequest(BaseModel):
 
 def create_demo_app() -> FastAPI:
     app = FastAPI(title="人工审核界面 Demo", version="0.1.0")
+
+    # mock reextract（批次3 D2）必须先于 router 注册：FastAPI 按注册序匹配，
+    # 先注册者命中，从而遮蔽 router 里的真实端点（真实端点会调 LLM 提取）。
+    @app.post("/api/v1/review/{thread_id}/reextract")
+    async def mock_reextract(thread_id: str, request: dict[str, Any]):  # noqa: ARG001
+        """固定返回两条：一条命中已有卡片（触发覆盖确认），
+        一条命中 missing_skus（触发新增 + 红条联动）。"""
+        path = str((request or {}).get("path") or "")
+        return {
+            "source_file": path,
+            "items": [
+                {
+                    "sku": "4549509623861",
+                    "extracted_data": {
+                        "total_quantity": 55,
+                        "total_net_weight": 260.0,
+                        "total_gross_weight": 276.0,
+                        "weight_unit": "KG",
+                        "source_file": path,
+                    },
+                    "calculation": {
+                        "net_formula": "260.0 / 55",
+                        "gross_formula": "276.0 / 55",
+                        "calculated_unit_net": 260.0 / 55,
+                        "calculated_unit_gross": 276.0 / 55,
+                    },
+                    "status": "Normal",
+                    "is_human_edited": False,
+                    "is_new_sku": False,
+                    "db_record": {"unit_net_weight": 5.0, "name_cn": "示例既存商品",
+                                  "hs_code": "9404909000", "inspection_required": 1},
+                    "name_cn": "示例既存商品",
+                    "hs_code": "9404909000",
+                    "inspection_required": 1,
+                },
+                {
+                    "sku": "4901234567894",
+                    "extracted_data": {
+                        "total_quantity": 30,
+                        "total_net_weight": 150.0,
+                        "total_gross_weight": 162.0,
+                        "weight_unit": "KG",
+                        "source_file": path,
+                    },
+                    "calculation": {
+                        "net_formula": "150.0 / 30",
+                        "gross_formula": "162.0 / 30",
+                        "calculated_unit_net": 5.0,
+                        "calculated_unit_gross": 5.4,
+                    },
+                    "status": "Normal",
+                    "is_human_edited": False,
+                    "is_new_sku": True,
+                    "db_record": {},
+                },
+            ],
+        }
 
     # 注入 mock 数据源 + 白名单（真实工厂文件夹根目录）
     set_review_backend(_backend)
