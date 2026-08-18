@@ -1355,6 +1355,45 @@ def _resolve_factory_snapshot(
     }
 
 
+def _load_factory_db_records(factory_name: str) -> dict[str, dict]:
+    """一次性取出该工厂全部 SKU 主数据（与 compute_align 同口径）。
+
+    查询异常直接抛出，由调用方决定回退策略。
+    """
+    from app.db.models import Factory, FactorySKU
+
+    db_records: dict[str, dict] = {}
+    with get_session() as session:
+        factory = session.scalar(
+            select(Factory).where(Factory.factory_name == factory_name)
+        )
+        if factory:
+            rows = session.scalars(
+                select(FactorySKU).where(
+                    FactorySKU.factory_id == factory.factory_id,
+                )
+            ).all()
+            db_records = {
+                r.sku_code: {
+                    "name_cn": r.name_cn,
+                    "name_en": r.name_en,
+                    "name_jp": r.name_jp,
+                    "hs_code": r.hs_code,
+                    "inspection_required": r.inspection_required,
+                    "unit_net_weight": (
+                        float(r.unit_net_weight)
+                        if r.unit_net_weight is not None else None
+                    ),
+                    "unit_gross_weight": (
+                        float(r.unit_gross_weight)
+                        if r.unit_gross_weight is not None else None
+                    ),
+                }
+                for r in rows
+            }
+    return db_records
+
+
 def _enrich_items_with_db_records(
     items: list[dict], factory_name: str,
 ) -> list[dict]:
@@ -1363,38 +1402,8 @@ def _enrich_items_with_db_records(
     老 SKU：合并主库字段到 db_record（与 compute_align.py 同口径）
     新 SKU：保持 db_record={}，由 build_review_payload 补 fields_to_fill
     """
-    from app.db.models import Factory, FactorySKU
-
-    db_records: dict[str, dict] = {}
     try:
-        with get_session() as session:
-            factory = session.scalar(
-                select(Factory).where(Factory.factory_name == factory_name)
-            )
-            if factory:
-                rows = session.scalars(
-                    select(FactorySKU).where(
-                        FactorySKU.factory_id == factory.factory_id,
-                    )
-                ).all()
-                db_records = {
-                    r.sku_code: {
-                        "name_cn": r.name_cn,
-                        "name_en": r.name_en,
-                        "name_jp": r.name_jp,
-                        "hs_code": r.hs_code,
-                        "inspection_required": r.inspection_required,
-                        "unit_net_weight": (
-                            float(r.unit_net_weight)
-                            if r.unit_net_weight is not None else None
-                        ),
-                        "unit_gross_weight": (
-                            float(r.unit_gross_weight)
-                            if r.unit_gross_weight is not None else None
-                        ),
-                    }
-                    for r in rows
-                }
+        db_records = _load_factory_db_records(factory_name)
     except Exception as e:  # noqa: BLE001
         logger.warning(
             "reopen 主库刷新失败（继续使用 items 原 db_record）: "
@@ -1616,14 +1625,126 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
     }
 
 
+def reextract_document(thread_id: str, path: str,
+                       factory_name: str) -> dict[str, Any]:
+    """D2「重新识别这个文件」：强制提取单个文件，返回 review item 形状。
+
+    - 跳过 target_identifier 候选/去重判定（人工指定即强制），按后缀走
+      _route_extract（excel/pdf/doc/vision 全通道）；
+    - 提取结果过 A4 校验（^\\d{13}$ 同口径）：非法 sku 的条目仍返回
+      （信息零丢失），标 needs_human_review=True + review_reason 注明；
+    - 每个 item 用 _safe_div 计算单重（计算隔离：纯 Python，LLM 不算术），
+      并查主库组装 is_new_sku / db_record（与 compute_align 同口径）；
+    - 返回形状与 build_review_payload 的 items 元素同构，另附
+      needs_human_review 顶置标记供前端合并策略使用；
+    - 纯一次性计算：不写 LangGraph checkpoint、不写 session 缓存。
+
+    路径白名单校验在 router 层完成（复用 _resolve_whitelisted，与 D1 一致）。
+    失败抛错：ValueError（文件不存在/通道不支持/提取报错）→ router 转 400；
+    其他异常（主库查询失败等）→ router 转 500。
+    """
+    from app.extraction.agent import _route_extract
+    from app.extraction.session import _SKU_13_RE
+    from app.nodes.compute_align import _safe_div
+    from app.nodes.review_payload import build_review_items_payload
+
+    p = Path(path).expanduser()
+    if not p.is_file():
+        raise ValueError(f"文件不存在: {p.name}")
+
+    try:
+        res = _route_extract(str(p))
+    except Exception as e:  # noqa: BLE001 通道报错统一转 ValueError（含 UnsupportedFileError）
+        raise ValueError(f"提取通道失败: {type(e).__name__}: {e}") from e
+    if getattr(res, "error", ""):
+        raise ValueError(f"提取失败: {res.error}")
+
+    # 主库联查（与 compute_align / reopen 同口径）；失败宁可报错也不误导
+    # is_new_sku 判定（零容错：查不到记录≠新 SKU）
+    db_records = _load_factory_db_records(factory_name)
+
+    calc_items: list[dict] = []
+    review_flags: list[bool] = []
+    for it in res.items or []:
+        d = it.model_dump() if hasattr(it, "model_dump") else dict(it)
+        sku_code = d.get("sku_code")
+        needs_review = bool(d.get("needs_human_review"))
+        reason = d.get("review_reason") or ""
+        if sku_code is not None and not _SKU_13_RE.fullmatch(str(sku_code).strip()):
+            # A4 同口径：非法 sku 条目保留返回，标人工复核
+            needs_review = True
+            reason = ((reason + "；") if reason else "") + \
+                "SKU_NON_13_DIGIT：非空 SKU 编码不是 13 位数字"
+        # 与 compute_align 同口径：条码优先，无条码落品名交人工模糊匹配
+        sku = str(sku_code or d.get("sku_name") or "").strip()
+        qty = d.get("total_quantity")
+        unit_net, net_formula, net_err = _safe_div(d.get("total_net_weight"), qty)
+        unit_gross, gross_formula, gross_err = _safe_div(
+            d.get("total_gross_weight"), qty)
+        err = net_err or gross_err
+        if err:
+            status = "Error"
+        elif needs_review:
+            status = "Needs_Review"
+        else:
+            status = "Normal"
+        record = db_records.get(sku)
+        calc_items.append({
+            "sku": sku,
+            "extracted_data": {
+                "total_quantity": qty,
+                "total_net_weight": d.get("total_net_weight"),
+                "total_gross_weight": d.get("total_gross_weight"),
+                "weight_unit": d.get("weight_unit") or "KG",
+                "source_file": str(p),
+                "sku_name": d.get("sku_name"),
+                "review_reason": reason or None,
+            },
+            "calculation": {
+                "net_formula": net_formula,
+                "gross_formula": gross_formula,
+                "calculated_unit_net": unit_net,
+                "calculated_unit_gross": unit_gross,
+            },
+            "status": status,
+            "error_msg": err,
+            "is_human_edited": False,
+            "is_new_sku": record is None,
+            "unexpected_sku": False,
+            "db_record": record or {},
+        })
+        review_flags.append(needs_review)
+
+    # 复用 review_payload 的构建函数，保证与 Node5 首次审核 items 严格同构
+    items = build_review_items_payload(calc_items, factory_name)
+    for entry, flag in zip(items, review_flags):
+        entry["needs_human_review"] = flag
+
+    logger.info("[reextract] 强制重提完成 | thread=%s 工厂=%s 文件=%s 条目=%d",
+                thread_id, factory_name, p.name, len(items))
+    return {"items": items, "source_file": str(p)}
+
+
 def _prepare_audit_changes_from_items(new_items: list[dict],
                                      old_items: list[dict]) -> list[dict]:
-    """对比 new_items 与 old_items，提取 diff（_prepare_audit 简化版）。"""
+    """对比 new_items 与 old_items，提取 diff（_prepare_audit 简化版）。
+
+    SKU 改名（批次3 B）：新 sku 不在 old 集合里但携带 orig_sku（或 Node5 留痕
+    的 sku_renamed_from）匹配旧项时，显式记一条 sku 改名 change（旧→新），
+    数值 diff 也与旧项比对——不落入"找不到对应项"的静默分支。
+    """
     old_by_sku = {str(i.get("sku") or ""): i for i in old_items}
     changes: list[dict] = []
     for item in new_items:
         sku = str(item.get("sku") or "")
-        old = old_by_sku.get(sku) or {}
+        old = old_by_sku.get(sku)
+        orig_sku = item.get("orig_sku") or item.get("sku_renamed_from")
+        if old is None and orig_sku and str(orig_sku) != sku:
+            old = old_by_sku.get(str(orig_sku))
+            if old is not None:
+                changes.append({"sku": sku, "field": "sku",
+                                "old": str(orig_sku), "new": sku})
+        old = old or {}
         old_ext = old.get("extracted_data") or {}
         new_ext = item.get("extracted_data") or {}
         for f in ("total_quantity", "total_net_weight", "total_gross_weight"):

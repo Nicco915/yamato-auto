@@ -588,3 +588,51 @@ async def open_local(
 
     return {"ok": True, "path": str(p)}
 
+
+# ---------------------------------------------------------------------------
+# D2「重新识别这个文件」端点：左屏 doc-toolbar 触发，强制重提选中单据
+# ---------------------------------------------------------------------------
+
+
+@router.post("/api/v1/review/{thread_id}/reextract")
+async def reextract_document(thread_id: str,
+                             request: dict[str, Any]) -> dict[str, Any]:
+    """强制重提单个单据文件，返回 review item 形状供前端合并。
+
+    body: {"path": "<绝对路径>", "factory_name": "<工厂名>"}
+
+    安全：
+    - path 占位符 → 400（与 open_local 同口径防御）；
+    - 复用 _resolve_whitelisted 走全局白名单 + thread 二级 upstream_root，
+      越权 403 / 文件不存在 404；
+    - 提取失败（通道报错/不支持类型/主库异常）→ 400/500 with detail。
+
+    返回 {"items": [...], "source_file": path}——纯一次性计算，
+    不写 LangGraph checkpoint、不写 session 缓存。
+    """
+    path = str((request or {}).get("path") or "")
+    factory_name = str((request or {}).get("factory_name") or "")
+    if not path or not factory_name:
+        raise HTTPException(status_code=400,
+                            detail="path 与 factory_name 均为必填")
+    if _is_placeholder_path(path):
+        raise HTTPException(status_code=400,
+                            detail="该路径是占位符，无法重新识别")
+
+    p = _resolve_whitelisted(path, thread_id=thread_id)
+
+    from app.api import service
+    try:
+        return await asyncio.to_thread(
+            service.reextract_document, thread_id, str(p), factory_name,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[reextract] 强制重提失败 path=%s: %s: %s",
+                       p, type(e).__name__, e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"重新识别失败: {type(e).__name__}: {e}",
+        ) from e
+
