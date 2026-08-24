@@ -218,6 +218,28 @@ async function openWithExcel(btn) {
   }
 }
 
+/* 打开报关单目录：分票产出是一目录多份文件，用系统文件管理器打开目录 */
+async function openSplitDir(btn) {
+  if (!btn || btn.disabled) return;          // 防连点
+  btn.disabled = true;
+  var originalText = btn.textContent;
+  btn.textContent = "打开中…";
+  try {
+    var data = await api("/api/v1/split/" + encodeURIComponent(splitThreadIdVal) + "/open",
+                         { method: "POST" });
+    if (data && data.ok) {
+      showToast("已打开报关单目录：" + baseName(data.path || ""));
+    } else {
+      showToast("打开响应异常，请检查目录是否已正常打开");
+    }
+  } catch (e) {
+    showToast("打开报关单目录失败：" + (e && e.message ? e.message : e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText || "打开报关单目录";
+  }
+}
+
 /* thread_id：取 /batch/ 之后部分 */
 var threadId = "";
 try {
@@ -283,6 +305,7 @@ function renderHead(d) {
   // 分票按钮
   if (splitExists) {
     btns += '<a class="btn lbtn primary" href="/split/' + encodeURIComponent(splitThreadIdVal) + '">查看分票</a>';
+    btns += '<button class="btn lbtn" onclick="openSplitDir(this)">打开报关单目录</button>';
   } else if (d.status === "completed") {
     btns += '<button class="btn lbtn primary" id="btn-start-split" onclick="startSplit()">开始分票</button>';
   } else {

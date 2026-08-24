@@ -1948,12 +1948,18 @@ def _open_checkpoint_ro() -> sqlite3.Connection:
 
 
 def _list_thread_ids(conn: sqlite3.Connection) -> list[str]:
-    """枚举全部批次 thread_id，按最早 checkpoint 倒序（最新批次在前）。"""
+    """枚举全部批次 thread_id，按最早 checkpoint 倒序（最新批次在前）。
+
+    过滤 "split-" 前缀：分票图与提取图共用同一 checkpoints 库
+    （thread_id 约定 split-{批次号}），分票线程不是批次，混入会让
+    工作台显示出 "split-xxx" 假批次条目——且在工作台删除它会连带
+    删掉分票全部状态（2026-08-25 用户实测踩坑）。
+    """
     rows = conn.execute(
         "SELECT thread_id FROM checkpoints "
         "GROUP BY thread_id ORDER BY MIN(checkpoint_id) DESC"
     ).fetchall()
-    return [r[0] for r in rows]
+    return [r[0] for r in rows if not r[0].startswith("split-")]
 
 
 def _thread_created_ts(conn: sqlite3.Connection, thread_id: str) -> str | None:

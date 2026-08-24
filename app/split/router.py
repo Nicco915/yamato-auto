@@ -6,15 +6,17 @@
 - GET  /api/v1/split/{id}/proposal    读取当前 proposal（挂起中或已确认）
 - POST /api/v1/split/{id}/confirm     确认方案，Command(resume=...) 唤醒图落库
 - POST /api/v1/split/{id}/reset       推翻已确认方案，清理后从 START 重跑推荐
+- POST /api/v1/split/{id}/open        本机文件管理器打开报关单输出目录（仅本机）
 """
 
 from __future__ import annotations
 
 import logging
 import shutil
+from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from langgraph.graph import START
 from langgraph.types import Command
@@ -24,6 +26,7 @@ from app.config import get_settings
 from app.declare.service import declarations_dir, generate_declarations
 from app.split.graph import get_split_graph
 from app.split.validate import renumber_tickets, validate_confirmed_proposal
+from app.ui.open_file import OpenFileError, open_with_default_app
 
 logger = logging.getLogger(__name__)
 
@@ -316,6 +319,56 @@ def generate(split_thread_id: str, req: GenerateRequest):
         )
         raise HTTPException(status_code=500, detail=f"报关单生成失败: {e}")
     return {"split_thread_id": split_thread_id, **result}
+
+
+# 本机访问闸门允许的客户端 IP（与 ui/router.py 的 /open 端点同一口径）
+_LOCALHOST_IPS = {"127.0.0.1", "::1"}
+
+
+@router.post("/{split_thread_id}/open")
+def open_declarations_dir(split_thread_id: str, request: Request):
+    """本机文件管理器打开该分票任务的报关单输出目录。
+
+    分票产出是一整个目录的多份报关单（每票一份），用系统文件管理器
+    打开目录比逐个开文件更符合使用习惯（macOS Finder / Windows
+    资源管理器，open_with_default_app 对目录三平台都适用）。
+
+    安全措施（与批次输出 /open 端点同一套）：
+    - 必须 POST：有副作用（启动本地程序），不允许 GET 预取/重放；
+    - 本机闸门：request.client.host 必须是 127.0.0.1 / ::1；
+    - 输出目录白名单：resolve 后必须落在 settings.output_dir_abs 之下
+      （split_thread_id 来自 URL 路径段，防 ../ 穿越）。
+
+    异常：403 非本机/越界；404 目录不存在（还没生成报关单）；
+    503 OpenFileError（打开命令失败）。
+    """
+    client = request.client
+    if client is None or client.host not in _LOCALHOST_IPS:
+        raise HTTPException(status_code=403, detail="该操作只能从本机浏览器发起")
+
+    try:
+        out_dir = declarations_dir(split_thread_id).resolve()
+    except OSError as e:
+        raise HTTPException(status_code=404, detail=f"输出路径无法解析: {e}") from e
+
+    output_root = Path(get_settings().output_dir_abs).resolve()
+    try:
+        out_dir.relative_to(output_root)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=403, detail=f"输出路径超出允许目录范围: {out_dir}"
+        ) from e
+
+    if not out_dir.is_dir():
+        raise HTTPException(
+            status_code=404,
+            detail="报关单目录不存在：请先确认分票方案并生成报关单",
+        )
+    try:
+        open_with_default_app(out_dir)
+    except OpenFileError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    return {"ok": True, "path": str(out_dir)}
 
 
 @router.get("/{split_thread_id}/files")
