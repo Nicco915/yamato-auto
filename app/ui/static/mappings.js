@@ -833,7 +833,10 @@ async function saveSku() {
             method: "PUT", body: body
         });
         var n = result && result.audited_fields ? result.audited_fields.length : 0;
-        toast(n > 0 ? "已保存，已记录留痕（" + n + " 个字段变更）" : "已保存（无字段变化）", 3500);
+        var synced = result && result.synced_mappings ? result.synced_mappings : 0;
+        var msg = n > 0 ? "已保存，已记录留痕（" + n + " 个字段变更）" : "已保存（无字段变化）";
+        if (synced > 0) msg += "；已同步 " + synced + " 条品名映射";
+        toast(msg, 3500);
         closeSkuModal();
         loadSkus();
     } catch (e) {
