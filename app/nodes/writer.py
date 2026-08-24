@@ -19,6 +19,7 @@
 裸 PermissionError 会让用户不知所措；探测可以在做完一堆耗时工作之前先发现问题。
 """
 import errno
+import json
 import logging
 import shutil
 from copy import copy
@@ -29,7 +30,7 @@ from openpyxl.styles import Border, Side
 from sqlalchemy import select
 
 from app.config import get_settings
-from app.db.models import Factory, FactorySKU
+from app.db.models import Factory, FactorySKU, ReviewAudit
 from app.db.session import get_session
 from app.logging_config import bind_factory_from_state
 from app.state import AgentState
@@ -48,6 +49,9 @@ WRITE_FONT_SIZE = 9
 _THIN_SIDE = Side(style="thin")
 WRITE_BORDER = Border(left=_THIN_SIDE, right=_THIN_SIDE,
                       top=_THIN_SIDE, bottom=_THIN_SIDE)
+
+# C 级 short_name 自动回填：仅高置信匹配档允许（fuzzy/contains/none 走审核页建议卡人工确认）
+_AUTO_SHORT_NAME_METHODS = frozenset({"override", "alias", "alias_ci", "exact"})
 
 
 def _apply_write_format(cell) -> None:
@@ -188,11 +192,43 @@ def _write_excel(state: AgentState, out_path: Path) -> int:
     return written
 
 
+def _write_short_name_audit(
+    state: AgentState, factory_name: str, short_name: str, match_method: str,
+) -> None:
+    """C 级 short_name 自动回填留痕到 review_audits。
+
+    审计是辅助设施：写入失败只记警告，绝不阻塞已完成的落库
+    （与 service._write_audit 同哲学，try/except 包死）。
+    """
+    try:
+        with get_session() as session:
+            session.add(ReviewAudit(
+                thread_id=state.get("batch_id") or "unknown",
+                factory_name=factory_name,
+                approved=True,
+                edited_count=1,
+                changes_json=json.dumps([{
+                    "field": "short_name",
+                    "old": None,
+                    "new": short_name,
+                    "source": f"auto_c_level_{match_method}",
+                }], ensure_ascii=False),
+                new_skus_json="[]",
+                result_status="auto_short_name",
+            ))
+            session.commit()
+    except Exception as e:  # noqa: BLE001 辅助设施失败静默降级，见 docstring
+        logger.warning("[Node6] short_name 自动回填审计落库失败（主流程不受影响）："
+                       "%s: %s", type(e).__name__, e)
+
+
 def _upsert_db(state: AgentState) -> tuple[int, int]:
     """主数据落库，返回 (插入数, 更新数)。"""
     cur = state.get("current_factory_data") or {}
     factory_name = cur.get("factory_name") or "未知工厂"
     inserted = updated = 0
+    auto_short_name: str | None = None
+    match_method = cur.get("match_method")
 
     with get_session() as session:
         factory = session.scalar(
@@ -202,6 +238,18 @@ def _upsert_db(state: AgentState) -> tuple[int, int]:
             factory = Factory(factory_name=factory_name)
             session.add(factory)
             session.flush()
+
+        # C 级自动回填：高置信匹配档 + short_name 为空 + 有 folder_path 时，
+        # 取文件夹名沉淀为 short_name（新工厂自动学习）；
+        # fuzzy/contains/none 不回填，走审核页建议卡由人工确认
+        if (not factory.short_name
+                and cur.get("folder_path")
+                and match_method in _AUTO_SHORT_NAME_METHODS):
+            factory.short_name = Path(cur["folder_path"]).name
+            auto_short_name = factory.short_name
+            logger.info("[Node6] C 级自动回填：工厂「%s」short_name=「%s」"
+                        "（match_method=%s）", factory_name,
+                        auto_short_name, match_method)
 
         for item in cur.get("calculated_items") or []:
             sku = str(item.get("sku") or "")
@@ -245,6 +293,9 @@ def _upsert_db(state: AgentState) -> tuple[int, int]:
                     record.inspection_required = bool(item["inspection_required"])
                 updated += 1
         session.commit()
+    if auto_short_name:
+        _write_short_name_audit(state, factory_name, auto_short_name,
+                                match_method or "")
     return inserted, updated
 
 

@@ -101,6 +101,9 @@ def folder_router(state: AgentState) -> dict:
             "factory_name": factory,
             "folder_path": folder_path,
             "match_score": match_score,
+            # 匹配方式（override/alias/alias_ci/exact/fuzzy/contains/none）：
+            # Node6 C 级 short_name 自动回填与 Node5 alias_suggestion 均依赖本字段
+            "match_method": match_method,
             "source_documents": source_documents,
             "expected_skus": expected_skus,
             "extracted_items": [],

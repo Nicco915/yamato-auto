@@ -247,8 +247,11 @@ def human_review(state: AgentState) -> dict:
     cur = dict(state.get("current_factory_data") or {})
 
     # ---- 构建审核负载（第一阶段.md 第 6 节结构）----
-    # 公共构建函数 review_payload.py：与 reopen 共用同一份逻辑
-    review_payload = build_review_payload(cur)
+    # 公共构建函数 review_payload.py：与 reopen 共用同一份逻辑；
+    # overrides 透传用于 alias_suggestion 的 override 判定
+    review_payload = build_review_payload(
+        cur, overrides=state.get("factory_alias_overrides"),
+    )
 
     logger.info("[Node5] 🔴 挂起等待人工审核：工厂「%s」，%d 个 SKU",
                 cur.get('factory_name'), len(review_payload["items"]))

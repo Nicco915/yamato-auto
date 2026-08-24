@@ -20,7 +20,11 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
+
 from app.config import get_settings
+from app.db.models import Factory, FactoryAlias
+from app.db.session import get_session
 
 logger = logging.getLogger(__name__)
 
@@ -91,11 +95,76 @@ def build_review_items_payload(
     return items_payload
 
 
-def build_review_payload(cur: dict) -> dict:
+# 低置信匹配档：审核页给别名建议卡（高置信档由 Node6 C 级自动回填 short_name）
+_FUZZY_SUGGESTION_METHODS = frozenset({"fuzzy", "contains"})
+
+
+def _build_alias_suggestion(cur: dict, overrides: dict | None) -> dict | None:
+    """构建审核页别名建议卡数据，无建议时返回 None。
+
+    判定规则：
+    - 当前工厂在批次覆盖 overrides 里 → kind="override"，folder=覆盖值；
+    - 否则 match_method ∈ {fuzzy, contains} 且 folder_path 非空
+      → kind="fuzzy"，folder=文件夹名；
+    - 其他情况（含高置信档 / 未匹配）→ None。
+
+    已沉淀去重：该工厂的别名已在 factory_aliases 且指向工厂的
+    short_name == folder（即已经存过了）→ None，不再提示。
+    DB 查询是辅助设施：任何异常只记警告并返回 None，绝不阻塞审核挂起。
+    """
+    factory_name = cur.get("factory_name")
+    if not factory_name:
+        return None
+
+    kind: str | None = None
+    folder: str | None = None
+    if overrides and factory_name in overrides:
+        kind, folder = "override", overrides[factory_name]
+    elif (cur.get("match_method") in _FUZZY_SUGGESTION_METHODS
+          and cur.get("folder_path")):
+        kind, folder = "fuzzy", Path(cur["folder_path"]).name
+    if not kind or not folder:
+        return None
+
+    try:
+        with get_session() as session:
+            factory = session.scalar(
+                select(Factory).where(Factory.factory_name == factory_name)
+            )
+            current_short_name = factory.short_name if factory else None
+            already_saved = session.scalar(
+                select(FactoryAlias.id)
+                .join(Factory, FactoryAlias.factory_id == Factory.factory_id)
+                .where(
+                    FactoryAlias.alias == factory_name,
+                    FactoryAlias.use_folder_match.is_(True),
+                    Factory.short_name == folder,
+                )
+            )
+            if already_saved is not None:
+                return None
+    except Exception as e:  # noqa: BLE001 建议卡是辅助设施，失败静默降级
+        logger.warning("[review_payload] alias_suggestion 查库失败，按无建议处理："
+                       "%s: %s", type(e).__name__, e)
+        return None
+
+    return {
+        "factory": factory_name,
+        "folder": folder,
+        "kind": kind,
+        "match_score": float(cur.get("match_score") or 0),
+        "current_short_name": current_short_name,
+        "conflict": bool(current_short_name and current_short_name != folder),
+    }
+
+
+def build_review_payload(cur: dict, overrides: dict | None = None) -> dict:
     """构建完整 review payload（与 Node5 首次审核完全一致）。
 
     cur 是 current_factory_data 快照（必须包含 factory_name / calculated_items；
     缺省字段视作空，按 Node5 行为兜底）。
+    overrides 是 state["factory_alias_overrides"]（批次级「仅本次生效」对照），
+    仅用于 alias_suggestion 的 override 判定；reopen 路径无此上下文可省略。
     """
     factory_name = cur.get("factory_name")
     items_payload = build_review_items_payload(
@@ -111,6 +180,9 @@ def build_review_payload(cur: dict) -> dict:
         "extraction_issues": cur.get("extraction_issues") or [],
         "extraction_coverage": cur.get("extraction_coverage") or {},
         "weight_diff_warn_ratio": get_settings().weight_diff_warn_ratio,
+        # 新工厂别名建议卡（A 级）：override 命中 / fuzzy|contains 低置信命中时给出；
+        # 无建议或别名已沉淀过则为 None（前端按字段存在性渲染）
+        "alias_suggestion": _build_alias_suggestion(cur, overrides),
     }
 
     # W6a 暂缓二遍重试仍失败的最终挂起透传标记
