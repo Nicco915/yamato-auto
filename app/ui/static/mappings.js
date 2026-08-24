@@ -47,10 +47,15 @@ function sortRows(rows, sort) {
     });
 }
 
-/* 点击同一列切换升/降序；换列回到升序 */
+/* 点击同一列三态循环：升序 ▲ → 降序 ▼ → 取消排序（恢复后端默认顺序）；换列回到升序 */
 function _toggleSort(sort, key) {
     if (sort.key === key) {
-        sort.asc = !sort.asc;
+        if (sort.asc) {
+            sort.asc = false;
+        } else {
+            sort.key = null;   // 取消排序：sortRows 对 key=null 原样返回
+            sort.asc = true;
+        }
     } else {
         sort.key = key;
         sort.asc = true;
@@ -70,21 +75,7 @@ function _updateSortArrows(paneId, sort) {
     });
 }
 
-/* 搜索重置：清空条件并重新加载 */
-function resetProductSearch() {
-    document.getElementById("p-q").value = "";
-    document.getElementById("p-incomplete").checked = false;
-    loadProducts();
-}
-
-function resetSkuSearch() {
-    document.getElementById("s-q").value = "";
-    document.getElementById("s-factory").value = "";
-    loadSkus();
-}
-
-/* 实时搜索：输入即过滤（300ms 防抖），删光文字立即恢复全部数据。
-   比重置按钮更直接——多数情况下清空输入框即完成"重置"。 */
+/* 实时搜索：输入即过滤（300ms 防抖），删光文字立即恢复全部数据。 */
 var _searchTimers = {};
 function _debounced(key, fn, ms) {
     if (_searchTimers[key]) clearTimeout(_searchTimers[key]);
