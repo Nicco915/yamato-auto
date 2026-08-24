@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import html
+import json
 import logging
 import mimetypes
 import os
@@ -37,6 +38,7 @@ from typing import Any, Protocol
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, Response
+from pydantic import BaseModel
 
 from app.ui.open_file import OpenFileError
 
@@ -636,3 +638,185 @@ async def reextract_document(thread_id: str,
             detail=f"重新识别失败: {type(e).__name__}: {e}",
         ) from e
 
+
+# ---------------------------------------------------------------------------
+# 「保存为永久对照」端点：把本批次临时对照/模糊命中落为 factory_aliases 永久别名
+# ---------------------------------------------------------------------------
+
+# 允许从 current_factory_data 反推 folder 的匹配方式（非确定性命中才需要人工确认落别名）
+_SAVEABLE_MATCH_METHODS = ("fuzzy", "contains")
+
+
+class SaveAliasRequest(BaseModel):
+    """save-alias 请求体。安全红线：只有 factory 一个字段——
+    folder 绝不从客户端读，一律由服务端从 checkpoint state 派生。"""
+    factory: str
+
+
+def _get_batch_state_values(thread_id: str) -> dict[str, Any] | None:
+    """读取批次 checkpoint state.values（模块顶层独立函数，便于测试 monkeypatch）。
+
+    复用 service.get_order_state（与 get_batch_summary 等同一条取 state 路径）；
+    thread 不存在（无 checkpoint）返回 None。
+    """
+    from app.api import service  # 延迟导入，避免 demo 依赖 LangGraph
+
+    state = service.get_order_state(thread_id)
+    if not state.get("exists"):
+        return None
+    return state.get("values") or {}
+
+
+def _resolve_savable_folder(values: dict[str, Any], factory: str) -> str | None:
+    """从 state 派生可保存的 工厂→文件夹 对照（唯一 folder 来源，绝不读客户端）。
+
+    两个来源，按优先级：
+    1. factory_alias_overrides[factory]：本批次临时对照（用户本轮确认过）；
+    2. current_factory_data：仅当当前工厂就是目标工厂、match_method 为
+       fuzzy/contains（非确定性命中）且 folder_path 非空时，取 folder_path
+       的 basename。
+    都没有返回 None（路由层转 400）。
+    """
+    overrides = values.get("factory_alias_overrides") or {}
+    folder = overrides.get(factory)
+    if folder:
+        return str(folder)
+
+    cur = values.get("current_factory_data") or {}
+    if (
+        cur.get("factory_name") == factory
+        and cur.get("match_method") in _SAVEABLE_MATCH_METHODS
+        and cur.get("folder_path")
+    ):
+        return Path(str(cur["folder_path"])).name
+    return None
+
+
+def _ensure_factory_short_name(factory: str, folder: str) -> None:
+    """保证 factory 行存在且 short_name 与 folder 一致（冲突抛 HTTPException 409）。
+
+    - factory 不存在：新建（factory_name=factory, short_name=folder）；
+    - short_name 为空：回填 folder；
+    - short_name 非空且 != folder：409，请用户到主数据维护页处理；
+    - folder 已被其他工厂占用为 short_name：409（否则 save_alias_entries
+      按 short_name 反查会把别名错挂到别的工厂）。
+    """
+    from sqlalchemy import select
+
+    from app.db.models import Factory
+    from app.db.session import get_session
+
+    with get_session() as sess:
+        fac = sess.scalar(select(Factory).where(Factory.factory_name == factory))
+        if fac is not None and fac.short_name and fac.short_name != folder:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"该工厂已有中文短名 {fac.short_name}，与文件夹 {folder} "
+                    "不一致，请到主数据维护页处理"
+                ),
+            )
+        owner = sess.scalar(select(Factory).where(Factory.short_name == folder))
+        if owner is not None and (fac is None or owner.factory_id != fac.factory_id):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"文件夹 {folder} 已是工厂 {owner.factory_name} 的中文短名，"
+                    "请到主数据维护页处理"
+                ),
+            )
+        if fac is None:
+            sess.add(Factory(factory_name=factory, short_name=folder))
+        elif not fac.short_name:
+            fac.short_name = folder
+        sess.commit()
+
+
+def _audit_save_alias(thread_id: str, factory: str, folder: str,
+                      saved: dict[str, Any]) -> None:
+    """写 review_audits 留痕（result_status='save_alias'）。
+
+    审计是辅助设施：任何失败只记警告，绝不阻断主流程（同 service._write_audit）。
+    """
+    try:
+        from app.db.models import ReviewAudit
+        from app.db.session import get_session
+
+        with get_session() as sess:
+            sess.add(ReviewAudit(
+                thread_id=thread_id,
+                factory_name=factory,
+                approved=True,
+                edited_count=0,
+                changes_json=json.dumps(
+                    [{"field": "alias", "old": None, "new": folder}],
+                    ensure_ascii=False,
+                ),
+                new_skus_json="[]",
+                result_status="save_alias",
+            ))
+            sess.commit()
+    except Exception as e:  # noqa: BLE001 故意包死，见 docstring
+        logger.warning("⚠️⚠️ [审计落库失败] thread=%s 别名已保存，但 "
+                       "save_alias 留痕写入失败：%s: %s",
+                       thread_id, type(e).__name__, e)
+
+
+def _save_alias_impl(thread_id: str, factory: str) -> dict[str, Any]:
+    """save-alias 主流程（同步实现，由路由层 asyncio.to_thread 包裹）。"""
+    from app.factory_match import save_alias_entries, validate_subfolder
+
+    factory = (factory or "").strip()
+    if not factory:
+        raise HTTPException(status_code=400, detail="工厂名不能为空")
+
+    # 1) 批次存在性 + state 派生 folder（安全红线：folder 绝不来自客户端）
+    values = _get_batch_state_values(thread_id)
+    if values is None:
+        raise HTTPException(status_code=404, detail=f"批次不存在: {thread_id}")
+    folder = _resolve_savable_folder(values, factory)
+    if not folder:
+        raise HTTPException(status_code=400, detail="该工厂没有可保存的对照建议")
+
+    # 2) folder 必须是 upstream_root（state 优先，settings 兜底）下现存一级子目录
+    upstream_root = values.get("upstream_root") or get_settings().upstream_root
+    try:
+        validate_subfolder(upstream_root, folder)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+    # 3) short_name 冲突处理（409）+ factory 行创建/回填
+    _ensure_factory_short_name(factory, folder)
+
+    # 4) 落永久别名（DB 优先、json 回退；upsert 语义，重复调用幂等）
+    saved = save_alias_entries({factory: folder})
+
+    # 5) 审计留痕（失败不阻断）
+    _audit_save_alias(thread_id, factory, folder, saved)
+
+    logger.info("[save-alias] thread=%s 工厂=%s -> 文件夹=%s saved=%s",
+                thread_id, factory, folder, saved)
+    return {
+        "ok": True,
+        "alias": factory,
+        "short_name": folder,
+        "overwritten": saved.get("overwritten") or [],
+    }
+
+
+@router.post("/api/v1/review/{thread_id}/save-alias")
+async def save_alias(thread_id: str, request: SaveAliasRequest) -> dict[str, Any]:
+    """把本批次临时对照/模糊命中的 工厂→文件夹 存为永久别名（A 级确认）。
+
+    folder 由服务端从 checkpoint state 派生（factory_alias_overrides 或
+    current_factory_data 的 fuzzy/contains 命中），绝不从请求体读取；
+    派生出的 folder 再经 factory_match.validate_subfolder 校验（必须是
+    upstream_root 下现存一级子目录）。
+
+    响应：
+    - 200: {"ok": true, "alias": 工厂名, "short_name": 文件夹名, "overwritten": [...]}
+    - 400: 无对照建议可保存 / folder 校验失败
+    - 404: 批次不存在
+    - 409: 工厂已有不一致的中文短名（或文件夹已被其他工厂占用为短名）
+    """
+    return await asyncio.to_thread(_save_alias_impl, thread_id, request.factory)
