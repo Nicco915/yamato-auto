@@ -226,14 +226,17 @@ function renderHead(d) {
   if (d.upstream_root) rows += kvRow("上游目录", '<span class="mono">' + _esc(d.upstream_root) + "</span>", true);
   if (d.validation_status) rows += kvRow("校验状态", _esc(d.validation_status));
   if (d.final_output_path) {
-    var outLink = '';
-    if (d.status === 'completed') {
-      outLink = '<span class="mono c-green">' + _esc(d.final_output_path) + '</span> ' +
-        '<button class="btn lbtn primary open-excel" data-path="' + _esc(d.final_output_path) + '">用 Excel 打开</button>';
-    } else {
-      outLink = '<span class="mono c-green">' + _esc(d.final_output_path) + '</span>';
+    // Node6 每确认一家工厂就增量写入同一文件，final_output_path 在批次
+    // 完成前就已存在——允许随时打开（半成品），不再等 completed。
+    var finished = d.status === 'completed';
+    var outLink = '<span class="mono c-green">' + _esc(d.final_output_path) + '</span> ' +
+      '<button class="btn lbtn primary open-excel" data-path="' + _esc(d.final_output_path) + '">用 Excel 打开</button>';
+    if (!finished) {
+      outLink += '<div style="font-size:12px;color:var(--muted,#6b7280);margin-top:4px">' +
+        '批次仍在运行：当前是半成品，后续工厂确认后会继续追加写入。' +
+        '流程继续前请先关闭 Excel，否则下一家的写入会报"文件被占用"。</div>';
     }
-    rows += kvRow("最终输出", outLink, true);
+    rows += kvRow(finished ? "最终输出" : "当前输出", outLink, true);
   }
 
   var btns = '<a class="btn lbtn" href="/">← 返回工作台</a>';
