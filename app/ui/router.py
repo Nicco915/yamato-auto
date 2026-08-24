@@ -378,10 +378,17 @@ async def rerun_batch_endpoint(thread_id: str):
 
 @router.post("/api/v1/batches/{thread_id}/add-factories")
 async def add_factories_endpoint(thread_id: str):
-    """补充工厂：重新解析装箱单，增量合并 pending_factories，继续执行。"""
+    """补充工厂：重新解析装箱单，把未处理（新增/跳过/驳回）的工厂补进本批次。
+
+    completed 批次从 Node6 条件边重入续跑；pending_review 批次合并后重挂起，
+    均执行到下一个 Node5 interrupt 返回（可能耗时数十秒）。
+    """
     try:
         result = await asyncio.to_thread(service.add_factories_to_batch, thread_id)
         return result
+    except RuntimeError as e:
+        # 批次正在运行中（无 interrupt 且 next 非空）
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
