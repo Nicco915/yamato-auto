@@ -27,6 +27,7 @@ var status = "pending_review";
 var originalProposal = null;  // 深拷贝初始方案，备用
 var activePort = "";          // 当前选中港口
 var dragSrc = null;           // {ticketIdx: number, itemIdx: number} 拖拽源
+var declFiles = [];           // 已生成的报关单文件列表（/files）
 
 /* ---------- 初始化 ---------- */
 async function init() {
@@ -65,6 +66,14 @@ async function loadProposal() {
 
     var ports = proposal.ports || [];
     if (ports.length > 0 && !activePort) activePort = ports[0].port;
+
+    // 顺带查已生成的报关单文件（决定生成区/文件列表的显隐）
+    try {
+        var f = await api('/api/v1/split/' + encodeURIComponent(splitThreadId) + '/files');
+        declFiles = (f && f.files) || [];
+    } catch(e) {
+        declFiles = [];
+    }
 }
 
 async function confirmSplitAction(force) {
@@ -72,17 +81,49 @@ async function confirmSplitAction(force) {
     btn.disabled = true;
     btn.textContent = '确认中…';
     try {
+        // 确认时填了发票号码段 → 后端落库后直接生成报关单；留空则稍后补生成
+        var inv = (document.getElementById('invoice-input').value || '').trim();
+        if (inv) proposal.invoice_number = inv;
+        else delete proposal.invoice_number;
         var body = { proposal: proposal, force: !!force };
         var data = await api('/api/v1/split/' + encodeURIComponent(splitThreadId) + '/confirm', {
             method: 'POST', body: body
         });
         status = data.status || 'confirmed';
-        toast('分票方案已确认');
+        toast(inv ? '分票方案已确认，报关单生成中/已生成' : '分票方案已确认（未填号码段，可稍后生成报关单）');
+        // 确认可能已触发生成：刷新方案与文件列表
+        await loadProposal();
         render();
+        return;
     } catch(e) {
         toast('确认失败：' + e.message, 4000);
         btn.disabled = false;
         btn.textContent = '确认分票';
+    }
+}
+
+/* 确认后补生成：填发票号码段 → POST /generate */
+async function generateDeclarations() {
+    var btn = document.getElementById('btn-generate');
+    var inv = (document.getElementById('invoice-input').value || '').trim();
+    if (!inv) {
+        toast('请先填写发票号码段（如 656）');
+        return;
+    }
+    btn.disabled = true;
+    btn.textContent = '生成中…';
+    try {
+        var data = await api('/api/v1/split/' + encodeURIComponent(splitThreadId) + '/generate', {
+            method: 'POST', body: { invoice_number: inv }
+        });
+        toast('已生成 ' + (data.count != null ? data.count : '?') + ' 票报关单');
+        await loadProposal();   // 刷新文件列表与状态
+        render();
+        return;
+    } catch(e) {
+        toast('生成失败：' + e.message, 4000);
+        btn.disabled = false;
+        btn.textContent = '生成报关单';
     }
 }
 
@@ -109,6 +150,7 @@ function render() {
     renderHeader();
     renderTabs();
     renderSplitView();
+    renderFiles();
     renderActions();
 }
 
@@ -119,13 +161,15 @@ function renderHeader() {
         'pending_review': 'badge-warn',
         'confirmed': 'badge-ok',
         'reset': 'badge-muted',
-        'completed': 'badge-ok'
+        'completed': 'badge-ok',
+        'declare_failed': 'badge-warn'
     };
     var statusTextMap = {
         'pending_review': '待审核',
         'confirmed': '已确认',
         'reset': '已重置',
-        'completed': '已完成'
+        'completed': '已完成',
+        'declare_failed': '生成失败'
     };
     var sc = statusClassMap[status] || 'badge-muted';
     var st = statusTextMap[status] || status;
@@ -510,25 +554,60 @@ function renderActions() {
     var totalWarnings = countTotalWarnings();
     updateWarningSummary(totalWarnings);
 
+    var invoiceInput = document.getElementById('invoice-input');
+    var btnConfirm = document.getElementById('btn-confirm');
+    var btnGenerate = document.getElementById('btn-generate');
+    var btnReset = document.getElementById('btn-reset');
+
     if (status === 'pending_review') {
-        document.getElementById('btn-confirm').style.display = '';
-        // 待审核也允许重置：推翻当前推荐方案、从源文件重跑推荐
-        // （配合批次 Excel 随时可改，"改完源文件再重新分票"链路成立）
-        document.getElementById('btn-reset').style.display = '';
-        document.getElementById('btn-reset').disabled = false;
-        document.getElementById('btn-confirm').disabled = false;
-        document.getElementById('btn-confirm').textContent = '确认分票';
-    } else if (status === 'confirmed' || status === 'completed') {
-        // confirmed（未生成）与 completed（已生成报关单）都允许重置：
-        // 后端 reset 会清理已生成的报关单文件和落库记录后重跑推荐
-        document.getElementById('btn-confirm').style.display = 'none';
-        document.getElementById('btn-reset').style.display = '';
-        document.getElementById('btn-reset').disabled = false;
+        // 待审核：可填号码段（留空=确认后补生成）+ 确认；也可重置推翻推荐
+        invoiceInput.style.display = '';
+        btnConfirm.style.display = '';
+        btnConfirm.disabled = false;
+        btnConfirm.textContent = '确认分票';
+        btnGenerate.style.display = 'none';
+        btnReset.style.display = '';
+        btnReset.disabled = false;
+    } else if (status === 'confirmed' || status === 'completed' || status === 'declare_failed') {
+        // 已确认：可重置；未生成文件时显示号码段 + 生成入口
+        btnConfirm.style.display = 'none';
+        btnReset.style.display = '';
+        btnReset.disabled = false;
+        if (declFiles.length > 0) {
+            invoiceInput.style.display = 'none';
+            btnGenerate.style.display = 'none';
+        } else {
+            invoiceInput.style.display = '';
+            btnGenerate.style.display = '';
+            btnGenerate.disabled = false;
+            btnGenerate.textContent = '生成报关单';
+        }
     } else {
-        // reset / completed
-        document.getElementById('btn-confirm').style.display = 'none';
-        document.getElementById('btn-reset').style.display = 'none';
+        // reset 等中间态
+        invoiceInput.style.display = 'none';
+        btnConfirm.style.display = 'none';
+        btnGenerate.style.display = 'none';
+        btnReset.style.display = 'none';
     }
+}
+
+/* ---------- 报关单文件列表 ---------- */
+function renderFiles() {
+    var box = document.getElementById('decl-files');
+    if (!box) return;
+    if (!declFiles.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+    var html = '<div class="split-section-title">已生成报关单 <span class="count">' +
+        declFiles.length + ' 个文件</span></div>';
+    for (var i = 0; i < declFiles.length; i++) {
+        var f = declFiles[i];
+        var href = '/api/v1/split/' + encodeURIComponent(splitThreadId) +
+            '/download/' + encodeURIComponent(f.name);
+        var kb = f.size != null ? (Math.round(f.size / 102.4) / 10) + ' KB' : '';
+        html += '<div style="padding:4px 0"><a href="' + esc(href) + '">' + esc(f.name) +
+            '</a> <span class="muted" style="font-size:12px">' + esc(kb) + '</span></div>';
+    }
+    box.innerHTML = html;
+    box.style.display = '';
 }
 
 function countTotalWarnings() {

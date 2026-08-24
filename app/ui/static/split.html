@@ -91,9 +91,15 @@
 
   </div>
 
+  <!-- 报关单文件列表（生成后可见） -->
+  <div class="card" id="decl-files" style="display:none;margin-top:16px"></div>
+
   <!-- 底部操作栏 -->
   <div class="action-bar" id="action-bar">
+    <input id="invoice-input" type="text" placeholder="发票号码段（如 656，可留空后补）"
+           style="display:none;width:220px">
     <button id="btn-confirm" class="btn btn-primary" onclick="confirmSplit()">确认分票</button>
+    <button id="btn-generate" class="btn btn-primary" style="display:none" onclick="generateDeclarations()">生成报关单</button>
     <button id="btn-reset" class="btn btn-ghost" onclick="resetSplit()" style="display:none">重置分票</button>
     <span class="spacer"></span>
     <span class="warning-summary" id="warn-count-bottom" style="display:none"></span>
