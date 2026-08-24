@@ -117,6 +117,10 @@ async def request_logging_middleware(request, call_next):
                        detail if detail is not None else "-")
     elif request.url.path.startswith("/ui/static") or request.url.path == "/health":
         # 静态资产/健康检查属高频噪音，降为 DEBUG
+        # no-cache：静态文件无版本号，不加则浏览器启发式缓存旧 JS
+        # （曾导致新功能上线后点击无反应）；配合 ETag 走 304，性能无损
+        if request.url.path.startswith("/ui/static"):
+            response.headers["Cache-Control"] = "no-cache"
         logger.debug("[HTTP] %s %s → %d（%.0fms）",
                      request.method, request.url.path, status, elapsed_ms)
     else:
