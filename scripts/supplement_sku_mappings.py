@@ -24,6 +24,7 @@ from sqlalchemy import text
 
 from app.db.models import ProductMapping
 from app.db.session import get_session
+from app.db.sync import sync_mapping_to_sku
 from backup_master import snapshot
 
 # 用户 2026-08-24 提供的补充清单
@@ -111,19 +112,19 @@ def main() -> None:
                 if sku in existing_skus:
                     skipped_skus.append((name, sku))
                     continue
-                session.add(
-                    ProductMapping(
-                        product_name_cn=name,
-                        sku_code=sku,
-                        hs_code=template.hs_code,
-                        supplier_name=template.supplier_name,
-                        inspection_required=template.inspection_required,
-                        name_en=template.name_en,
-                        unit_code=template.unit_code,
-                        factory_id=template.factory_id,
-                        is_incomplete=template.is_incomplete,
-                    )
+                new_mapping = ProductMapping(
+                    product_name_cn=name,
+                    sku_code=sku,
+                    hs_code=template.hs_code,
+                    supplier_name=template.supplier_name,
+                    inspection_required=template.inspection_required,
+                    name_en=template.name_en,
+                    unit_code=template.unit_code,
+                    factory_id=template.factory_id,
+                    is_incomplete=template.is_incomplete,
                 )
+                session.add(new_mapping)
+                sync_mapping_to_sku(session, new_mapping)
                 existing_skus.add(sku)
                 inserted += 1
 
