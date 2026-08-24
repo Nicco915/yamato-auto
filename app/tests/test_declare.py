@@ -204,6 +204,10 @@ class TestPortReconciliation:
         if not Path(SAMPLES_DIR).exists():
             pytest.skip(f"样本目录不存在: {SAMPLES_DIR}")
         for port, info in PORT_MAP.items():
+            # 只对账 fixture 里实际出现的港口：PORT_MAP 是全量港口表，
+            # fixture 数据不含的港口（如后加的博多港）没有可比对对象
+            if port not in port_usd:
+                continue
             expected = _sample_port_usd(info["cn"])
             assert abs(port_usd[port] - expected) < 0.01, (
                 f"{port} 生成 {port_usd[port]} != 样本 {expected}"
