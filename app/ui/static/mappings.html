@@ -51,7 +51,7 @@
   <!-- 产品映射 Tab -->
   <div id="pane-products">
     <div class="mp-toolbar">
-      <input id="p-q" type="text" placeholder="搜索品名 / 税号 / 供应商 / SKU" onkeydown="if(event.key==='Enter')loadProducts()">
+      <input id="p-q" type="text" placeholder="搜索品名 / 税号 / 供应商 / SKU" oninput="debouncedLoadProducts()" onkeydown="if(event.key==='Enter')loadProducts()">
       <button class="btn" onclick="loadProducts()">搜索</button>
       <button class="btn" onclick="resetProductSearch()">重置</button>
       <label class="mp-check">
@@ -120,7 +120,7 @@
       <select id="s-factory" onchange="loadSkus()" style="padding:6px 9px;border:1px solid #cbd5e1;border-radius:5px;font-size:13px;font-family:var(--font)">
         <option value="">全部工厂</option>
       </select>
-      <input id="s-q" type="text" placeholder="搜索 SKU / 品名" onkeydown="if(event.key==='Enter')loadSkus()">
+      <input id="s-q" type="text" placeholder="搜索 SKU / 品名" oninput="debouncedLoadSkus()" onkeydown="if(event.key==='Enter')loadSkus()">
       <button class="btn" onclick="loadSkus()">搜索</button>
       <button class="btn" onclick="resetSkuSearch()">重置</button>
       <span class="spacer"></span>

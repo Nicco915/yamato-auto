@@ -22,6 +22,7 @@ API（路由极薄，逻辑全在 app.api.service；全部 asyncio.to_thread 防
 from __future__ import annotations
 
 import asyncio
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -37,6 +38,27 @@ router = APIRouter()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+# 匹配 HTML 里对 /ui/static/*.js|css 的引用（带不带 ?v=N 都认）
+_STATIC_REF_RE = re.compile(
+    r'((?:src|href)="/ui/static/([\w.-]+\.(?:js|css)))(?:\?v=\d+)?(")'
+)
+
+
+def _with_asset_versions(html: str) -> str:
+    """把 /ui/static/*.js|css 引用重写为 ?v=<文件 mtime>。
+
+    手动 bump ?v=N 不可靠（改 JS 忘改版本号 → 浏览器拿旧缓存，新功能
+    静默失效，2026-08-12 排序/重置按钮事故）。用文件 mtime 做版本：
+    文件一改 URL 就变，浏览器必然重新下载，与 Cache-Control 头无关。
+    """
+    def _sub(m: re.Match) -> str:
+        try:
+            v = int((STATIC_DIR / m.group(2)).stat().st_mtime)
+        except OSError:
+            v = 0
+        return f"{m.group(1)}?v={v}{m.group(3)}"
+    return _STATIC_REF_RE.sub(_sub, html)
+
 
 def _read_page(filename: str) -> HTMLResponse:
     """读 static 下的页面文件（显式 utf-8，Windows 兼容）；缺失返回 503。"""
@@ -45,7 +67,7 @@ def _read_page(filename: str) -> HTMLResponse:
         raise HTTPException(
             status_code=503, detail=f"页面文件尚未部署: ui/static/{filename}"
         )
-    return HTMLResponse(path.read_text(encoding="utf-8"))
+    return HTMLResponse(_with_asset_versions(path.read_text(encoding="utf-8")))
 
 
 # ---------- 页面路由 ----------

@@ -83,6 +83,16 @@ function resetSkuSearch() {
     loadSkus();
 }
 
+/* 实时搜索：输入即过滤（300ms 防抖），删光文字立即恢复全部数据。
+   比重置按钮更直接——多数情况下清空输入框即完成"重置"。 */
+var _searchTimers = {};
+function _debounced(key, fn, ms) {
+    if (_searchTimers[key]) clearTimeout(_searchTimers[key]);
+    _searchTimers[key] = setTimeout(fn, ms || 300);
+}
+function debouncedLoadProducts() { _debounced("products", loadProducts); }
+function debouncedLoadSkus() { _debounced("skus", loadSkus); }
+
 /* ---------- 初始化 ---------- */
 function init() {
     renderTopbar("mappings");  // 链接表已含主数据维护，直接高亮
