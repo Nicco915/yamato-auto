@@ -181,10 +181,16 @@ app/data/backups/20260824_165007/
 
 `scripts/supplement_sku_mappings.py` 在直接插入 `product_mappings` 行时**没有调用** `sync_mapping_to_sku`，所以 `factory_skus` 未被回填。
 
+另外，最初版本的 `sync_mapping_to_sku` / `sync_sku_to_mapping` 只同步 **中文品名、税号、商检**；`name_en` 不在同步范围内。
+
 ## 修复
 
 1. 修改 `scripts/supplement_sku_mappings.py`：每插入一条 SKU 级映射后立即调用 `sync_mapping_to_sku`。
 2. 新增 `scripts/sync_mappings_to_skus.py`：批量把当前所有 `sku_code` 非空的映射行正向同步到 SKU 主数据。
+3. 扩展 `app/db/sync.py`：把 `name_en` 纳入正向/反向同步范围；
+   - 正向：`mapping.name_en` 非空时回填 `factory_skus.name_en`。
+   - 反向：SKU 编辑 `name_en` 时回填 `product_mappings.name_en`。
+4. 更新 `PUT /api/v1/mappings/skus/{sku_id}`：编辑 `name_en` 后触发反向同步。
 
 ## 执行结果
 
@@ -201,7 +207,7 @@ YAMATO_ALLOW_DESTRUCTIVE=1 python3 scripts/sync_mappings_to_skus.py
 
 ## 说明
 
-44 条 SKU 级映射中，只有 **28** 个 SKU 在 `factory_skus` 表中已有记录，因此被回填了 `name_cn` / `hs_code` / `inspection_required`。
+44 条 SKU 级映射中，只有 **28** 个 SKU 在 `factory_skus` 表中已有记录，因此被回填了 `name_cn` / `name_en` / `hs_code` / `inspection_required`。
 
 剩余 **16** 个 SKU 在 `factory_skus` 中尚不存在，同步脚本不会自动创建新 SKU 行，因为：
 
