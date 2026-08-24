@@ -518,7 +518,9 @@ function renderActions() {
         document.getElementById('btn-reset').disabled = false;
         document.getElementById('btn-confirm').disabled = false;
         document.getElementById('btn-confirm').textContent = '确认分票';
-    } else if (status === 'confirmed') {
+    } else if (status === 'confirmed' || status === 'completed') {
+        // confirmed（未生成）与 completed（已生成报关单）都允许重置：
+        // 后端 reset 会清理已生成的报关单文件和落库记录后重跑推荐
         document.getElementById('btn-confirm').style.display = 'none';
         document.getElementById('btn-reset').style.display = '';
         document.getElementById('btn-reset').disabled = false;

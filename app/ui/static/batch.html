@@ -130,6 +130,7 @@ var SESS_STATUS_MAP = {
 /* ---- 分票 ---- */
 var splitExists = false;
 var splitThreadIdVal = null;   // split-{thread_id}
+var splitHasFiles = false;     // 报关单文件是否已生成（决定「打开报关单目录」可用性）
 var _batchData = null;         // 最近一次加载的批次数据（供 startSplit 取 final_output_path）
 
 async function checkSplitStatus() {
@@ -141,6 +142,15 @@ async function checkSplitStatus() {
   } catch(e) {
     splitExists = false;
     splitThreadIdVal = null;
+    splitHasFiles = false;
+    return;
+  }
+  // 确认分票但没生成报关单（未填发票号码段）时目录不存在——此时禁用打开按钮
+  try {
+    var f = await api("/api/v1/split/" + encodeURIComponent(sid) + "/files");
+    splitHasFiles = !!((f && f.files && f.files.length) || (f && f.length));
+  } catch(e) {
+    splitHasFiles = false;
   }
 }
 
@@ -305,7 +315,11 @@ function renderHead(d) {
   // 分票按钮
   if (splitExists) {
     btns += '<a class="btn lbtn primary" href="/split/' + encodeURIComponent(splitThreadIdVal) + '">查看分票</a>';
-    btns += '<button class="btn lbtn" onclick="openSplitDir(this)">打开报关单目录</button>';
+    if (splitHasFiles) {
+      btns += '<button class="btn lbtn" onclick="openSplitDir(this)">打开报关单目录</button>';
+    } else {
+      btns += '<button class="btn lbtn" disabled title="报关单尚未生成：请在分票页确认方案并生成后再打开">打开报关单目录</button>';
+    }
   } else if (d.status === "completed") {
     btns += '<button class="btn lbtn primary" id="btn-start-split" onclick="startSplit()">开始分票</button>';
   } else {
