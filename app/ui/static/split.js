@@ -409,7 +409,10 @@ function renderActions() {
 
     if (status === 'pending_review') {
         document.getElementById('btn-confirm').style.display = '';
-        document.getElementById('btn-reset').style.display = 'none';
+        // 待审核也允许重置：推翻当前推荐方案、从源文件重跑推荐
+        // （配合批次 Excel 随时可改，"改完源文件再重新分票"链路成立）
+        document.getElementById('btn-reset').style.display = '';
+        document.getElementById('btn-reset').disabled = false;
         document.getElementById('btn-confirm').disabled = false;
         document.getElementById('btn-confirm').textContent = '确认分票';
     } else if (status === 'confirmed') {
