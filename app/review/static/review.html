@@ -60,6 +60,18 @@
   /* 右屏卡片 */
   #missing-bar { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5;
                  border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; }
+  /* 工厂对照确认卡（alias_suggestion）：默认蓝色提示，conflict 时琥珀色警告 */
+  #alias-bar { background: #eff6ff; color: #1e40af; border: 1px solid #93c5fd;
+               border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px;
+               align-items: center; gap: 10px; flex-wrap: wrap; }
+  #alias-bar.warn { background: #fef3c7; color: #92400e; border-color: #f59e0b; }
+  #alias-bar .alias-text { flex: 1; min-width: 200px; }
+  #alias-bar button { padding: 3px 12px; border: 0; border-radius: 4px; font-size: 12px;
+                      font-weight: 600; cursor: pointer; }
+  #btn-save-alias { color: #fff; background: #2563eb; }
+  #btn-save-alias:disabled { background: #94a3b8; cursor: not-allowed; }
+  #btn-dismiss-alias { color: #374151; background: #e5e7eb; }
+  #btn-dismiss-alias:hover { background: #d1d5db; }
   /* D3 缺失 SKU chip + 全部添加 */
   #missing-bar .missing-chips { display: inline-flex; flex-wrap: wrap; gap: 6px; margin: 0 8px; }
   .missing-chip { font-family: ui-monospace, Menlo, monospace; font-size: 12px;
@@ -184,6 +196,7 @@
 
   <!-- 右屏：审核工作区 -->
   <div id="right">
+    <div id="alias-bar" style="display:none"></div>
     <div id="missing-bar" style="display:none"></div>
     <div id="cards"></div>
   </div>
@@ -267,6 +280,7 @@ async function loadPayload() {
     await loadFactoryList();
   }
   $("done-view").style.display = "none";
+  renderAliasBar();
   renderMissingBar();
   renderCards();
   renderDocSelect();
@@ -327,6 +341,65 @@ function initItems() {
   if (s) { s.value = ""; }
   const sc = $("search-count");
   if (sc) sc.textContent = "";
+}
+
+/* ================= 工厂对照确认卡（alias_suggestion） ================= */
+/* 当前工厂对照来自本批次临时指定(override)或模糊匹配(fuzzy)时提示存为永久别名；
+   conflict=true 表示已有短名与文件夹不一致，仅警告、不提供保存按钮。 */
+let aliasSaving = false;   // 保存请求进行中（防连点）
+
+function renderAliasBar() {
+  const bar = $("alias-bar");
+  const s = payload && payload.alias_suggestion;
+  if (!s || !s.factory || !s.folder) {
+    bar.style.display = "none"; bar.innerHTML = ""; return;
+  }
+  bar.classList.toggle("warn", !!s.conflict);
+  let text = "";
+  if (s.conflict) {
+    text = `⚠ 该工厂 <b>${esc(s.factory)}</b> 已有中文短名 <b>${esc(s.current_short_name || "")}</b>，` +
+      `与文件夹 <b>${esc(s.folder)}</b> 不一致，请到主数据维护页处理。`;
+  } else if (s.kind === "override") {
+    text = `本次对照 <b>${esc(s.factory)} → ${esc(s.folder)}</b> 来自本批次临时指定，尚未保存为永久别名。`;
+  } else {
+    const score = (typeof s.match_score === "number") ? Math.round(s.match_score) : s.match_score;
+    text = `工厂 <b>${esc(s.factory)}</b> 通过模糊匹配命中文件夹 <b>${esc(s.folder)}</b>` +
+      (score != null ? `（得分 ${esc(score)}）` : "") + "，请确认无误后保存。";
+  }
+  bar.innerHTML = `<span class="alias-text">${text}</span>` +
+    (s.conflict ? "" : `<button id="btn-save-alias" onclick="saveAlias()">存为永久别名</button>`) +
+    `<button id="btn-dismiss-alias" onclick="dismissAliasBar()">知道了</button>`;
+  bar.style.display = "flex";
+}
+
+/* 「知道了」：仅当次隐藏卡片，不写库 */
+function dismissAliasBar() {
+  $("alias-bar").style.display = "none";
+}
+
+/* 「存为永久别名」：POST 成功后移除卡片；失败 toast 后端 detail；请求期间防连点 */
+async function saveAlias() {
+  const s = payload && payload.alias_suggestion;
+  if (!s || !s.factory || aliasSaving) return;
+  const btn = $("btn-save-alias");
+  aliasSaving = true;
+  if (btn) { btn.disabled = true; btn.textContent = "保存中…"; }
+  try {
+    const r = await fetch(`/api/v1/review/${encodeURIComponent(threadId)}/save-alias`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ factory: s.factory }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
+    toast(`已存为永久别名：${data.alias || s.factory} → ${data.short_name || s.folder}`, 3500);
+    $("alias-bar").style.display = "none";
+  } catch (e) {
+    toast("保存别名失败：" + e.message, 4000);
+    if (btn) { btn.disabled = false; btn.textContent = "存为永久别名"; }
+  } finally {
+    aliasSaving = false;
+  }
 }
 
 /* D3：缺失红条 = 每个缺失条码的可点击 chip（单个添加）+「全部添加」；
@@ -1144,7 +1217,7 @@ async function doSubmit() {
       payload = data.review_data;
       initItems();
       $("tb-factory").textContent = "工厂: " + (payload.factory_name || "-");
-      renderMissingBar(); renderCards(); renderDocSelect();
+      renderAliasBar(); renderMissingBar(); renderCards(); renderDocSelect();
       selectCard(0);
       // 推进到下一工厂后重新计算导航按钮
       await loadFactoryList();
