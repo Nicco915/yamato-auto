@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from app.config import get_settings
 from app.declare.service import declarations_dir, generate_declarations
 from app.split.graph import get_split_graph
+from app.split.validate import renumber_tickets, validate_confirmed_proposal
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +174,32 @@ def confirm_split(split_thread_id: str, req: ConfirmSplitRequest):
         )
     if not any(t.interrupts for t in snap.tasks):
         raise HTTPException(status_code=400, detail="该任务未处于等待审核状态")
+
+    # ---- 零容错校验（resume 落库前拦截，早失败）----
+    # 硬错误（覆盖遗漏/重复、空票、票级非法）force 也不能过；
+    # 软警告（超 3 整柜/混商检工厂）需 force=true 才放行。
+    errors, soft_warnings = validate_confirmed_proposal(
+        req.proposal,
+        snap.values.get("raw_items") or [],
+        snap.values.get("sj_map") or {},
+    )
+    if errors:
+        logger.warning(
+            "confirm_split: 方案校验失败 split_thread_id=%s, errors=%s",
+            split_thread_id, errors,
+        )
+        raise HTTPException(
+            status_code=400, detail="分票方案校验未通过：" + "；".join(errors)
+        )
+    if soft_warnings and not req.force:
+        raise HTTPException(
+            status_code=400,
+            detail="方案存在警告，需强制确认：" + "；".join(soft_warnings),
+        )
+
+    # 票号以港口内数组顺序为准重编（与引擎规则 7 一致），
+    # 不信任前端传来的 ticket_no（人工增删票后可能不连续）
+    renumber_tickets(req.proposal)
 
     proposal = req.proposal
     proposal["status"] = "confirmed"

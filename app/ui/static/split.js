@@ -169,6 +169,71 @@ function getActivePortData() {
     return { port: activePort, groups: [] };
 }
 
+/* 确保当前港口分组存在于 proposal.ports（新建票时可能尚无该港口分组） */
+function ensureActivePortData() {
+    if (!proposal.ports) proposal.ports = [];
+    var portData = getActivePortData();
+    var found = false;
+    for (var i = 0; i < proposal.ports.length; i++) {
+        if (proposal.ports[i].port === activePort) { found = true; break; }
+    }
+    if (!found) {
+        proposal.ports.push(portData);
+    }
+    if (!portData.groups) portData.groups = [];
+    return portData;
+}
+
+/* ---------- 可编辑守卫：仅待审核状态允许增/删/拖 ---------- */
+function isEditable() {
+    return status === 'pending_review';
+}
+
+/* ---------- 票号重编：按港口内数组顺序（与引擎规则 7 一致） ---------- */
+function renumberTickets() {
+    var ports = (proposal && proposal.ports) || [];
+    for (var p = 0; p < ports.length; p++) {
+        var groups = ports[p].groups || [];
+        for (var i = 0; i < groups.length; i++) {
+            groups[i].ticket_no = ports[p].port + '-' + ('0' + (i + 1)).slice(-2);
+        }
+    }
+}
+
+/* ---------- 新建票 ---------- */
+function createTicket() {
+    if (!isEditable()) { toast('当前状态不可编辑分票方案', 2500); return; }
+    var portData = ensureActivePortData();
+    // 空票暂无箱型：拖入第一个柜时采用该柜箱型，之后一票一箱型
+    portData.groups.push({
+        ticket_no: '',
+        port: activePort,
+        container_type: '',
+        items: [],
+        sj_factories: [],
+        full_containers: 0,
+        warnings: []
+    });
+    renumberTickets();
+    render();
+}
+
+/* ---------- 删除票（仅空票可删，防误操作带 confirm） ---------- */
+function deleteTicket(ti) {
+    if (!isEditable()) { toast('当前状态不可编辑分票方案', 2500); return; }
+    var tickets = getActivePortData().groups || [];
+    var t = tickets[ti];
+    if (!t) return;
+    if ((t.items || []).length > 0) {
+        toast('请先移出票内所有柜', 3000);
+        return;
+    }
+    if (!confirm('确定删除票 ' + (t.ticket_no || '') + '？')) return;
+    tickets.splice(ti, 1);
+    renumberTickets();
+    render();
+}
+
 /* ---------- 左栏：柜列表 ---------- */
 function buildContainerMap(portData) {
     var map = {};
@@ -316,33 +381,40 @@ function renderTickets() {
     var portData = getActivePortData();
     var tickets = portData.groups || [];
     var el = document.getElementById('ticket-cards');
+    var editable = isEditable();
 
     document.getElementById('ticket-count').textContent = tickets.length ? '(' + tickets.length + ' 票)' : '';
 
     if (tickets.length === 0) {
-        el.innerHTML = '<p class="empty-hint">该港口无票方案</p>';
+        el.innerHTML = '<p class="empty-hint">该港口无票方案</p>' + createBtnHtml(editable);
         return;
     }
 
-    // 按箱型分组展示
+    // 按箱型分组展示（保留原数组索引，供拖拽/删除定位；
+    // 新建的空票 container_type 为空，归入「新票（未指定箱型）」组排在最后）
+    var NEW_TICKET_CT = '新票（未指定箱型）';
     var grouped = {};
     for (var i = 0; i < tickets.length; i++) {
-        var ct = tickets[i].container_type || '未知箱型';
+        var ct = tickets[i].container_type || NEW_TICKET_CT;
         if (!grouped[ct]) grouped[ct] = [];
-        grouped[ct].push(tickets[i]);
+        grouped[ct].push({ ticket: tickets[i], idx: i });
     }
 
     var html = '';
-    var globalTi = 0;
-    var ctKeys = Object.keys(grouped).sort();
+    var ctKeys = Object.keys(grouped).sort(function(a, b) {
+        // 「新票」组固定排最后，避免显示顺序与原数组顺序错位
+        if (a === NEW_TICKET_CT) return 1;
+        if (b === NEW_TICKET_CT) return -1;
+        return a < b ? -1 : (a > b ? 1 : 0);
+    });
     for (var g = 0; g < ctKeys.length; g++) {
         var ct = ctKeys[g];
         var ctTickets = grouped[ct];
         html += '<div class="ticket-type-group"><div class="container-group-header">' + esc(ct) + '（' + ctTickets.length + ' 票）</div>';
 
         for (var t = 0; t < ctTickets.length; t++) {
-            var ticket = ctTickets[t];
-            var ti = globalTi++;
+            var ticket = ctTickets[t].ticket;
+            var ti = ctTickets[t].idx;  // 原数组索引
             var warnings = ticket.warnings || [];
             var hasWarn = warnings.length > 0;
 
@@ -357,7 +429,7 @@ function renderTickets() {
             // 警告图标
             var warnIcon = hasWarn ? '<span class="warning-icon" title="有 ' + warnings.length + ' 条警告">⚠</span>' : '';
 
-            // 柜条目列表（可拖拽）
+            // 柜条目列表（仅待审核状态可拖拽）
             var itemsHtml = '';
             var items = ticket.items || [];
             for (var ii = 0; ii < items.length; ii++) {
@@ -371,15 +443,20 @@ function renderTickets() {
                         partialNote = ' <span class="item-partial-note">（非商检部分）</span>';
                     }
                 }
-                itemsHtml += '<div class="container-item-in-ticket" draggable="true"'
-                    + ' data-ticket-idx="' + ti + '" data-item-idx="' + ii + '"'
-                    + ' ondragstart="handleDragStart(event)" ondragend="handleDragEnd(event)">'
+                var dragAttrs = editable
+                    ? ' draggable="true" ondragstart="handleDragStart(event)" ondragend="handleDragEnd(event)"'
+                    : '';
+                itemsHtml += '<div class="container-item-in-ticket"' + dragAttrs
+                    + ' data-ticket-idx="' + ti + '" data-item-idx="' + ii + '">'
                     + '<span class="mono">' + esc(item.kanri_no) + '</span>'
                     + partialNote
                     + '</div>';
             }
             if (!itemsHtml) {
-                itemsHtml = '<span class="muted" style="font-size:12px">无柜条目</span>';
+                // 空票占位：提示拖入柜（只读状态下不出现空票，兜底文案）
+                itemsHtml = editable
+                    ? '<div class="empty-ticket-hint">空票——拖入柜</div>'
+                    : '<span class="muted" style="font-size:12px">无柜条目</span>';
             }
 
             // 警告脚注
@@ -390,6 +467,11 @@ function renderTickets() {
                     + '</div>';
             }
 
+            // 删除按钮（仅待审核状态；非空票点击时 toast 拦截）
+            var delBtn = editable
+                ? '<button class="ticket-del-btn" title="删除该票（仅空票可删）" onclick="deleteTicket(' + ti + ')">×</button>'
+                : '';
+
             html += '<div class="ticket-card" id="ticket-card-' + ti + '"'
                 + ' ondragover="handleDragOver(event)" ondrop="handleDrop(event)" ondragleave="handleDragLeave(event)"'
                 + ' data-ticket-idx="' + ti + '">'
@@ -397,6 +479,7 @@ function renderTickets() {
                 + '<span class="ticket-ticket-no">' + esc(ticket.ticket_no) + '</span>'
                 + sjHtml + warnIcon
                 + '<span class="ticket-meta">整柜 ' + (ticket.full_containers != null ? ticket.full_containers : 0) + '</span>'
+                + delBtn
                 + '</div>'
                 + '<div class="ticket-card-body" id="ticket-body-' + ti + '">' + itemsHtml + '</div>'
                 + warnHtml
@@ -405,7 +488,16 @@ function renderTickets() {
         html += '</div>';
     }
 
+    html += createBtnHtml(editable);
     el.innerHTML = html;
+}
+
+/* 「+ 新建票」按钮（当前港口票列表末尾，仅待审核状态） */
+function createBtnHtml(editable) {
+    if (!editable) return '';
+    return '<div class="ticket-create-row">'
+        + '<button class="btn btn-ghost" onclick="createTicket()">+ 新建票</button>'
+        + '</div>';
 }
 
 function renderSplitView() {
@@ -487,6 +579,7 @@ function validateTicket(ticket) {
 
 /* ---------- 拖拽 ---------- */
 function handleDragStart(e) {
+    if (!isEditable()) return;  // 已确认/已重置/已完成：只读禁拖
     var el = e.target.closest('[data-ticket-idx]');
     if (!el) return;
 
@@ -528,6 +621,7 @@ function handleDrop(e) {
     var bodies = document.querySelectorAll('.ticket-card-body');
     for (var i = 0; i < bodies.length; i++) bodies[i].classList.remove('drop-zone');
 
+    if (!isEditable()) { dragSrc = null; return; }  // 只读状态禁拖
     if (!dragSrc) return;
 
     var card = e.target.closest('.ticket-card');
@@ -539,20 +633,30 @@ function handleDrop(e) {
     var srcIdx = dragSrc.ticketIdx;
     if (srcIdx === targetTicketIdx) return; // 同一票，无变化
 
-    // 在全局 tickets 列表中定位（需要跨箱型的全局索引）
+    // 在全局 tickets 列表中定位（data-ticket-idx 为原数组索引）
     var portData = getActivePortData();
     var allTickets = portData.groups || [];
 
-    // srcIdx / targetTicketIdx 是全局索引（globalTi）
     var srcTicket = allTickets[srcIdx];
     var tgtTicket = allTickets[targetTicketIdx];
     if (!srcTicket || !tgtTicket) { dragSrc = null; return; }
 
-    // 跨箱型/跨港口检查
-    if (srcTicket.port !== tgtTicket.port || srcTicket.container_type !== tgtTicket.container_type) {
-        toast('不能跨港口或箱型拖动柜条目', 3000);
+    // 跨港口检查（新建空票与当前票同港口，天然满足）
+    if (srcTicket.port !== tgtTicket.port) {
+        toast('不能跨港口拖动柜条目', 3000);
         dragSrc = null;
         return;
+    }
+    // 箱型检查：目标为空票（尚无箱型）时采用该柜箱型；
+    // 否则一票一箱型，不一致拒绝
+    if (tgtTicket.container_type) {
+        if (srcTicket.container_type !== tgtTicket.container_type) {
+            toast('不能跨箱型拖动柜条目（一票一箱型）', 3000);
+            dragSrc = null;
+            return;
+        }
+    } else {
+        tgtTicket.container_type = srcTicket.container_type;
     }
 
     // 移动条目
@@ -566,6 +670,9 @@ function handleDrop(e) {
     recalcTicket(srcTicket);
     recalcTicket(tgtTicket);
 
+    // 拖拽后票号按数组顺序重编（防序号漂移；拖出导致空票时序号仍连续）
+    renumberTickets();
+
     dragSrc = null;
     render();
 }
@@ -574,6 +681,11 @@ function recalcTicket(ticket) {
     var fullContainers = 0;
     var sjFactories = {};
     var items = ticket.items || [];
+
+    // 票被拖空后回到「未指定箱型」状态，可再拖入任意箱型的第一个柜
+    if (items.length === 0) {
+        ticket.container_type = '';
+    }
 
     for (var i = 0; i < items.length; i++) {
         var item = items[i];
