@@ -256,7 +256,8 @@ def writer(state: AgentState) -> dict:
     factory = cur.get("factory_name")
 
     if state.get("validation_status") != "Approved":
-        logger.warning("[Node6] 工厂「%s」审核未通过（%s），跳过写入",
+        # Rejected/Skipped 等都走这里：不写 Excel、不落库、不进 factory_outputs
+        logger.warning("[Node6] 工厂「%s」未获批准（%s），跳过写入",
                        factory, state.get('validation_status'))
         return {}
 

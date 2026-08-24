@@ -117,7 +117,8 @@ var STATUS_MAP = {
 var ROLE_MAP = {
   current: ["当前", "b-blue"],
   pending: ["待处理", "b-gray"],
-  done:    ["已完成", "b-green"]
+  done:    ["已完成", "b-green"],
+  skipped: ["已跳过", "b-gray"]
 };
 var SESS_STATUS_MAP = {
   waiting_pl: "等待箱单",
@@ -420,7 +421,12 @@ function renderAudit(d) {
         a = a || {};
         var edited = (a.edited_count != null) ? a.edited_count : ((a.changes || []).length);
         var hasDetail = ((a.changes || []).length + (a.new_skus || []).length) > 0;
-        var res = a.approved ? '<span class="c-green">通过</span>' : '<span class="c-red">未通过</span>';
+        var res;
+        if (a.result_status === "factory_skipped") {
+          res = '<span class="c-gray">跳过</span>';   // 「跳过本工厂」留痕：approved=false，单列文案
+        } else {
+          res = a.approved ? '<span class="c-green">通过</span>' : '<span class="c-red">未通过</span>';
+        }
         var row = "<tr><td>" + _esc(fmtT(a.ts)) + "</td><td>" + _esc(a.factory_name || "-") +
           "</td><td>" + res + "</td><td>" + _esc(edited) + "</td><td>" +
           (hasDetail ? '<button class="btn lbtn audit-toggle" data-idx="' + i + '" style="padding:2px 10px;font-size:12px">展开</button>'

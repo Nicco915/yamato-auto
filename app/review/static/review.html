@@ -21,6 +21,11 @@
   #btn-submit { padding: 8px 22px; border: 0; border-radius: 6px; font-size: 14px;
                 font-weight: 600; color: #fff; background: #2563eb; cursor: pointer; }
   #btn-submit:disabled { background: #64748b; cursor: not-allowed; }
+  /* 「跳过本工厂」：次要样式（同 btn-back 族），不抢主按钮视觉 */
+  #btn-skip { padding: 8px 18px; border: 1px solid #4b5563; border-radius: 6px;
+              font-size: 14px; color: #e5e7eb; background: #374151; cursor: pointer; }
+  #btn-skip:hover:not(:disabled) { background: #4b5563; }
+  #btn-skip:disabled { opacity: .5; cursor: not-allowed; }
   #btn-back { padding: 8px 18px; border: 1px solid #4b5563; border-radius: 6px;
               font-size: 14px; color: #e5e7eb; background: #374151; cursor: pointer; }
   #btn-back:hover { background: #4b5563; }
@@ -155,6 +160,8 @@
   <span id="badge">挂起待审</span>
   <button id="btn-prev" onclick="goPrevFactory()" title="返回上一工厂" style="display:none;">← 上一工厂</button>
   <button id="btn-back" onclick="goBackToBatch()" title="返回批次详情页" style="display:none;">返回批次</button>
+  <button id="btn-skip" onclick="skipFactory()"
+          title="本批次不处理该工厂：不写 Excel、不落库，批次照常完成">跳过本工厂</button>
   <button id="btn-submit" onclick="submitReview()">提交并继续</button>
 </div>
 
@@ -259,10 +266,13 @@ async function loadPayload() {
     $("badge").textContent = "重新编辑"; $("badge").className = "reopen";
     $("btn-submit").textContent = "重新提交";
     $("btn-back").style.display = "";
+    // reopen 是已批准工厂的重新编辑，跳过语义不适用
+    $("btn-skip").style.display = "none";
   } else {
     $("badge").textContent = "挂起待审"; $("badge").className = "";
     $("btn-submit").textContent = "提交并继续";
     $("btn-back").style.display = "none";
+    $("btn-skip").style.display = "";
     // 加载工厂导航（正常审核模式才需要）
     await loadFactoryList();
   }
@@ -1103,6 +1113,28 @@ function submitReview() {
   $("diff-modal").style.display = "flex";
 }
 
+/* 提交/跳过成功后的公共后继（doSubmit 与 skipFactory 共用）：
+   reopen → 提示+showDone；多工厂循环 → 推进到下一工厂审核包；否则 showDone。
+   verb 用于 toast 文案（"已写入" / "已跳过"）。 */
+async function afterResumeSuccess(data, verb) {
+  if (isReopen) {
+    toast(verb + "：" + (data.message || ""), 4000);
+    showDone(data);
+  } else if (data.status === "pending_human_review") {
+    // 多工厂循环：图在下一个工厂的 Node5 再次挂起
+    toast(verb + "，进入下一工厂审核");
+    payload = data.review_data;
+    initItems();
+    $("tb-factory").textContent = "工厂: " + (payload.factory_name || "-");
+    renderMissingBar(); renderCards(); renderDocSelect();
+    selectCard(0);
+    // 推进到下一工厂后重新计算导航按钮
+    await loadFactoryList();
+  } else {
+    showDone(data);
+  }
+}
+
 async function doSubmit() {
   const btn = $("btn-submit");
   btn.disabled = true; btn.textContent = isReopen ? "重新提交中…" : "提交中…";
@@ -1135,22 +1167,7 @@ async function doSubmit() {
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
 
-    if (isReopen) {
-      toast(okText + "：" + (data.message || ""), 4000);
-      showDone(data);
-    } else if (data.status === "pending_human_review") {
-      // 多工厂循环：图在下一个工厂的 Node5 再次挂起
-      toast("已写入，进入下一工厂审核");
-      payload = data.review_data;
-      initItems();
-      $("tb-factory").textContent = "工厂: " + (payload.factory_name || "-");
-      renderMissingBar(); renderCards(); renderDocSelect();
-      selectCard(0);
-      // 推进到下一工厂后重新计算导航按钮
-      await loadFactoryList();
-    } else {
-      showDone(data);
-    }
+    await afterResumeSuccess(data, okText);
   } catch (e) {
     toast("提交失败：" + e.message, 4000);
     btn.disabled = false;
@@ -1160,9 +1177,46 @@ async function doSubmit() {
   }
 }
 
+/* 「跳过本工厂」：confirm 确认后以 {skipped:true} resume——Node5 置 Skipped、
+   不做 items 合并；Node6 不写 Excel/不落库，批次照常推进；审计落 factory_skipped。
+   跳过语义明确（整厂不处理），不走改动摘要弹窗。 */
+async function skipFactory() {
+  if (isReopen) return;   // reopen 模式下按钮已隐藏，双保险
+  const btn = $("btn-skip");
+  if (btn.disabled) return;   // 防连点
+  if (!confirm("跳过该工厂？本批次将不写入 Excel、不落库；单据到齐后可用「补充工厂」重新处理。")) {
+    return;
+  }
+  const submitBtn = $("btn-submit");
+  btn.disabled = true;
+  if (submitBtn) submitBtn.disabled = true;   // 跳过请求进行中同时锁主按钮，防并发 resume
+  const origText = btn.textContent;
+  btn.textContent = "跳过中…";
+  try {
+    const r = await fetch(`/api/v1/orders/${encodeURIComponent(threadId)}/resume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approved: false, skipped: true, items: [] }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
+
+    await afterResumeSuccess(data, "已跳过");
+  } catch (e) {
+    toast("跳过失败：" + e.message, 4000);
+    btn.disabled = false;
+  } finally {
+    btn.textContent = origText;
+    // 推进到下一工厂/完成态后由 renderCards→refreshSubmitState 重估主按钮，
+    // 这里仅在仍停留本页面时恢复（失败路径）
+    if (submitBtn && $("badge").className !== "done") refreshSubmitState();
+  }
+}
+
 function showDone(data) {
   $("badge").textContent = isReopen ? "重新编辑已完成" : "已完成"; $("badge").className = "done";
   $("btn-submit").disabled = true;
+  $("btn-skip").disabled = true;
   $("btn-back").style.display = "";
   // 完成后仍可返回上一工厂（如果有）
   updateNavButtons();

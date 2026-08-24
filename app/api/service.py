@@ -772,7 +772,7 @@ def resume_order(thread_id: str, resume_data: dict,
                         "thread_id": thread_id,
                         "review_data": payload,
                     }
-                    _write_audit(prepared, result.get("status"))
+                    _write_audit(prepared, _audit_result_status(prepared, result))
                     return result
         except Exception as e:  # noqa: BLE001
             _write_batch_state(thread_id, "error", error=str(e))
@@ -786,7 +786,7 @@ def resume_order(thread_id: str, resume_data: dict,
             "final_validation_status": final.values.get("validation_status"),
             "final_output_path": final.values.get("final_output_path"),
         }
-        _write_audit(prepared, result.get("status"))
+        _write_audit(prepared, _audit_result_status(prepared, result))
         return result
 
 
@@ -2004,20 +2004,7 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
     pending = set(values.get("pending_factories") or [])
     current = (values.get("current_factory_data") or {}).get("factory_name")
 
-    factories = []
-    for name in sorted(total_set):
-        if name == current and snap.next:
-            role = "current"
-        elif name in pending:
-            role = "pending"
-        else:
-            role = "done"
-        factories.append({
-            "factory": name,
-            "role": role,
-            "session": _load_factory_session(thread_id, name),
-        })
-
+    # 审计先行：factories[] 的 skipped 角色判定依赖每厂最新一条 review_audit
     with get_session() as session:
         audit_rows = session.scalars(
             select(ReviewAudit)
@@ -2033,6 +2020,33 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
             "new_skus": json.loads(r.new_skus_json or "[]"),
             "result_status": r.result_status,
         } for r in audit_rows]
+
+    # 每厂最新一条审计（audit_id 升序遍历，后者覆盖前者；一次查询不 N+1）。
+    # 最新一条是 factory_skipped 即视为「已跳过」——若之后经「补充工厂」重审通过，
+    # 会更晚的 approved=true 行成为最新一条，角色自然回到 done
+    latest_audit: dict[str, Any] = {}
+    for r in audit_rows:
+        if r.factory_name:
+            latest_audit[r.factory_name] = r
+
+    factories = []
+    for name in sorted(total_set):
+        if name == current and snap.next:
+            role = "current"
+        elif name in pending:
+            role = "pending"
+        else:
+            last = latest_audit.get(name)
+            if (last is not None and last.result_status == "factory_skipped"
+                    and not last.approved):
+                role = "skipped"
+            else:
+                role = "done"
+        factories.append({
+            "factory": name,
+            "role": role,
+            "session": _load_factory_session(thread_id, name),
+        })
 
     detail.update({
         "downstream_file_path": values.get("downstream_file_path"),
@@ -2497,10 +2511,23 @@ def _prepare_audit(thread_id: str, resume_data: dict) -> dict[str, Any] | None:
         "thread_id": thread_id,
         "factory_name": payload.get("factory_name"),
         "approved": bool((resume_data or {}).get("approved", False)),
+        # 「跳过本工厂」标记：resume_order 据此把 result_status 落为 factory_skipped
+        # （approved 保持 False，天然不误计入"已处理"档位）
+        "skipped": bool((resume_data or {}).get("skipped")),
         "edited_count": edited_count,
         "changes": changes,
         "new_skus": new_skus,
     }
+
+
+def _audit_result_status(prepared: dict[str, Any] | None,
+                         result: dict[str, Any]) -> str | None:
+    """resume 审计的 result_status：「跳过本工厂」固化为 factory_skipped
+    （approved=False + result_status=factory_skipped 是批次详情页 skipped 徽章、
+    以及后续「补充工厂」判定的权威留痕）；其余沿用图执行结果。"""
+    if prepared and prepared.get("skipped"):
+        return "factory_skipped"
+    return result.get("status")
 
 
 def _write_audit(prepared: dict[str, Any] | None, result_status: str | None) -> None:

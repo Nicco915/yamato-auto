@@ -7,6 +7,9 @@
 resume 数据约定：
 {
   "approved": true/false,
+  "skipped": true/false,   # 为真时跳过本工厂：不做 items 合并，
+                           # validation_status 置 Skipped（Node6 不写 Excel/不落库），
+                           # 批次照常推进；之后可经「补充工厂」重新处理
   "items": [ ... 与 payload 中 items 同构（可修改 extracted_data 数值，
              新 SKU 必须补齐 name_cn / hs_code / inspection_required；
              SKU 改名的项必须携带 orig_sku=改名前的 sku） ... ]
@@ -258,6 +261,14 @@ def human_review(state: AgentState) -> dict:
 
     if not isinstance(human_feedback, dict):
         human_feedback = {"approved": False, "items": []}
+
+    # ---- 跳过本工厂：不做 items 合并，calculated_items 原样保留 ----
+    # Node6 只对 Approved 写入，Skipped 天然不进 Excel/主库/factory_outputs；
+    # 审计由 service 层落 factory_skipped；路由与 Rejected 同一条边，批次照常完成
+    if human_feedback.get("skipped"):
+        logger.info("[Node5] 人工跳过：工厂「%s」本批次不处理（不写 Excel、不落库）",
+                    cur.get('factory_name'))
+        return {"current_factory_data": cur, "validation_status": "Skipped"}
 
     approved = bool(human_feedback.get("approved", False))
     human_items = human_feedback.get("items") or []
