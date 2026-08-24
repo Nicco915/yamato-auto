@@ -165,3 +165,49 @@ app/data/backups/20260824_165007/
 
 如需把这些近似品名也关联到当前短名，请告诉我，我再执行一轮补充。
 
+---
+
+# 正向同步排查记录
+
+- **日期**: 2026-08-24
+- **问题**: 补充 `product_mappings` 后，对应的 `factory_skus` 没有自动正向填写。
+
+## 原因
+
+`sync_mapping_to_sku`（正向同步：product_mappings → factory_skus）当前只在两个入口被调用：
+
+1. `PUT /api/v1/mappings/products/{id}`（`/mappings` 页手动编辑映射后保存）
+2. 调度 Agent 的 `upsert_product_mapping` 工具
+
+`scripts/supplement_sku_mappings.py` 在直接插入 `product_mappings` 行时**没有调用** `sync_mapping_to_sku`，所以 `factory_skus` 未被回填。
+
+## 修复
+
+1. 修改 `scripts/supplement_sku_mappings.py`：每插入一条 SKU 级映射后立即调用 `sync_mapping_to_sku`。
+2. 新增 `scripts/sync_mappings_to_skus.py`：批量把当前所有 `sku_code` 非空的映射行正向同步到 SKU 主数据。
+
+## 执行结果
+
+```bash
+YAMATO_ALLOW_DESTRUCTIVE=1 python3 scripts/sync_mappings_to_skus.py
+```
+
+输出：
+
+```text
+映射行数: 44
+更新 SKU 主数据行数: 28
+```
+
+## 说明
+
+44 条 SKU 级映射中，只有 **28** 个 SKU 在 `factory_skus` 表中已有记录，因此被回填了 `name_cn` / `hs_code` / `inspection_required`。
+
+剩余 **16** 个 SKU 在 `factory_skus` 中尚不存在，同步脚本不会自动创建新 SKU 行，因为：
+
+- `factory_skus.factory_id` 是非空字段；
+- 当前 `product_mappings.factory_id` 为 `NULL`（初始导入未关联工厂）；
+- 这些 SKU 通常会在后续提取流水线中，根据上游工厂单据自动创建（`factory_skus` 由 Node4 `compute_align` 写入）。
+
+如果需要现在就创建这 16 条缺失的 SKU 主数据，需要额外提供它们所属的工厂。
+
