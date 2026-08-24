@@ -779,10 +779,11 @@ def update_sku(sku_id: int, req: SkuUpsert):
             )
             setattr(k, field, new)
             audited.append(field)
-        # 反向打通：品名/税号/商检变了才回填映射表（与正向 sync 对称的三个字段）
+        # 反向打通：品名/英文品名/税号/商检变了才回填映射表（与正向 sync 对称的字段）
         synced = sync_sku_to_mapping(
             s, k,
             sync_name="name_cn" in audited,
+            sync_name_en="name_en" in audited,
             sync_hs="hs_code" in audited,
             sync_inspection="inspection_required" in audited,
         )
