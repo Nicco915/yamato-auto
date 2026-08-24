@@ -21,6 +21,10 @@
   #g-members { width: 100%; font-family: var(--font); }
   .col-actions { white-space: nowrap; }
   .col-actions .btn { margin-right: 6px; }
+  /* 可排序表头 */
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--primary, #2563eb); }
+  th.sortable .sort-arrow { font-size: 10px; color: var(--primary, #2563eb); }
 </style>
 </head>
 <body>
@@ -47,8 +51,9 @@
   <!-- 产品映射 Tab -->
   <div id="pane-products">
     <div class="mp-toolbar">
-      <input id="p-q" type="text" placeholder="搜索品名 / 税号 / 供应商" onkeydown="if(event.key==='Enter')loadProducts()">
+      <input id="p-q" type="text" placeholder="搜索品名 / 税号 / 供应商 / SKU" onkeydown="if(event.key==='Enter')loadProducts()">
       <button class="btn" onclick="loadProducts()">搜索</button>
+      <button class="btn" onclick="resetProductSearch()">重置</button>
       <label class="mp-check">
         <input id="p-incomplete" type="checkbox" onchange="loadProducts()"> 只看待完善
       </label>
@@ -64,13 +69,13 @@
         <thead>
           <tr>
             <th class="col-check"><input type="checkbox" id="product-check-all"></th>
-            <th>品名</th>
-            <th>税号</th>
-            <th>供应商</th>
-            <th>商检</th>
-            <th>英文品名</th>
-            <th>单位代码</th>
-            <th>SKU</th>
+            <th class="sortable" data-sort="product_name_cn" onclick="toggleProductSort('product_name_cn')">品名<span class="sort-arrow"></span></th>
+            <th class="sortable" data-sort="hs_code" onclick="toggleProductSort('hs_code')">税号<span class="sort-arrow"></span></th>
+            <th class="sortable" data-sort="supplier_name" onclick="toggleProductSort('supplier_name')">供应商<span class="sort-arrow"></span></th>
+            <th class="sortable" data-sort="inspection_required" onclick="toggleProductSort('inspection_required')">商检<span class="sort-arrow"></span></th>
+            <th class="sortable" data-sort="name_en" onclick="toggleProductSort('name_en')">英文品名<span class="sort-arrow"></span></th>
+            <th class="sortable" data-sort="unit_code" onclick="toggleProductSort('unit_code')">单位代码<span class="sort-arrow"></span></th>
+            <th class="sortable" data-sort="sku_code" onclick="toggleProductSort('sku_code')">SKU<span class="sort-arrow"></span></th>
             <th>操作</th>
           </tr>
         </thead>
@@ -117,6 +122,7 @@
       </select>
       <input id="s-q" type="text" placeholder="搜索 SKU / 品名" onkeydown="if(event.key==='Enter')loadSkus()">
       <button class="btn" onclick="loadSkus()">搜索</button>
+      <button class="btn" onclick="resetSkuSearch()">重置</button>
       <span class="spacer"></span>
       <button id="sku-bulk-del" class="bulk-btn" disabled onclick="openBulkDeleteSkuModal()">🗑 批量删除</button>
       <span id="sku-bulk-count" class="bulk-count"></span>
@@ -127,13 +133,13 @@
         <thead>
           <tr>
             <th class="col-check"><input type="checkbox" id="sku-check-all"></th>
-            <th>SKU</th>
-            <th>中文品名</th>
-            <th>英文品名</th>
-            <th>税号</th>
-            <th>商检</th>
-            <th>单件净重</th>
-            <th>单件毛重</th>
+            <th class="sortable" data-sort="sku_code" onclick="toggleSkuSort('sku_code')">SKU<span class="sort-arrow"></span></th>
+            <th class="sortable" data-sort="name_cn" onclick="toggleSkuSort('name_cn')">中文品名<span class="sort-arrow"></span></th>
+            <th class="sortable" data-sort="name_en" onclick="toggleSkuSort('name_en')">英文品名<span class="sort-arrow"></span></th>
+            <th class="sortable" data-sort="hs_code" onclick="toggleSkuSort('hs_code')">税号<span class="sort-arrow"></span></th>
+            <th class="sortable" data-sort="inspection_required" onclick="toggleSkuSort('inspection_required')">商检<span class="sort-arrow"></span></th>
+            <th class="sortable" data-sort="unit_net_weight" onclick="toggleSkuSort('unit_net_weight')">单件净重<span class="sort-arrow"></span></th>
+            <th class="sortable" data-sort="unit_gross_weight" onclick="toggleSkuSort('unit_gross_weight')">单件毛重<span class="sort-arrow"></span></th>
             <th>操作</th>
           </tr>
         </thead>

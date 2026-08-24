@@ -16,6 +16,73 @@ var editingGroupId = null;        // null=新增
 var editingFactoryId = null;      // null=新增
 var editingSkuId = null;          // SKU 主数据仅编辑
 
+/* ---------- 表头排序（前端排序：列表全量在内存，无分页） ---------- */
+var productSort = { key: null, asc: true };
+var skuSort = { key: null, asc: true };
+
+function _isEmptyVal(v) { return v === null || v === undefined || v === ""; }
+
+/* 类型感知比较：布尔 → 纯数字（SKU/重量）→ 字符串（中文按拼音） */
+function _compareVal(a, b) {
+    if (typeof a === "boolean" && typeof b === "boolean") {
+        return a === b ? 0 : (a ? 1 : -1);
+    }
+    var numRe = /^-?\d+(\.\d+)?$/;
+    var an = typeof a === "number" ? a : (typeof a === "string" && numRe.test(a) ? parseFloat(a) : null);
+    var bn = typeof b === "number" ? b : (typeof b === "string" && numRe.test(b) ? parseFloat(b) : null);
+    if (an !== null && bn !== null) return an - bn;
+    return String(a).localeCompare(String(b), "zh-Hans-CN");
+}
+
+/* 空值永远排最后（不受升降序影响） */
+function sortRows(rows, sort) {
+    if (!sort.key) return rows;
+    var dir = sort.asc ? 1 : -1;
+    return rows.slice().sort(function (x, y) {
+        var ex = _isEmptyVal(x[sort.key]), ey = _isEmptyVal(y[sort.key]);
+        if (ex && ey) return 0;
+        if (ex) return 1;
+        if (ey) return -1;
+        return _compareVal(x[sort.key], y[sort.key]) * dir;
+    });
+}
+
+/* 点击同一列切换升/降序；换列回到升序 */
+function _toggleSort(sort, key) {
+    if (sort.key === key) {
+        sort.asc = !sort.asc;
+    } else {
+        sort.key = key;
+        sort.asc = true;
+    }
+}
+
+function toggleProductSort(key) { _toggleSort(productSort, key); renderProducts(); }
+function toggleSkuSort(key) { _toggleSort(skuSort, key); renderSkus(); }
+
+/* 渲染后刷新表头箭头（▲ 升序 / ▼ 降序） */
+function _updateSortArrows(paneId, sort) {
+    var ths = document.querySelectorAll("#" + paneId + " th.sortable");
+    ths.forEach(function (th) {
+        var arrow = th.querySelector(".sort-arrow");
+        if (!arrow) return;
+        arrow.textContent = th.getAttribute("data-sort") === sort.key ? (sort.asc ? " ▲" : " ▼") : "";
+    });
+}
+
+/* 搜索重置：清空条件并重新加载 */
+function resetProductSearch() {
+    document.getElementById("p-q").value = "";
+    document.getElementById("p-incomplete").checked = false;
+    loadProducts();
+}
+
+function resetSkuSearch() {
+    document.getElementById("s-q").value = "";
+    document.getElementById("s-factory").value = "";
+    loadSkus();
+}
+
 /* ---------- 初始化 ---------- */
 function init() {
     renderTopbar("mappings");  // 链接表已含主数据维护，直接高亮
@@ -69,7 +136,7 @@ function renderProducts() {
         tbody.innerHTML = '<tr><td colspan="9" class="empty">暂无数据</td></tr>';
         return;
     }
-    tbody.innerHTML = products.map(function (m) {
+    tbody.innerHTML = sortRows(products, productSort).map(function (m) {
         var rowCls = m.is_incomplete ? ' class="row-incomplete"' : "";
         var sj = m.inspection_required ? '<span class="sj-mark">✓</span>' : "";
         var dash = function (v) { return v ? esc(v) : '<span class="muted">-</span>'; };
@@ -88,6 +155,7 @@ function renderProducts() {
             + "</td></tr>";
     }).join("");
     if (window._productBulkSel) window._productBulkSel.refresh();
+    _updateSortArrows("pane-products", productSort);
 }
 
 function openProductModal(id) {
@@ -756,7 +824,7 @@ function renderSkus() {
         return;
     }
     var dash = function (v) { return (v !== null && v !== undefined && v !== "") ? esc(v) : '<span class="muted">-</span>'; };
-    tbody.innerHTML = skus.map(function (k) {
+    tbody.innerHTML = sortRows(skus, skuSort).map(function (k) {
         var sj = k.inspection_required ? '<span class="sj-mark">✓</span>' : "";
         return "<tr>"
             + '<td class="col-check"><input type="checkbox" class="sku-row-check" value="' + k.sku_id + '"></td>'
@@ -774,6 +842,7 @@ function renderSkus() {
             + "</tr>";
     }).join("");
     if (window._skuBulkSel) window._skuBulkSel.refresh();
+    _updateSortArrows("pane-skus", skuSort);
 }
 
 function openSkuModal(skuId) {

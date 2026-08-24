@@ -166,7 +166,7 @@ def list_products(
     q: Optional[str] = Query(default=None),
     incomplete: bool = Query(default=False),
 ):
-    """映射列表：q 模糊搜品名/税号/供应商；incomplete=true 只看待完善。"""
+    """映射列表：q 模糊搜品名/税号/供应商/SKU；incomplete=true 只看待完善。"""
     with get_session() as s:
         query = s.query(ProductMapping)
         if q and q.strip():
@@ -175,6 +175,7 @@ def list_products(
                 (ProductMapping.product_name_cn.like(like))
                 | (ProductMapping.hs_code.like(like))
                 | (ProductMapping.supplier_name.like(like))
+                | (ProductMapping.sku_code.like(like))
             )
         if incomplete:
             query = query.filter(ProductMapping.is_incomplete.is_(True))

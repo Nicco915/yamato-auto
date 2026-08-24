@@ -240,3 +240,25 @@ def test_forward_sync_still_works():
         assert k.name_cn == "映射侧改名"
         assert k.hs_code == "2222222222"
         assert k.inspection_required is True
+
+
+# ---------------------------------------------------------------------------
+# 列表搜索：list_products 支持按 SKU 模糊搜（2026-08-12 加入）
+# ---------------------------------------------------------------------------
+
+
+def test_list_products_search_by_sku():
+    """q 为 SKU 片段时应命中 sku_code 列。"""
+    sku = _new_sku()
+    _seed(sku=sku)
+    r = client.get(f"/api/v1/mappings/products?q={sku[3:10]}")
+    assert r.status_code == 200, r.text
+    hits = [m for m in r.json() if m["sku_code"] == sku]
+    assert len(hits) >= 1
+
+
+def test_list_products_search_no_hit():
+    """q 不匹配任何字段时返回空（ sku 列加入搜索不破坏原有语义）。"""
+    r = client.get("/api/v1/mappings/products?q=绝不存在的关键词xyz123")
+    assert r.status_code == 200, r.text
+    assert r.json() == []
