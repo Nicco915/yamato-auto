@@ -28,9 +28,9 @@ from app.declare.aggregator import aggregate_ticket, rows_for_ticket
 from app.declare.mapping import build_mapping_index
 from app.factory_match import load_excel_normalize_map, load_inspection_factories
 from app.declare.naming import (
-    PORT_MAP,
     declaration_filename,
     format_onboard,
+    get_port_info,
     ticket_title,
 )
 from app.declare.template_filler import fill_declaration
@@ -172,9 +172,10 @@ def generate_declarations(split_thread_id: str, invoice_number: str) -> dict:
         by_port.setdefault(d.port, []).append(d)
 
     for port, port_decls in by_port.items():
-        if port not in PORT_MAP:
-            raise ValueError(f"未知港口：{port!r}")
-        invoice_no = f"YIL{PORT_MAP[port]['inv']}{invoice_number}"
+        # 港口解析走 DB 权威源（主数据维护 → 港口）；未知港口报错，
+        # 错误消息附主数据维护登记引导（不再读硬编码映射表）
+        port_info = get_port_info(port)
+        invoice_no = f"YIL{port_info['inv']}{invoice_number}"
         for idx, d in enumerate(port_decls):
             ticket = Ticket(
                 ticket_no=d.ticket_no,
@@ -196,7 +197,7 @@ def generate_declarations(split_thread_id: str, invoice_number: str) -> dict:
                 ticket_name=ticket_title(port, idx),
                 invoice_no=invoice_no,
                 onboard=onboard,
-                port_to_en=PORT_MAP[port]["en"],
+                port_to_en=port_info["en"],
                 set_subtotal=res.set_subtotal,
                 rows=res.rows,
             )

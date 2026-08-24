@@ -12,6 +12,7 @@ from app.declare.naming import (
     PORT_MAP,
     declaration_filename,
     format_onboard,
+    get_port_info,
     ticket_letter,
     ticket_title,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "declaration_filename",
     "fill_declaration",
     "format_onboard",
+    "get_port_info",
     "lookup",
     "rows_for_ticket",
     "ticket_letter",

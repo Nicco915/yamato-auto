@@ -6,15 +6,17 @@
    ============================================================ */
 
 /* ---------- 全局状态 ---------- */
-var activeTab = "products";       // products | groups | factories | skus
+var activeTab = "products";       // products | groups | factories | skus | ports
 var products = [];                // 产品映射列表缓存
 var groups = [];                  // 品名组列表缓存
 var factories = [];               // 工厂列表缓存（含别名）
 var skus = [];                    // SKU 主数据列表缓存
+var ports = [];                   // 港口列表缓存
 var editingProductId = null;      // null=新增
 var editingGroupId = null;        // null=新增
 var editingFactoryId = null;      // null=新增
 var editingSkuId = null;          // SKU 主数据仅编辑
+var editingPortId = null;         // null=新增港口
 
 /* ---------- 表头排序（前端排序：列表全量在内存，无分页） ---------- */
 var productSort = { key: null, asc: true };
@@ -95,7 +97,7 @@ function init() {
 /* ---------- Tab 切换 ---------- */
 function switchTab(tab) {
     activeTab = tab;
-    var tabs = ["products", "groups", "factories", "skus"];
+    var tabs = ["products", "groups", "factories", "skus", "ports"];
     tabs.forEach(function (t) {
         document.getElementById("tab-" + t).className = "port-tab" + (tab === t ? " active" : "");
         document.getElementById("pane-" + t).style.display = tab === t ? "" : "none";
@@ -108,6 +110,7 @@ function switchTab(tab) {
     if (tab === "groups") loadGroups();
     if (tab === "factories") loadFactories();
     if (tab === "skus") loadSkus();
+    if (tab === "ports") loadPorts();
 }
 
 /* ============================================================
@@ -965,6 +968,110 @@ function openBulkDeleteSkuModal() {
     });
 }
 
+/* ============================================================
+   港口主数据
+   ============================================================ */
+
+async function loadPorts() {
+    try {
+        ports = await api("/api/v1/mappings/ports");
+        renderPorts();
+    } catch (e) {
+        toast("港口列表加载失败：" + e.message, 4000);
+        document.getElementById("port-tbody").innerHTML =
+            '<tr><td colspan="5" class="empty">加载失败</td></tr>';
+    }
+}
+
+function renderPorts() {
+    var tbody = document.getElementById("port-tbody");
+    document.getElementById("port-count").textContent =
+        ports && ports.length ? "共 " + ports.length + " 个港口" : "";
+    if (!ports || ports.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">暂无港口，点右上角「新增港口」登记</td></tr>';
+        return;
+    }
+    tbody.innerHTML = ports.map(function (p) {
+        return "<tr>"
+            + "<td><strong>" + esc(p.port_jp) + "</strong></td>"
+            + "<td>" + esc(p.name_cn) + "</td>"
+            + "<td>" + esc(p.name_en) + "</td>"
+            + '<td class="mono"><strong>' + esc(p.inv_letter) + "</strong></td>"
+            + '<td class="col-actions">'
+            + '<button class="btn btn-sm" onclick="openPortModal(' + p.id + ')">编辑</button>'
+            + '<button class="btn btn-sm" onclick="deletePort(' + p.id + ')">删除</button>'
+            + "</td></tr>";
+    }).join("");
+}
+
+function openPortModal(id) {
+    editingPortId = id;
+    var p = id ? ports.find(function (x) { return x.id === id; }) : null;
+    document.getElementById("ptm-title").textContent = p ? "编辑港口" : "新增港口";
+    document.getElementById("ptm-jp").value = p ? (p.port_jp || "") : "";
+    document.getElementById("ptm-cn").value = p ? (p.name_cn || "") : "";
+    document.getElementById("ptm-en").value = p ? (p.name_en || "") : "";
+    document.getElementById("ptm-letter").value = p ? (p.inv_letter || "") : "";
+    document.getElementById("port-modal").classList.add("show");
+}
+
+function closePortModal() {
+    document.getElementById("port-modal").classList.remove("show");
+    editingPortId = null;
+}
+
+async function savePort() {
+    var portJp = document.getElementById("ptm-jp").value.trim();
+    var nameCn = document.getElementById("ptm-cn").value.trim();
+    var nameEn = document.getElementById("ptm-en").value.trim();
+    var letter = document.getElementById("ptm-letter").value.trim();
+    if (!portJp) { toast("请填写港口原名"); document.getElementById("ptm-jp").focus(); return; }
+    if (!nameCn) { toast("请填写中文名"); document.getElementById("ptm-cn").focus(); return; }
+    if (!nameEn) { toast("请填写英文名"); document.getElementById("ptm-en").focus(); return; }
+    if (!letter) { toast("请填写发票字母"); document.getElementById("ptm-letter").focus(); return; }
+    var body = {
+        port_jp: portJp,
+        name_cn: nameCn,
+        name_en: nameEn,
+        inv_letter: letter,
+    };
+    var btn = document.getElementById("ptm-save");
+    btn.disabled = true;
+    btn.textContent = "保存中…";
+    try {
+        if (editingPortId) {
+            await api("/api/v1/mappings/ports/" + editingPortId, {
+                method: "PUT", body: body
+            });
+        } else {
+            await api("/api/v1/mappings/ports", {
+                method: "POST", body: body
+            });
+        }
+        toast("已保存，立即生效");
+        closePortModal();
+        loadPorts();
+    } catch (e) {
+        toast("保存失败：" + e.message, 4000);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = "保存";
+    }
+}
+
+async function deletePort(id) {
+    var p = ports.find(function (x) { return x.id === id; });
+    var label = p ? p.port_jp : ("id=" + id);
+    if (!confirm("确定删除港口「" + label + "」？删除后该港口的新批次将无法生成报关单（已生成文件不受影响）。")) return;
+    try {
+        await api("/api/v1/mappings/ports/" + id, { method: "DELETE" });
+        toast("已删除");
+        loadPorts();
+    } catch (e) {
+        toast("删除失败：" + e.message, 4000);
+    }
+}
+
 /* ---------- 键盘：Esc 关闭弹窗 ---------- */
 document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
@@ -972,6 +1079,7 @@ document.addEventListener("keydown", function (e) {
     if (document.getElementById("group-modal").classList.contains("show")) closeGroupModal();
     if (document.getElementById("factory-modal").classList.contains("show")) closeFactoryModal();
     if (document.getElementById("sku-modal").classList.contains("show")) closeSkuModal();
+    if (document.getElementById("port-modal").classList.contains("show")) closePortModal();
     var bulkMask = document.getElementById("bulk-delete-mask");
     if (bulkMask && bulkMask.classList.contains("show")) closeBulkDeleteModal();
 });

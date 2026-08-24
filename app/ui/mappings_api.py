@@ -24,20 +24,27 @@
 - POST   /api/v1/mappings/groups/batch-delete     批量删除品名组（含成员）
 - POST   /api/v1/mappings/factories/batch-delete  批量删除工厂（有关联跳过）
 - POST   /api/v1/mappings/skus/batch-delete       批量删除 SKU 主数据
+- GET    /api/v1/mappings/ports             港口列表（首次访问若表空自动种子 5 港）
+- POST   /api/v1/mappings/ports             新增港口
+- PUT    /api/v1/mappings/ports/{id}        编辑港口
+- DELETE /api/v1/mappings/ports/{id}        删除港口（仅影响未来生成）
 """
 
 from __future__ import annotations
 
 import io
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
+from app.declare.naming import ensure_ports_seeded
 from app.db.models import (
     Factory,
     FactoryAlias,
     FactorySKU,
+    Port,
     ProductGroup,
     ProductGroupMember,
     ProductMapping,
@@ -45,6 +52,8 @@ from app.db.models import (
 )
 from app.db.session import get_session
 from app.db.sync import sync_mapping_to_sku, sync_sku_to_mapping
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/mappings", tags=["mappings"])
 
@@ -112,6 +121,15 @@ class SkuUpsert(BaseModel):
 class IdsRequest(BaseModel):
     """批量删除请求：ID 列表。"""
     ids: list[int]
+
+
+class PortUpsert(BaseModel):
+    """港口新增/编辑（编辑为全量字段提交；name_en/inv_letter 服务端归一化大写）。"""
+
+    port_jp: str
+    name_cn: str
+    name_en: str
+    inv_letter: str
 
 
 # ---------------------------------------------------------------------------
@@ -790,3 +808,121 @@ def update_sku(sku_id: int, req: SkuUpsert):
         s.commit()
         s.refresh(k)
         return {**_sku_dict(k), "audited_fields": audited, "synced_mappings": synced}
+
+
+# ---------------------------------------------------------------------------
+# 港口主数据（报关票名/英文名/发票字母；inv_letter 全表唯一）
+# ---------------------------------------------------------------------------
+
+def _port_dict(p: Port) -> dict:
+    return {
+        "id": p.id,
+        "port_jp": p.port_jp,
+        "name_cn": p.name_cn,
+        "name_en": p.name_en,
+        "inv_letter": p.inv_letter,
+        "updated_at": p.updated_at.isoformat(sep=" ") if p.updated_at else None,
+    }
+
+
+def _normalize_port(req: PortUpsert) -> tuple[str, str, str, str]:
+    """字段归一化 + 必填/格式校验。name_en/inv_letter 转大写。"""
+    port_jp = (req.port_jp or "").strip()
+    name_cn = (req.name_cn or "").strip()
+    name_en = (req.name_en or "").strip().upper()
+    inv_letter = (req.inv_letter or "").strip().upper()
+    if not port_jp:
+        raise HTTPException(status_code=400, detail="港口原名不能为空")
+    if not name_cn:
+        raise HTTPException(status_code=400, detail="中文名不能为空")
+    if not name_en:
+        raise HTTPException(status_code=400, detail="英文名不能为空")
+    if len(inv_letter) != 1 or not ("A" <= inv_letter <= "Z"):
+        raise HTTPException(status_code=400, detail="发票字母必须是 A-Z 单字符")
+    return port_jp, name_cn, name_en, inv_letter
+
+
+def _check_inv_letter_free(s, inv_letter: str, exclude_id: Optional[int] = None) -> None:
+    """inv_letter 全表唯一（撞字母会导致发票号串票）。冲突 → 409 说明占用方。"""
+    q = s.query(Port).filter(Port.inv_letter == inv_letter)
+    if exclude_id is not None:
+        q = q.filter(Port.id != exclude_id)
+    dup = q.first()
+    if dup is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"发票字母 {inv_letter} 已被港口「{dup.port_jp}」占用，请换一个字母",
+        )
+
+
+@router.get("/ports")
+def list_ports():
+    """港口列表。首次访问若表空自动把硬编码 5 港种子入库（幂等）。"""
+    ensure_ports_seeded()
+    with get_session() as s:
+        rows = s.query(Port).order_by(Port.id).all()
+        return [_port_dict(p) for p in rows]
+
+
+@router.post("/ports", status_code=201)
+def create_port(req: PortUpsert):
+    """新增港口。port_jp 唯一；inv_letter 全表唯一（冲突 409）。"""
+    port_jp, name_cn, name_en, inv_letter = _normalize_port(req)
+    with get_session() as s:
+        dup = s.query(Port).filter(Port.port_jp == port_jp).first()
+        if dup is not None:
+            raise HTTPException(status_code=400, detail=f"港口已存在: {port_jp} (id={dup.id})")
+        _check_inv_letter_free(s, inv_letter)
+        p = Port(
+            port_jp=port_jp,
+            name_cn=name_cn,
+            name_en=name_en,
+            inv_letter=inv_letter,
+        )
+        s.add(p)
+        s.commit()
+        s.refresh(p)
+        logger.info("港口主数据新增: %s (%s/%s/%s)", port_jp, name_cn, name_en, inv_letter)
+        return _port_dict(p)
+
+
+@router.put("/ports/{port_id}")
+def update_port(port_id: int, req: PortUpsert):
+    """编辑港口：四字段全量提交。保存后立即生效（解析无缓存）。"""
+    port_jp, name_cn, name_en, inv_letter = _normalize_port(req)
+    with get_session() as s:
+        p = s.get(Port, port_id)
+        if p is None:
+            raise HTTPException(status_code=404, detail=f"港口不存在: id={port_id}")
+        dup = (
+            s.query(Port)
+            .filter(Port.port_jp == port_jp, Port.id != port_id)
+            .first()
+        )
+        if dup is not None:
+            raise HTTPException(status_code=400, detail=f"港口原名已被占用: {port_jp} (id={dup.id})")
+        _check_inv_letter_free(s, inv_letter, exclude_id=port_id)
+        old = f"{p.port_jp} ({p.name_cn}/{p.name_en}/{p.inv_letter})"
+        p.port_jp = port_jp
+        p.name_cn = name_cn
+        p.name_en = name_en
+        p.inv_letter = inv_letter
+        s.commit()
+        s.refresh(p)
+        logger.info("港口主数据更新: id=%s %s → %s", port_id, old,
+                    f"{port_jp} ({name_cn}/{name_en}/{inv_letter})")
+        return _port_dict(p)
+
+
+@router.delete("/ports/{port_id}")
+def delete_port(port_id: int):
+    """删除港口。不查引用——影响仅限未来生成（已生成的文件不受影响）。"""
+    with get_session() as s:
+        p = s.get(Port, port_id)
+        if p is None:
+            raise HTTPException(status_code=404, detail=f"港口不存在: id={port_id}")
+        label = p.port_jp
+        s.delete(p)
+        s.commit()
+        logger.info("港口主数据删除: %s (id=%s)", label, port_id)
+        return {"deleted": port_id}

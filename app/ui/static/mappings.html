@@ -46,6 +46,7 @@
     <button class="port-tab" id="tab-groups" onclick="switchTab('groups')">品名组</button>
     <button class="port-tab" id="tab-factories" onclick="switchTab('factories')">工厂与别名</button>
     <button class="port-tab" id="tab-skus" onclick="switchTab('skus')">SKU 主数据</button>
+    <button class="port-tab" id="tab-ports" onclick="switchTab('ports')">港口</button>
   </div>
 
   <!-- 产品映射 Tab -->
@@ -148,8 +149,33 @@
     </div>
   </div>
 
-</div>
+  <!-- 港口 Tab -->
+  <div id="pane-ports" style="display:none">
+    <div class="mp-toolbar">
+      <span class="muted" id="port-count"></span>
+      <span class="spacer"></span>
+      <button class="btn btn-primary" onclick="openPortModal(null)">新增港口</button>
+    </div>
+    <div class="card">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>港口原名</th>
+            <th>中文名</th>
+            <th>英文名</th>
+            <th>发票字母</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="port-tbody">
+          <tr><td colspan="5" class="empty">加载中…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="member-hint">港口原名对应装箱单上的港口写法（主匹配键）；发票字母用于发票号，全表唯一。新增港口保存后立即生效，无需重启。</p>
+  </div>
 
+</div>
 <!-- 产品映射 编辑/新增 弹窗 -->
 <div id="product-modal" class="modal-mask" onclick="if(event.target===this)closeProductModal()">
   <div class="modal">
@@ -294,6 +320,34 @@
     <div class="modal-actions">
       <button class="btn" onclick="closeSkuModal()">取消</button>
       <button id="sm-save" class="btn btn-primary" onclick="saveSku()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 港口 编辑/新增 弹窗 -->
+<div id="port-modal" class="modal-mask" onclick="if(event.target===this)closePortModal()">
+  <div class="modal">
+    <h3 id="ptm-title">新增港口</h3>
+    <div class="field">
+      <label>港口原名 <span style="color:var(--err)">*</span></label>
+      <input id="ptm-jp" type="text" placeholder="装箱单上的港口写法，如：博多港">
+    </div>
+    <div class="field">
+      <label>中文名 <span style="color:var(--err)">*</span></label>
+      <input id="ptm-cn" type="text" placeholder="票名/文件名用，如：博多（博多A票）">
+    </div>
+    <div class="field">
+      <label>英文名 <span style="color:var(--err)">*</span></label>
+      <input id="ptm-en" type="text" placeholder="报关单英文港口名，如：HAKATA">
+    </div>
+    <div class="field">
+      <label>发票字母 <span style="color:var(--err)">*</span></label>
+      <input id="ptm-letter" type="text" maxlength="1" placeholder="A-Z 单字符，全表唯一">
+    </div>
+    <div class="member-hint">发票字母用于发票号（YIL{字母}{号码段}），全表唯一，撞字母会串票；英文名自动转大写。</div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closePortModal()">取消</button>
+      <button id="ptm-save" class="btn btn-primary" onclick="savePort()">保存</button>
     </div>
   </div>
 </div>

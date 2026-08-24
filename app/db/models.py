@@ -202,6 +202,19 @@ class FactoryAlias(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
+# Port 表——港口主数据（报关票名/文件名中文名、报关单英文名、发票号字母）
+# DB 为权威源，declare/naming.PORT_MAP 硬编码退化为兜底 + 种子来源；
+# inv_letter 全表唯一（撞字母会导致发票号串票）。
+class Port(Base):
+    __tablename__ = 'ports'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    port_jp = Column(String, nullable=False, unique=True)      # 装箱单里的港口原名（主匹配键，如 博多港）
+    name_cn = Column(String, nullable=False)                   # 票名/文件名用中文名（博多 → 博多A票 / 报关博多A.xlsx）
+    name_en = Column(String, nullable=False)                   # 报关单英文港口名（大写，如 HAKATA）
+    inv_letter = Column(String(1), nullable=False, unique=True)  # 发票号字母（YIL{字母}{号码段}），全表唯一
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 # SkuMasterAudit 表——SKU 主数据人工编辑留痕（review_audits 同级）
 # PUT /api/v1/mappings/skus/{id} 时逐字段 diff，每个有变化的字段写一条：
 # 何时（changed_at）/ 哪个 SKU（sku_code）/ 哪个字段（field）/ 旧值 / 新值。
