@@ -8,6 +8,7 @@ PORT_MAP = {
     "名古屋港": {"cn": "名古屋", "en": "NAGOYA",  "inv": "N"},
     "横浜港":   {"cn": "横滨",   "en": "YOKOHAMA", "inv": "Y"},
     "神戸港":   {"cn": "神户",   "en": "KOBE",    "inv": "K"},
+    "博多港":   {"cn": "博多",   "en": "HAKATA",  "inv": "H"},
 }
 
 
