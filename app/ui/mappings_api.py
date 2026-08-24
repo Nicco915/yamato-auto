@@ -19,7 +19,7 @@
 - DELETE /api/v1/mappings/aliases/{alias_id}      删除别名
 - GET    /api/v1/mappings/skus              SKU 主数据列表（?factory_id=&q= 模糊搜 SKU/品名）
 - DELETE /api/v1/mappings/skus/{sku_id}     删除 SKU 主数据
-- PUT    /api/v1/mappings/skus/{sku_id}     编辑 SKU 主数据（逐字段 diff 写 sku_master_audits 留痕）
+- PUT    /api/v1/mappings/skus/{sku_id}     编辑 SKU 主数据（逐字段 diff 写 sku_master_audits 留痕；品名/税号/商检变更反向回填 SKU 级映射）
 - POST   /api/v1/mappings/products/batch-delete   批量删除产品映射
 - POST   /api/v1/mappings/groups/batch-delete     批量删除品名组（含成员）
 - POST   /api/v1/mappings/factories/batch-delete  批量删除工厂（有关联跳过）
@@ -44,7 +44,7 @@ from app.db.models import (
     SkuMasterAudit,
 )
 from app.db.session import get_session
-from app.db.sync import sync_mapping_to_sku
+from app.db.sync import sync_mapping_to_sku, sync_sku_to_mapping
 
 router = APIRouter(prefix="/api/v1/mappings", tags=["mappings"])
 
@@ -744,7 +744,9 @@ def update_sku(sku_id: int, req: SkuUpsert):
     """编辑 SKU 主数据：逐字段 diff，有变化的字段各写一条 sku_master_audits。
 
     单件净重/毛重允许留空（None）：每批次 Node4 重新计算，DB 值仅作比对参考。
-    返回 audited_fields 便于前端提示「已记录留痕」。
+    品名/税号/商检有变化时反向回填 product_mappings 的 SKU 级行
+    （sync_sku_to_mapping，仅 sku_code 精确匹配；品名级行不动）。
+    返回 audited_fields + synced_mappings 便于前端提示。
     """
     with get_session() as s:
         k = s.get(FactorySKU, sku_id)
@@ -776,6 +778,13 @@ def update_sku(sku_id: int, req: SkuUpsert):
             )
             setattr(k, field, new)
             audited.append(field)
+        # 反向打通：品名/税号/商检变了才回填映射表（与正向 sync 对称的三个字段）
+        synced = sync_sku_to_mapping(
+            s, k,
+            sync_name="name_cn" in audited,
+            sync_hs="hs_code" in audited,
+            sync_inspection="inspection_required" in audited,
+        )
         s.commit()
         s.refresh(k)
-        return {**_sku_dict(k), "audited_fields": audited}
+        return {**_sku_dict(k), "audited_fields": audited, "synced_mappings": synced}
