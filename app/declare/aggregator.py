@@ -7,11 +7,10 @@
 行归属规则（与 split/engine.py 保持一致）：
 - 普通整柜票 = 柜内全部行；
 - 半票（is_partial, factory_filter=F）= 柜内 maker==F 的行；
-- 双商检柜拆成两个半票时，柜内普通工厂（非商检）行的归属
-  engine 并未记录在 TicketItem 里（engine._propose_tickets 中
-  maker_counts 算出后未使用），故此处按同一规则重推：
-  普通行并入该柜行数较多的商检方半票；行数并列时并入工厂名
-  排序靠前的一方（与 engine 半票按工厂名排序的输出顺序一致）。
+- 非商检剩余票（is_partial, factory_exclude=[...]）= 柜内 maker 不在
+  排除集内的行。多商检柜拆分时由 engine 追加生成（rule non_sj_remainder），
+  与商检半票互补、无交集，合起来恰好覆盖全柜行。
+  两种过滤互斥（TicketItem 有 model_validator 断言，此处再断言一次）。
 
 金额守恒说明（set_split）：
 - 前 N-1 个组件行 amount = split_price × 套数；
@@ -26,7 +25,7 @@
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -95,24 +94,19 @@ def rows_for_ticket(
             # 普通整柜票：柜内全部行
             rows.extend(cont_rows)
             continue
-        # 半票：maker==factory_filter 的行
-        f = ti.factory_filter
-        sj_in_cont = {r.maker for r in cont_rows if sj_map.get(r.maker, False)}
-        counts = Counter(r.maker for r in cont_rows)
-        # 多数方 = 柜内行数最多的商检工厂；并列取工厂名排序第一
-        # （engine 未在 TicketItem 记录普通行归属，此处按同一规则重推，
-        #   与 split/engine.py 的半票排序规则保持一致）
-        majority = (
-            sorted(sj_in_cont, key=lambda m: (-counts[m], m))[0]
-            if sj_in_cont
-            else None
+        # 半票两种过滤互斥（schema 层已有 validator，这里兜底断言）
+        assert not (ti.factory_filter and ti.factory_exclude), (
+            f"柜 {ti.kanri_no}：factory_filter 与 factory_exclude 互斥"
         )
-        for r in cont_rows:
-            if r.maker == f:
-                rows.append(r)
-            elif r.maker not in sj_in_cont and f == majority:
-                # 双商检柜的普通工厂行并入行数较多的商检方半票
-                rows.append(r)
+        if ti.factory_exclude:
+            # 非商检剩余票：柜内 maker 不在排除集（商检工厂）内的行
+            excluded = set(ti.factory_exclude)
+            rows.extend(r for r in cont_rows if r.maker not in excluded)
+            continue
+        # 商检半票：仅 maker==factory_filter 的行；
+        # 柜内非商检行由 engine 追加的剩余票承载，不在此并入
+        f = ti.factory_filter
+        rows.extend(r for r in cont_rows if r.maker == f)
     return rows
 
 

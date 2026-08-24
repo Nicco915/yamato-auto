@@ -192,13 +192,19 @@ function buildContainerMap(portData) {
             }
             map[k].ticket_refs.push(ti);
 
+            var hasExclude = !!(item.factory_exclude && item.factory_exclude.length);
             if (item.factory_filter === null || item.factory_filter === undefined) {
-                map[k].full_assigned = true;
-                // 全柜：工厂信息来自 ticket.sj_factories（间接推断）
-                var sjs = ticket.sj_factories || [];
-                for (var s = 0; s < sjs.length; s++) {
-                    map[k].factories[sjs[s]] = true;
-                    if (isSJFactory(sjs[s])) map[k].sj_factories[sjs[s]] = true;
+                if (hasExclude) {
+                    // 非商检剩余票：柜内商检工厂之外的行单独成票
+                    map[k].partial_count++;
+                } else {
+                    map[k].full_assigned = true;
+                    // 全柜：工厂信息来自 ticket.sj_factories（间接推断）
+                    var sjs = ticket.sj_factories || [];
+                    for (var s = 0; s < sjs.length; s++) {
+                        map[k].factories[sjs[s]] = true;
+                        if (isSJFactory(sjs[s])) map[k].sj_factories[sjs[s]] = true;
+                    }
                 }
             } else {
                 map[k].factories[item.factory_filter] = true;
@@ -358,7 +364,12 @@ function renderTickets() {
                 var item = items[ii];
                 var partialNote = '';
                 if (item.is_partial) {
-                    partialNote = ' <span class="item-partial-note">（' + esc(item.factory_filter || '') + '部分）</span>';
+                    if (item.factory_filter) {
+                        partialNote = ' <span class="item-partial-note">（' + esc(item.factory_filter) + '部分）</span>';
+                    } else if (item.factory_exclude && item.factory_exclude.length) {
+                        // 非商检剩余票：factory_filter 为空、factory_exclude 非空
+                        partialNote = ' <span class="item-partial-note">（非商检部分）</span>';
+                    }
                 }
                 itemsHtml += '<div class="container-item-in-ticket" draggable="true"'
                     + ' data-ticket-idx="' + ti + '" data-item-idx="' + ii + '"'
@@ -458,6 +469,13 @@ function updateWarningSummary(total) {
 /* ---------- 校验 ---------- */
 function validateTicket(ticket) {
     var w = [];
+    // 保留引擎产出、前端无法重算的警告（如 non_sj_remainder 非商检剩余票）
+    var old = ticket.warnings || [];
+    for (var i = 0; i < old.length; i++) {
+        if (old[i].rule !== 'over_3_full' && old[i].rule !== 'mixed_sj') {
+            w.push(old[i]);
+        }
+    }
     if ((ticket.full_containers || 0) > 3) {
         w.push({ rule: 'over_3_full', message: '票内整柜超过 3 个：' + ticket.full_containers });
     }
@@ -559,12 +577,13 @@ function recalcTicket(ticket) {
 
     for (var i = 0; i < items.length; i++) {
         var item = items[i];
-        if (item.factory_filter === null || item.factory_filter === undefined) {
-            fullContainers++;
-        } else {
-            if (isSJFactory(item.factory_filter)) {
+        if (item.is_partial) {
+            // 半票（商检半票 / 非商检剩余票）不计整柜
+            if (item.factory_filter && isSJFactory(item.factory_filter)) {
                 sjFactories[item.factory_filter] = true;
             }
+        } else {
+            fullContainers++;
         }
     }
 

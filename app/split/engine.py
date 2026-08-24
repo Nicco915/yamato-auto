@@ -130,6 +130,26 @@ def _propose_tickets(
                             ticket_no="",  # to be numbered later
                         )
                     )
+
+                # 柜内还混装非商检工厂时，追加一张「非商检剩余票」——
+                # 否则这些行不进任何票，报关单静默丢失
+                non_sj = sorted(c["makers"] - sj_set)
+                if non_sj:
+                    remainder = _build_remainder_ticket(
+                        kanri_no=c["kanri_no"],
+                        port=port,
+                        container_type=ctype,
+                        factory_exclude=sj_list,
+                        ticket_no="",  # to be numbered later
+                    )
+                    remainder.warnings.append(Warning(
+                        rule="non_sj_remainder",
+                        message=(
+                            f"柜 {c['kanri_no']} 混装非商检工厂"
+                            f"（{'、'.join(non_sj)}），非商检行单独成票"
+                        ),
+                    ))
+                    tickets.append(remainder)
                 continue
 
             # Non-dual-SJ container → whole container, check merge compatibility
@@ -241,6 +261,32 @@ def _build_partial_ticket(
             is_partial=True,
         )],
         sj_factories=[factory_filter],
+        full_containers=0,
+    )
+
+
+def _build_remainder_ticket(
+    kanri_no: str,
+    port: str,
+    container_type: str,
+    factory_exclude: list[str],
+    ticket_no: str,
+) -> Ticket:
+    """Build a remainder Ticket for the non-SJ part of a multi-SJ container.
+
+    factory_exclude 记录被排除的商检工厂（即该柜的全部商检工厂），
+    报关展开时取柜内 maker 不在排除集内的行。sj_factories 恒为空。
+    """
+    return Ticket(
+        ticket_no=ticket_no,
+        port=port,
+        container_type=container_type,
+        items=[TicketItem(
+            kanri_no=kanri_no,
+            factory_exclude=factory_exclude,
+            is_partial=True,
+        )],
+        sj_factories=[],
         full_containers=0,
     )
 

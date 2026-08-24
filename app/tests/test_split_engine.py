@@ -47,6 +47,13 @@ def _count_dual_sj_containers(raw_items):
     return dual
 
 
+def _expected_partial_count(raw_items, kanri_no: str) -> int:
+    """双商检柜的预期半票数：2 张商检半票 + 混装非商检工厂时 1 张剩余票。"""
+    sj_set = {"青島貝来", "Ｃ．正達工芸品"}
+    makers = {item.maker for item in raw_items if item.kanri_no == kanri_no}
+    return len(makers & sj_set) + (1 if makers - sj_set else 0)
+
+
 # ---- Fixture ----
 
 @pytest.fixture(scope="module")
@@ -113,7 +120,7 @@ class TestInvariants:
         )
 
     def test_dual_sj_container_yields_2_partial_tickets(self, proposal, raw_items):
-        """不变量 3：10 双商检柜各产生 2 张 is_partial 票。"""
+        """不变量 3：10 双商检柜各产生 2 张商检半票（混装非商检时再 +1 剩余票）。"""
         dual_containers = _count_dual_sj_containers(raw_items)
         assert len(dual_containers) == 10, (
             f"预期 10 个双商检柜，实际 {len(dual_containers)}: {sorted(dual_containers)}"
@@ -128,13 +135,15 @@ class TestInvariants:
                         partial_appearances[item.kanri_no] += 1
 
         for k in dual_containers:
+            expected = _expected_partial_count(raw_items, k)
             count = partial_appearances.get(k, 0)
-            assert count == 2, (
-                f"双商检柜 {k} 预期 2 张半票，实际 {count}"
+            assert count == expected, (
+                f"双商检柜 {k} 预期 {expected} 张半票，实际 {count}"
             )
 
     def test_all_containers_covered(self, proposal, raw_items):
-        """不变量 5：全部 27 柜无遗漏无重复，双商检柜恰好出现 2 次。"""
+        """不变量 5：全部 27 柜无遗漏无重复；双商检柜出现次数 = 商检半票数
+        （混装非商检工厂时 +1 剩余票）。"""
         # All unique containers in data
         all_kanri = {item.kanri_no for item in raw_items}
         assert len(all_kanri) == 27, (
@@ -151,10 +160,11 @@ class TestInvariants:
                 for item in ticket.items:
                     appearances[item.kanri_no] += 1
 
-        # Check dual-SJ: each appears exactly 2 times
+        # Check dual-SJ: 2 商检半票 +（有非商检行时）1 剩余票
         for k in dual_containers:
-            assert appearances.get(k, 0) == 2, (
-                f"双商检柜 {k} 预期出现 2 次，实际 {appearances.get(k, 0)}"
+            expected = _expected_partial_count(raw_items, k)
+            assert appearances.get(k, 0) == expected, (
+                f"双商检柜 {k} 预期出现 {expected} 次，实际 {appearances.get(k, 0)}"
             )
 
         # Check non-dual-SJ: each appears exactly 1 time

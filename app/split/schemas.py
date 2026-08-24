@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class RawItem(BaseModel):
@@ -31,8 +31,21 @@ class TicketItem(BaseModel):
     """票内的一条——整柜或半柜。"""
 
     kanri_no: str
-    factory_filter: Optional[str] = None  # None=整柜，非空=该半票只含此工厂部分
+    factory_filter: Optional[str] = None  # None=整柜/剩余票，非空=该半票只含此工厂部分
+    # 与 factory_filter 互斥：非空=该半票排除这些工厂（多商检柜的非商检剩余票）。
+    # 追加式字段，旧落库记录无此键即 None，向后兼容。
+    factory_exclude: Optional[list[str]] = None
     is_partial: bool = False
+
+    @model_validator(mode="after")
+    def _filter_exclude_mutex(self) -> "TicketItem":
+        """factory_filter 与 factory_exclude 二选一，不得同时设置。"""
+        if self.factory_filter and self.factory_exclude:
+            raise ValueError(
+                f"柜 {self.kanri_no}：factory_filter 与 factory_exclude 互斥，"
+                "只能设置其一"
+            )
+        return self
 
 
 class Warning(BaseModel):
