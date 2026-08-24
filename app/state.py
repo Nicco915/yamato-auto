@@ -54,7 +54,7 @@ class AgentState(TypedDict, total=False):
     factory_outputs: Dict[str, Any]  # {工厂名: dict | list}
 
     # ----- 人机协同 -----
-    validation_status: str                # Pending / Approved / Rejected
+    validation_status: str                # Pending / Approved / Rejected / Skipped
     # 单厂重试标志：置 True 时 Node3 跳过会话缓存强制重提（service 层
     # retry_factory_extraction 写入）；Node3 消费后必须自清（所有返回分支
     # 的 update 都带 False），防止残留污染后续工厂的提取流程

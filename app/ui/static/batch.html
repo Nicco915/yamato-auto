@@ -117,7 +117,8 @@ var STATUS_MAP = {
 var ROLE_MAP = {
   current: ["当前", "b-blue"],
   pending: ["待处理", "b-gray"],
-  done:    ["已完成", "b-green"]
+  done:    ["已完成", "b-green"],
+  skipped: ["已跳过", "b-gray"]
 };
 var SESS_STATUS_MAP = {
   waiting_pl: "等待箱单",
@@ -159,6 +160,33 @@ async function startSplit() {
     showToast("启动分票失败：" + e.message);
     btn.disabled = false;
     btn.textContent = "开始分票";
+  }
+}
+
+/* ---- 补充工厂：重新解析装箱单，把未处理（新增/跳过/驳回）的工厂补进本批次 ---- */
+async function addFactories() {
+  var btn = document.getElementById("btn-add-factories");
+  if (!confirm("重新解析装箱单，把未处理的工厂补进本批次继续识别？")) return;
+  if (btn) { btn.disabled = true; btn.textContent = "补充识别中…"; }
+  stopPolling();            // 补充可能耗时数十秒，期间暂停轮询避免渲染抖动
+  try {
+    var r = await api("/api/v1/batches/" + encodeURIComponent(threadId) + "/add-factories",
+                      { method: "POST" });
+    r = r || {};
+    if (r.added > 0) {
+      showToast("已补充 " + r.added + " 家工厂：" + (r.factories || []).join("、"));
+    } else {
+      showToast(r.message || "没有待补充的工厂");
+    }
+    // 刷新详情（load 会按新状态恢复轮询；completed → pending_review 时按钮区出现「去审核」）
+    await load();
+    if (r.added > 0 && r.status === "pending_human_review") {
+      showToast("批次已转入待审核，请点击「去审核」继续处理");
+    }
+  } catch (e) {
+    showToast("补充工厂失败：" + (e && e.message ? e.message : e));
+    try { await load(); } catch (e2) {}   // 恢复渲染与轮询（load 会重建按钮）
+    if (btn) { btn.disabled = false; btn.textContent = "补充工厂"; }
   }
 }
 
@@ -244,6 +272,13 @@ function renderHead(d) {
     btns += '<a class="btn lbtn primary" href="/review?thread_id=' + encodeURIComponent(threadId) + '">去审核</a>';
   }
   btns += '<a class="btn lbtn" href="/chat?thread_id=' + encodeURIComponent(threadId) + '">Agent 对话</a>';
+
+  // 补充工厂按钮：completed / pending_review 可点；running 禁用；其他状态不显示
+  if (d.status === "completed" || d.status === "pending_review") {
+    btns += '<button class="btn lbtn" id="btn-add-factories" onclick="addFactories()">补充工厂</button>';
+  } else if (d.status === "running") {
+    btns += '<button class="btn lbtn" disabled title="批次正在运行，待挂起审核或完成后再补充">补充工厂</button>';
+  }
 
   // 分票按钮
   if (splitExists) {
@@ -423,7 +458,12 @@ function renderAudit(d) {
         a = a || {};
         var edited = (a.edited_count != null) ? a.edited_count : ((a.changes || []).length);
         var hasDetail = ((a.changes || []).length + (a.new_skus || []).length) > 0;
-        var res = a.approved ? '<span class="c-green">通过</span>' : '<span class="c-red">未通过</span>';
+        var res;
+        if (a.result_status === "factory_skipped") {
+          res = '<span class="c-gray">跳过</span>';   // 「跳过本工厂」留痕：approved=false，单列文案
+        } else {
+          res = a.approved ? '<span class="c-green">通过</span>' : '<span class="c-red">未通过</span>';
+        }
         var row = "<tr><td>" + _esc(fmtT(a.ts)) + "</td><td>" + _esc(a.factory_name || "-") +
           "</td><td>" + res + "</td><td>" + _esc(edited) + "</td><td>" +
           (hasDetail ? '<button class="btn lbtn audit-toggle" data-idx="' + i + '" style="padding:2px 10px;font-size:12px">展开</button>'

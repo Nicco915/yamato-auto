@@ -30,7 +30,7 @@ from app.db.models import ReviewAudit
 from app.db.session import get_session
 from app.extraction.llm_client import usage_tracker
 from app.extraction.session import SESSIONS_DIR
-from app.graph import NODE2, NODE5, get_graph
+from app.graph import NODE2, NODE4, NODE5, NODE6, get_graph
 from app.logging_config import logging_context
 
 logger = logging.getLogger(__name__)
@@ -332,21 +332,102 @@ def rerun_batch(
     )
 
 
+def _sync_output_copy_rows(
+    batch_id: str,
+    downstream_path: str,
+    factories: set[str],
+    row_map: dict[str, dict[str, list[int]]],
+) -> None:
+    """把装箱单中待补充工厂的行同步进 output 副本（尾部追加式改单场景）。
+
+    writer 按 row_map 的行号写回 output 副本；副本是首次写入时从旧装箱单
+    复制的，若用户之后在装箱单尾部追加了新工厂的行，副本里不存在这些行，
+    直接写会写出无工厂/SKU 的幽灵数据。这里按「同序号行」补齐：
+    - 副本该行的 工厂/SKU 两列皆空 → 按表头名整行拷贝源行各列值
+      （副本多出的 中文品名/净重/毛重 三列留空，待 writer 填）；
+    - 副本该行 工厂/SKU 与源一致 → 已同步，跳过；
+    - 副本该行被其他 工厂/SKU 占用 → 装箱单被中间插入式改动、行号错位，
+      零容错报错并建议改用「完全重跑」（抛出前不落盘，无半同步状态）。
+
+    输出副本不存在（尚无工厂写入）时无需同步——writer 首次写入会从当前
+    装箱单全新复制。
+    """
+    if not factories:
+        return
+    settings = get_settings()
+    src = Path(downstream_path)
+    dst = settings.batch_containers_dir(batch_id) / f"{src.stem}_filled{src.suffix}"
+    if not dst.exists():
+        return
+
+    wb_src = load_workbook(src)
+    ws_src = wb_src[wb_src.sheetnames[0]]
+    wb_dst = load_workbook(dst)
+    ws_dst = wb_dst[wb_dst.sheetnames[0]]
+
+    src_header = [c.value for c in ws_src[1]]
+    dst_header = [c.value for c in ws_dst[1]]
+    # 按表头名映射 源列 → 副本列（列位可能因三列插入而右移，绝不按列号硬拷）
+    col_pairs = [(i + 1, dst_header.index(name) + 1)
+                 for i, name in enumerate(src_header) if name in dst_header]
+    col_factory_src = src_header.index(settings.col_factory) + 1
+    col_sku_src = src_header.index(settings.col_sku) + 1
+    col_factory_dst = dst_header.index(settings.col_factory) + 1
+    col_sku_dst = dst_header.index(settings.col_sku) + 1
+
+    synced = 0
+    conflicts: list[str] = []
+    for factory in sorted(factories):
+        for sku, rows in (row_map.get(factory) or {}).items():
+            for r in rows:
+                f_val = ws_dst.cell(row=r, column=col_factory_dst).value
+                s_val = ws_dst.cell(row=r, column=col_sku_dst).value
+                if f_val in (None, "") and s_val in (None, ""):
+                    for c_src, c_dst in col_pairs:
+                        ws_dst.cell(row=r, column=c_dst,
+                                    value=ws_src.cell(row=r, column=c_src).value)
+                    synced += 1
+                elif str(f_val).strip() == factory and str(s_val).strip() == sku:
+                    continue  # 已同步（如同一批次重复补充）
+                else:
+                    conflicts.append(
+                        f"行{r}: 副本已有「{f_val}/{s_val}」，装箱单为「{factory}/{sku}」")
+    if conflicts:
+        raise ValueError(
+            "装箱单被中间插入式改动，行号与输出副本错位，无法安全补充工厂"
+            f"（{'; '.join(conflicts[:3])}），请改用「完全重跑」")
+    if synced:
+        wb_dst.save(dst)
+        logger.info("[补充工厂] 已向输出副本同步 %d 行（%s）", synced, dst)
+
+
 def add_factories_to_batch(
     batch_id: str,
     on_progress: Callable[[dict], None] | None = None,
 ) -> dict[str, Any]:
-    """补充工厂：重新解析装箱单，增量合并 pending_factories，继续执行。
+    """补充工厂：重新解析装箱单，把「未写入」的工厂补进本批次继续处理。
 
-    Args:
-        batch_id: 批次号
-        on_progress: 进度回调
+    待补充工厂 = 装箱单工厂全集 − factory_outputs.keys()（已 approve 写入的）。
+    装箱单新增的、被「跳过本工厂」的、被驳回的工厂都能补进来；已写入的绝不重复。
+
+    续跑语义（langgraph 1.2.9 实测）：
+    - completed（next 为空）：update_state(as_node=NODE6) 让 Node6 条件边
+      _route_after_writer 重新路由（pending 非空 → NODE2），stream(None) 续跑
+      到下一个 Node5 挂起；Node6 本身不重跑，已写入工厂不会重复写；
+    - pending_review（挂在 Node5 interrupt）：update_state 无论 as_node 是什么
+      都会销毁 interrupt 任务，且销毁后直接 resume 会让当前工厂静默跳过写入
+      （validation_status 残留 Pending）。因此用 as_node=NODE4 重定向
+      （条件边重新路由回 NODE5）+ stream(None) 立即重挂起——Node5 用未变的
+      current_factory_data 重建等价 payload 再次 interrupt，审核页刷新后照常
+      审核，当前工厂不丢；
+    - running（next 非空且无 interrupt）：RuntimeError（路由层转 409）稍后再试。
 
     Returns:
-        {"added": int, "factories": [...], "status": "..."}
+        {"added": int, "factories": [...], "status": ..., "message": ...?}
 
     Raises:
-        ValueError: 批次不存在或无新工厂
+        ValueError: 批次不存在 / 装箱单解析失败 / 装箱单行号与输出副本错位
+        RuntimeError: 批次正在运行中
     """
     from app.nodes.parse_downstream import parse_downstream_file
 
@@ -354,8 +435,13 @@ def add_factories_to_batch(
     if config is None:
         raise ValueError(f"批次不存在: {batch_id}")
 
-    # 解析装箱单
-    new_requirements, new_row_map = parse_downstream_file(config["downstream_file_path"])
+    # 重新解析装箱单（用户可能已编辑：新增工厂/调整行）
+    try:
+        new_requirements, new_row_map = parse_downstream_file(
+            config["downstream_file_path"])
+    except Exception as e:  # noqa: BLE001 解析失败统一转 ValueError（路由 400）
+        raise ValueError(
+            f"装箱单解析失败，无法补充工厂: {type(e).__name__}: {e}") from e
 
     # 读取当前 checkpoint state
     graph = get_graph()
@@ -364,40 +450,93 @@ def add_factories_to_batch(
     if not snap.values:
         raise ValueError(f"批次 {batch_id} 无 checkpoint state")
 
-    existing_requirements = snap.values.get("downstream_requirements", {})
-    existing_row_map = snap.values.get("downstream_row_map", {})
+    values = snap.values
+    has_interrupt = any(t.interrupts for t in snap.tasks)
+    if snap.next and not has_interrupt:
+        raise RuntimeError(
+            f"批次 {batch_id} 正在运行中，请待其挂起审核或完成后再补充工厂")
 
-    # 找新工厂
-    new_factories = set(new_requirements.keys()) - set(existing_requirements.keys())
-    if not new_factories:
-        return {"added": 0, "factories": [], "message": "没有新工厂"}
+    # 待补充 = 装箱单全集 − 已写入（factory_outputs 只有 Approved 工厂才进）
+    done = set((values.get("factory_outputs") or {}).keys())
+    to_add = [f for f in new_requirements if f not in done]
 
-    # 合并
-    merged_requirements = {**existing_requirements, **{k: new_requirements[k] for k in new_factories}}
-    merged_row_map = {**existing_row_map, **{k: new_row_map[k] for k in new_factories}}
-    merged_pending = list(snap.values.get("pending_factories", [])) + list(new_factories)
+    # pending 去重：已在主队列 / 暂缓队列的不重复加；挂起中的当前工厂
+    # （仅 pending_review 时有意义——completed 的 current 是上一轮的残留，
+    # 若它当时被跳过则仍属待补充）不重复加
+    existing_pending = list(values.get("pending_factories") or [])
+    queued = set(existing_pending)
+    deferred_names = {d.get("factory_name")
+                      for d in (values.get("deferred_factories") or [])}
+    current_name = ((values.get("current_factory_data") or {}).get("factory_name")
+                    if has_interrupt else None)
+    added = [f for f in to_add
+             if f not in queued and f not in deferred_names and f != current_name]
 
-    # 更新 state
-    graph.update_state(
-        cfg,
-        {
-            "downstream_requirements": merged_requirements,
-            "downstream_row_map": merged_row_map,
-            "pending_factories": merged_pending,
-        },
-        as_node=NODE2,
-    )
+    if not added:
+        return {"added": 0, "factories": [], "message": "没有待补充的工厂"}
 
-    # 继续执行
-    for event in graph.stream(None, cfg, stream_mode="updates"):
-        pass  # 进度回调可选
+    # 对待补充工厂用新解析值覆盖 requirements/row_map（装箱单可能改过）；
+    # 已写入工厂与挂起中的当前工厂保持原值不动
+    refresh = set(to_add) - {current_name}
+    merged_requirements = dict(values.get("downstream_requirements") or {})
+    merged_row_map = dict(values.get("downstream_row_map") or {})
+    for f in refresh:
+        merged_requirements[f] = new_requirements[f]
+        merged_row_map[f] = new_row_map[f]
+    merged_pending = existing_pending + added
 
-    final = graph.get_state(cfg)
-    return {
-        "added": len(new_factories),
-        "factories": sorted(new_factories),
-        "status": final.values.get("validation_status", "unknown"),
+    update: dict[str, Any] = {
+        "downstream_requirements": merged_requirements,
+        "downstream_row_map": merged_row_map,
+        "pending_factories": merged_pending,
     }
+    # 批次带 factory_filter（如「跳过已处理」建批）时同步扩充，
+    # 否则补充的工厂不进进度统计口径
+    factory_filter = values.get("factory_filter")
+    if factory_filter:
+        update["factory_filter"] = list(factory_filter) + [
+            f for f in added if f not in set(factory_filter)]
+
+    logger.info("[补充工厂] 批次 %s：补入 %d 家 %s（%s）",
+                batch_id, len(added), sorted(added),
+                "挂起中重挂起" if has_interrupt else "已完成续跑")
+
+    with logging_context(thread_id=batch_id):
+        # 输出副本行同步：装箱单尾部追加的新行需先补进 output 副本，
+        # 否则 writer 按新 row_map 行号写回会写出幽灵数据
+        _sync_output_copy_rows(batch_id, config["downstream_file_path"],
+                               refresh, new_row_map)
+
+        # as_node 锚点：pending_review 走 Node4 条件边重回 Node5 重挂起；
+        # completed 走 Node6 条件边重路由（见 docstring 实测结论）
+        graph.update_state(cfg, update, as_node=NODE4 if has_interrupt else NODE6)
+
+        emit = _make_progress_emitter(on_progress, seed=values)
+        for event in graph.stream(None, cfg, stream_mode="updates"):
+            emit(event)
+            if "__interrupt__" in event:
+                # 挂起后继续后台预提取剩余工厂（幂等，同 resume_order）
+                _start_pre_extraction(batch_id)
+                current = graph.get_state(cfg)
+                _write_batch_state(batch_id, "pending_review", state=current.values)
+                return {
+                    "added": len(added),
+                    "factories": sorted(added),
+                    "status": "pending_human_review",
+                    "thread_id": batch_id,
+                    "review_data": event["__interrupt__"][0].value,
+                }
+
+        # 防御性兜底：有待补充工厂正常必在 Node5 挂起；一路跑完则按完成处理
+        final = graph.get_state(cfg)
+        _write_batch_state(batch_id, "completed", state=final.values)
+        return {
+            "added": len(added),
+            "factories": sorted(added),
+            "status": "completed",
+            "thread_id": batch_id,
+            "final_output_path": final.values.get("final_output_path"),
+        }
 
 
 def _write_batch_state(
@@ -772,7 +911,7 @@ def resume_order(thread_id: str, resume_data: dict,
                         "thread_id": thread_id,
                         "review_data": payload,
                     }
-                    _write_audit(prepared, result.get("status"))
+                    _write_audit(prepared, _audit_result_status(prepared, result))
                     return result
         except Exception as e:  # noqa: BLE001
             _write_batch_state(thread_id, "error", error=str(e))
@@ -786,7 +925,7 @@ def resume_order(thread_id: str, resume_data: dict,
             "final_validation_status": final.values.get("validation_status"),
             "final_output_path": final.values.get("final_output_path"),
         }
-        _write_audit(prepared, result.get("status"))
+        _write_audit(prepared, _audit_result_status(prepared, result))
         return result
 
 
@@ -2004,20 +2143,7 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
     pending = set(values.get("pending_factories") or [])
     current = (values.get("current_factory_data") or {}).get("factory_name")
 
-    factories = []
-    for name in sorted(total_set):
-        if name == current and snap.next:
-            role = "current"
-        elif name in pending:
-            role = "pending"
-        else:
-            role = "done"
-        factories.append({
-            "factory": name,
-            "role": role,
-            "session": _load_factory_session(thread_id, name),
-        })
-
+    # 审计先行：factories[] 的 skipped 角色判定依赖每厂最新一条 review_audit
     with get_session() as session:
         audit_rows = session.scalars(
             select(ReviewAudit)
@@ -2033,6 +2159,33 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
             "new_skus": json.loads(r.new_skus_json or "[]"),
             "result_status": r.result_status,
         } for r in audit_rows]
+
+    # 每厂最新一条审计（audit_id 升序遍历，后者覆盖前者；一次查询不 N+1）。
+    # 最新一条是 factory_skipped 即视为「已跳过」——若之后经「补充工厂」重审通过，
+    # 会更晚的 approved=true 行成为最新一条，角色自然回到 done
+    latest_audit: dict[str, Any] = {}
+    for r in audit_rows:
+        if r.factory_name:
+            latest_audit[r.factory_name] = r
+
+    factories = []
+    for name in sorted(total_set):
+        if name == current and snap.next:
+            role = "current"
+        elif name in pending:
+            role = "pending"
+        else:
+            last = latest_audit.get(name)
+            if (last is not None and last.result_status == "factory_skipped"
+                    and not last.approved):
+                role = "skipped"
+            else:
+                role = "done"
+        factories.append({
+            "factory": name,
+            "role": role,
+            "session": _load_factory_session(thread_id, name),
+        })
 
     detail.update({
         "downstream_file_path": values.get("downstream_file_path"),
@@ -2497,10 +2650,23 @@ def _prepare_audit(thread_id: str, resume_data: dict) -> dict[str, Any] | None:
         "thread_id": thread_id,
         "factory_name": payload.get("factory_name"),
         "approved": bool((resume_data or {}).get("approved", False)),
+        # 「跳过本工厂」标记：resume_order 据此把 result_status 落为 factory_skipped
+        # （approved 保持 False，天然不误计入"已处理"档位）
+        "skipped": bool((resume_data or {}).get("skipped")),
         "edited_count": edited_count,
         "changes": changes,
         "new_skus": new_skus,
     }
+
+
+def _audit_result_status(prepared: dict[str, Any] | None,
+                         result: dict[str, Any]) -> str | None:
+    """resume 审计的 result_status：「跳过本工厂」固化为 factory_skipped
+    （approved=False + result_status=factory_skipped 是批次详情页 skipped 徽章、
+    以及后续「补充工厂」判定的权威留痕）；其余沿用图执行结果。"""
+    if prepared and prepared.get("skipped"):
+        return "factory_skipped"
+    return result.get("status")
 
 
 def _write_audit(prepared: dict[str, Any] | None, result_status: str | None) -> None:

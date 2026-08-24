@@ -141,6 +141,7 @@ class ProcessRequest(BaseModel):
 
 class ReviewSubmitRequest(BaseModel):
     approved: bool = True
+    skipped: bool = False                   # 「跳过本工厂」：不写 Excel、不落库、批次照常推进
     items: List[Dict[str, Any]] = []            # 人工修改后的完整 items
 
 
@@ -197,7 +198,8 @@ async def resume_processing(thread_id: str, request: ReviewSubmitRequest):
         result = await asyncio.to_thread(
             service.resume_order,
             thread_id,
-            {"approved": request.approved, "items": request.items},
+            {"approved": request.approved, "skipped": request.skipped,
+             "items": request.items},
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
