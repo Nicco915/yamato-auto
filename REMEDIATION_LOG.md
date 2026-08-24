@@ -99,3 +99,69 @@ python3 -m pytest app/tests/test_factory_match_db.py app/tests/test_declare.py -
 3. **定时备份**：每天启动 uvicorn 或 macOS `launchd` 调用一次 `backup_master.py`，保留最近 30 份。
 4. **种子文件化**：把 `factory_aliases`、`product_groups`、`product_mappings` 定期导出为 JSON 种子并提交到 Git。
 5. **测试隔离**：所有子进程测试必须设置 `YAMATO_DOTENV_PATH` 指向临时 `.env`，禁止直连生产库。
+
+---
+
+# 品名映射 SKU 补充日志
+
+- **日期**: 2026-08-24
+- **分支**: `main`
+- **脚本**: `scripts/supplement_sku_mappings.py`
+- **涉及数据库**: `app/app/data/master.db`
+
+## 补充规则（与用户确认）
+
+1. 只补充当前 `product_mappings` 中**已存在**的品名；品名不在当前映射中的，全部跳过。
+2. 对每个已存在品名，删除 `sku_code` 为 `NULL` 的原品名级兜底行。
+3. 按用户提供的 SKU 清单，为每个 SKU 插入一行 SKU 级映射，复制原行的 `hs_code` / `supplier_name` / `inspection_required` / `name_en` / `unit_code` / `factory_id`。
+4. 已存在于任意品名下的 SKU 跳过，避免重复。
+
+## 处理结果
+
+```text
+已处理品名: 8
+  木橱: 删除 NULL 行 1，新增 SKU 行 1
+  木箱: 删除 NULL 行 1，新增 SKU 行 6
+  木盖: 删除 NULL 行 1，新增 SKU 行 4
+  44木架: 删除 NULL 行 1，新增 SKU 行 15
+  木制抓挠盒: 删除 NULL 行 1，新增 SKU 行 1
+  写字板: 删除 NULL 行 1，新增 SKU 行 3
+  坐垫: 删除 NULL 行 1，新增 SKU 行 11
+  枕头: 删除 NULL 行 1，新增 SKU 行 3
+```
+
+- **product_mappings 总数**: `37 → 73`
+- **跳过的品名**（当前映射中不存在）: 共 20 个，例如 `松木木制凳子`、`桐木木被架`、`6件套`、`3件套` 等。
+- **跳过的 SKU**（已存在）: 无。
+
+## 快照
+
+本次补充前快照：
+
+```text
+app/data/backups/20260824_165007/
+├── master.db
+├── checkpoints.db
+├── alias_map.json
+└── .env
+```
+
+## 跳过的近似品名
+
+以下品名在当前映射中无完全匹配，但被识别为可能对应短名，已按用户要求跳过：
+
+| 用户提供的品名 | 可能的当前映射 |
+|---|---|
+| 松木木制凳子 | 木制凳子 |
+| 松木杉木木被架 | 木被架 |
+| 桐木橱柜搁架 | 木橱 / 橱柜搁架 |
+| 桐木被架床 | 木被架 / 被架床 |
+| 桐木木制菜板 | 木制菜板 |
+| 桐木木被架 | 木被架 |
+| 杉木被架床 | 木被架 / 被架床 |
+| 松木木筐 | 木筐 |
+| 松木杨木木制抓挠盒 | 木制抓挠盒 |
+| 桧木木被架 | 木被架 |
+
+如需把这些近似品名也关联到当前短名，请告诉我，我再执行一轮补充。
+
