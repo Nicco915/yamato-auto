@@ -115,8 +115,14 @@ def generate_declarations(split_thread_id: str, invoice_number: str) -> dict:
         if not decls:
             raise ValueError("分票方案尚未确认")
 
-        # product_mappings → 映射索引（expire_on_commit=False，ORM 可直接用）
-        mapping_index = build_mapping_index(sess.query(ProductMapping).all())
+        # product_mappings → 映射索引（expire_on_commit=False，ORM 可直接用；
+        # selectinload 预取 sku_links：by_sku 索引走多 SKU 子表，避免逐行懒加载）
+        from sqlalchemy.orm import selectinload
+        mapping_index = build_mapping_index(
+            sess.query(ProductMapping)
+            .options(selectinload(ProductMapping.sku_links))
+            .all()
+        )
 
         # product_groups + members → aggregator 需要的组配置 dict
         groups: list[dict] = []

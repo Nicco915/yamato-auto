@@ -54,18 +54,75 @@ def ensure_mapping_skus_migrated() -> int:
         return 0
 
 
-def sync_mapping_to_sku(session: Session, mapping: ProductMapping) -> int:
-    """product_mappings → factory_skus 单向回填。
+def _mapping_sku_codes(mapping: ProductMapping) -> list[str]:
+    """取映射行的 SKU 列表：子表为准（按 id 排序），旧列 sku_code 兜底。
 
-    若 mapping.sku_code 非空：回填该行 factory_skus 的
-    name_cn/hs_code/inspection_required，name_en 非空时也回填。
-    返回更新的行数。仅回填，不删不改其他字段（unit_net_weight/unit_gross_weight 不动）。
+    旧列兜底存在的意义：supplement_sku_mappings 等老脚本只写旧列、
+    以及个别未迁移数据；去重保序，空串剔除。
     """
-    if not mapping.sku_code:
+    # 未 flush 的新行 id 为 None：排在已持久化行之后，稳定排序保持插入顺序
+    codes = [
+        link.sku_code
+        for link in sorted(
+            mapping.sku_links, key=lambda l: (l.id is None, l.id or 0))
+    ]
+    if not codes and mapping.sku_code:
+        codes = [mapping.sku_code]
+    seen: set[str] = set()
+    result: list[str] = []
+    for c in codes:
+        c = (c or "").strip()
+        if c and c not in seen:
+            seen.add(c)
+            result.append(c)
+    return result
+
+
+def check_sku_conflicts(
+    session: Session,
+    sku_codes: list[str],
+    *,
+    exclude_mapping_id: int | None = None,
+) -> list[dict]:
+    """检查 SKU 列表是否被**其他**映射行占用。
+
+    返回冲突列表 [{sku_code, mapping_id, product_name_cn}]；空列表 = 无冲突。
+    UI 层据此抛 409，dispatcher 据此拼中文错误说明；调用方保证整体不落库。
+    """
+    codes = [c for c in dict.fromkeys(sku_codes) if c]
+    if not codes:
+        return []
+    query = (
+        session.query(ProductMappingSku, ProductMapping)
+        .join(ProductMapping, ProductMappingSku.mapping_id == ProductMapping.id)
+        .filter(ProductMappingSku.sku_code.in_(codes))
+    )
+    if exclude_mapping_id is not None:
+        query = query.filter(ProductMappingSku.mapping_id != exclude_mapping_id)
+    return [
+        {
+            "sku_code": link.sku_code,
+            "mapping_id": m.id,
+            "product_name_cn": m.product_name_cn,
+        }
+        for link, m in query.all()
+    ]
+
+
+def sync_mapping_to_sku(session: Session, mapping: ProductMapping) -> int:
+    """product_mappings → factory_skus 单向回填（多 SKU：逐个回填列表中每个 SKU）。
+
+    SKU 列表取自 product_mapping_skus 子表（旧列 sku_code 兜底），
+    对每个 SKU 回填 factory_skus 的 name_cn/hs_code/inspection_required，
+    name_en 非空时也回填。返回更新的总行数（同一 SKU 多工厂行都算）。
+    仅回填，不删不改其他字段（unit_net_weight/unit_gross_weight 不动）。
+    """
+    codes = _mapping_sku_codes(mapping)
+    if not codes:
         return 0
     rows = (
         session.query(FactorySKU)
-        .filter(FactorySKU.sku_code == mapping.sku_code)
+        .filter(FactorySKU.sku_code.in_(codes))
         .all()
     )
     for sku in rows:
@@ -89,8 +146,10 @@ def sync_sku_to_mapping(
 ) -> int:
     """factory_skus → product_mappings 反向回填（SKU 主数据 Tab 编辑后调用）。
 
-    只更新 sku_code 精确匹配的映射行（SKU 级映射）；品名级行（sku_code 为空）
-    可能被多个 SKU 共享兜底，绝不触碰。
+    命中范围：product_mapping_skus 子表里 sku_code 等于该 SKU 的**所有**映射行
+    （一品名多 SKU 后，含该 SKU 的每一行都算 SKU 级行，不限工厂全部更新）；
+    为兼容未迁移的老数据，旧列 sku_code 精确匹配的行也并入。
+    品名级行（SKU 列表为空）可能被多个 SKU 共享兜底，绝不触碰。
 
     风险边界（2026-08-12 与用户确认的设计决策）：
     - product_name_cn / name_en 是报关匹配主键/辅助字段，清空不会回写，
@@ -103,9 +162,26 @@ def sync_sku_to_mapping(
     """
     if not (sync_name or sync_name_en or sync_hs or sync_inspection):
         return 0
+    # 子表反查：含该 SKU 的所有映射行（多 SKU 化后的主路径）
+    link_ids = [
+        row.mapping_id
+        for row in session.query(ProductMappingSku)
+        .filter(ProductMappingSku.sku_code == sku.sku_code)
+        .all()
+    ]
+    # 兼容未迁移老数据：旧列 sku_code 精确匹配的行并入（去重）
+    legacy_ids = [
+        m.id
+        for m in session.query(ProductMapping)
+        .filter(ProductMapping.sku_code == sku.sku_code)
+        .all()
+    ]
+    ids = list(dict.fromkeys(link_ids + legacy_ids))
+    if not ids:
+        return 0
     rows = (
         session.query(ProductMapping)
-        .filter(ProductMapping.sku_code == sku.sku_code)
+        .filter(ProductMapping.id.in_(ids))
         .all()
     )
     for m in rows:

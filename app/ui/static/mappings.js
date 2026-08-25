@@ -144,6 +144,14 @@ function renderProducts() {
         var rowCls = m.is_incomplete ? ' class="row-incomplete"' : "";
         var sj = m.inspection_required ? '<span class="sj-mark">✓</span>' : "";
         var dash = function (v) { return v ? esc(v) : '<span class="muted">-</span>'; };
+        // SKU 列：多 SKU 列表显示「第一个 等 N 个」，title 悬浮可见全部
+        var skuArr = (m.sku_codes && m.sku_codes.length) ? m.sku_codes : (m.sku_code ? [m.sku_code] : []);
+        var skuCell = skuArr.length === 0
+            ? '<span class="muted">-</span>'
+            : '<span title="' + esc(skuArr.join("、")) + '">'
+              + esc(skuArr[0])
+              + (skuArr.length > 1 ? ' <span class="muted">等 ' + skuArr.length + " 个</span>" : "")
+              + "</span>";
         return "<tr" + rowCls + ">"
             + '<td class="col-check"><input type="checkbox" class="product-row-check" value="' + m.id + '"></td>'
             + "<td><strong>" + esc(m.product_name_cn) + "</strong></td>"
@@ -152,7 +160,7 @@ function renderProducts() {
             + "<td>" + sj + "</td>"
             + "<td>" + dash(m.name_en) + "</td>"
             + "<td>" + dash(m.unit_code) + "</td>"
-            + "<td>" + dash(m.sku_code) + "</td>"
+            + "<td>" + skuCell + "</td>"
             + '<td class="col-actions">'
             + '<button class="btn btn-sm" onclick="openProductModal(' + m.id + ')">编辑</button>'
             + '<button class="btn btn-sm" onclick="deleteProduct(' + m.id + ')">删除</button>'
@@ -160,6 +168,90 @@ function renderProducts() {
     }).join("");
     if (window._productBulkSel) window._productBulkSel.refresh();
     _updateSortArrows("pane-products", productSort);
+}
+
+/* ---------- 产品映射弹窗：SKU 标签式多选 ---------- */
+var pmSkuTags = [];            // 当前弹窗已选 SKU 标签（字符串数组）
+var _pmSkuSearchTimer = null;  // 搜索防抖计时器
+
+function renderPmSkuTags() {
+    var box = document.getElementById("pm-sku-tags");
+    box.innerHTML = pmSkuTags.map(function (code) {
+        return '<span class="sku-tag">' + esc(code)
+            + '<span class="sku-tag-x" title="移除" onclick="pmSkuRemove(\'' + esc(code) + "\')\">×</span>"
+            + "</span>";
+    }).join("");
+}
+
+function pmSkuAdd(code) {
+    code = (code || "").trim();
+    if (!code) return;
+    if (pmSkuTags.indexOf(code) >= 0) return;  // 去重
+    pmSkuTags.push(code);
+    renderPmSkuTags();
+}
+
+function pmSkuRemove(code) {
+    pmSkuTags = pmSkuTags.filter(function (c) { return c !== code; });
+    renderPmSkuTags();
+}
+
+function pmSkuHideDropdown() {
+    document.getElementById("pm-sku-dropdown").style.display = "none";
+}
+
+/* 模糊搜 SKU 主数据（GET /api/v1/mappings/skus?q=），渲染下拉候选 */
+async function pmSkuSearch() {
+    var q = document.getElementById("pm-sku-input").value.trim();
+    var dd = document.getElementById("pm-sku-dropdown");
+    if (!q) { pmSkuHideDropdown(); return; }
+    try {
+        var rows = await api("/api/v1/mappings/skus?q=" + encodeURIComponent(q));
+        rows = (rows || []).slice(0, 20);  // 候选最多 20 条
+        if (rows.length === 0) {
+            dd.innerHTML = '<div class="sku-empty">主数据无匹配；回车可直接添加「' + esc(q) + "」</div>";
+        } else {
+            dd.innerHTML = rows.map(function (k) {
+                return '<div class="sku-opt" onmousedown="pmSkuPick(\'' + esc(k.sku_code) + "\')\">"
+                    + "<strong>" + esc(k.sku_code) + "</strong>"
+                    + (k.name_cn ? '<span class="muted">' + esc(k.name_cn) + "</span>" : "")
+                    + "</div>";
+            }).join("");
+        }
+        dd.style.display = "";
+    } catch (e) {
+        pmSkuHideDropdown();
+    }
+}
+
+function pmSkuPick(code) {
+    pmSkuAdd(code);
+    document.getElementById("pm-sku-input").value = "";
+    pmSkuHideDropdown();
+    document.getElementById("pm-sku-input").focus();
+}
+
+/* 弹窗打开时绑定一次输入事件（input 防抖搜索 / Enter 直接添加 / Esc 收起 / 失焦延时收起） */
+var _pmSkuBound = false;
+function bindPmSkuInput() {
+    if (_pmSkuBound) return;
+    _pmSkuBound = true;
+    var input = document.getElementById("pm-sku-input");
+    input.addEventListener("input", function () {
+        if (_pmSkuSearchTimer) clearTimeout(_pmSkuSearchTimer);
+        _pmSkuSearchTimer = setTimeout(pmSkuSearch, 250);
+    });
+    input.addEventListener("keydown", function (ev) {
+        if (ev.key === "Enter") {
+            ev.preventDefault();
+            pmSkuPick(input.value);  // 回车直接添加输入值（主数据可能没有该 SKU）
+        } else if (ev.key === "Escape") {
+            pmSkuHideDropdown();
+        }
+    });
+    input.addEventListener("blur", function () {
+        setTimeout(pmSkuHideDropdown, 150);  // 延时收起，让 onmousedown 先触发
+    });
 }
 
 function openProductModal(id) {
@@ -172,7 +264,14 @@ function openProductModal(id) {
     document.getElementById("pm-inspection").checked = m ? !!m.inspection_required : false;
     document.getElementById("pm-name-en").value = m ? (m.name_en || "") : "";
     document.getElementById("pm-unit").value = m ? (m.unit_code || "") : "";
-    document.getElementById("pm-sku").value = m ? (m.sku_code || "") : "";
+    // SKU 标签：优先取 sku_codes 列表，兼容旧单值 sku_code
+    pmSkuTags = m
+        ? ((m.sku_codes && m.sku_codes.length) ? m.sku_codes.slice() : (m.sku_code ? [m.sku_code] : []))
+        : [];
+    renderPmSkuTags();
+    document.getElementById("pm-sku-input").value = "";
+    pmSkuHideDropdown();
+    bindPmSkuInput();
     document.getElementById("pm-factory").value = m && m.factory_id != null ? String(m.factory_id) : "";
     document.getElementById("product-modal").classList.add("show");
 }
@@ -180,6 +279,8 @@ function openProductModal(id) {
 function closeProductModal() {
     document.getElementById("product-modal").classList.remove("show");
     editingProductId = null;
+    pmSkuTags = [];
+    pmSkuHideDropdown();
 }
 
 async function saveProduct() {
@@ -205,7 +306,7 @@ async function saveProduct() {
         inspection_required: document.getElementById("pm-inspection").checked,
         name_en: document.getElementById("pm-name-en").value.trim() || null,
         unit_code: document.getElementById("pm-unit").value.trim() || null,
-        sku_code: document.getElementById("pm-sku").value.trim() || null,
+        sku_codes: pmSkuTags.slice(),
         factory_id: factoryId,
     };
     var btn = document.getElementById("pm-save");

@@ -49,10 +49,11 @@ from app.db.models import (
     ProductGroup,
     ProductGroupMember,
     ProductMapping,
+    ProductMappingSku,
     SkuMasterAudit,
 )
 from app.db.session import get_session
-from app.db.sync import sync_mapping_to_sku, sync_sku_to_mapping
+from app.db.sync import check_sku_conflicts, sync_mapping_to_sku, sync_sku_to_mapping
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,11 @@ GROUP_TYPES = ("set_split", "box_share")
 # ---------------------------------------------------------------------------
 
 class ProductUpsert(BaseModel):
-    """产品映射新增/编辑（编辑为全量字段提交）。"""
+    """产品映射新增/编辑（编辑为全量字段提交）。
+
+    sku_codes 为 SKU 列表（一品名多 SKU）；旧单值 sku_code 保留兼容
+    （dispatcher 工具等老调用方），两者合并去重（strip、去空）成最终列表。
+    """
 
     product_name_cn: str
     hs_code: Optional[str] = None
@@ -74,7 +79,8 @@ class ProductUpsert(BaseModel):
     inspection_required: bool = False
     name_en: Optional[str] = None
     unit_code: Optional[str] = None
-    sku_code: Optional[str] = None
+    sku_codes: Optional[list[str]] = None
+    sku_code: Optional[str] = None  # 【兼容】旧单值入参，并入 sku_codes
     factory_id: Optional[int] = None
 
 
@@ -138,6 +144,12 @@ class PortUpsert(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _product_dict(m: ProductMapping) -> dict:
+    """映射行序列化：sku_codes 从子表读（按 id 排序，兼容未 flush 的新行）；
+    兼容保留 sku_code=列表第一个；子表为空时兜底旧列值（未迁移数据保险）。"""
+    sku_codes = [
+        link.sku_code
+        for link in sorted(m.sku_links, key=lambda l: (l.id is None, l.id or 0))
+    ]
     return {
         "id": m.id,
         "product_name_cn": m.product_name_cn,
@@ -146,11 +158,56 @@ def _product_dict(m: ProductMapping) -> dict:
         "inspection_required": bool(m.inspection_required),
         "name_en": m.name_en,
         "unit_code": m.unit_code,
-        "sku_code": m.sku_code,
+        "sku_codes": sku_codes,
+        "sku_code": sku_codes[0] if sku_codes else (m.sku_code or None),
         "factory_id": m.factory_id,
         "is_incomplete": bool(m.is_incomplete),
         "updated_at": m.updated_at.isoformat(sep=" ") if m.updated_at else None,
     }
+
+
+def _merge_sku_codes(req: ProductUpsert) -> list[str]:
+    """合并 sku_codes + 旧单值 sku_code：strip、去空、去重保序。"""
+    raw: list[str] = list(req.sku_codes or [])
+    if req.sku_code:
+        raw.append(req.sku_code)
+    seen: set[str] = set()
+    result: list[str] = []
+    for c in raw:
+        c = (c or "").strip()
+        if c and c not in seen:
+            seen.add(c)
+            result.append(c)
+    return result
+
+
+def _raise_if_sku_conflict(s, sku_codes: list[str], exclude_id: Optional[int] = None) -> None:
+    """冲突拦截：列表中任一 SKU 已被其他映射行占用 → 409（中文列出全部冲突）。
+
+    先于任何写入调用，保证整体不落库（调用方 commit 前抛出）。
+    """
+    conflicts = check_sku_conflicts(s, sku_codes, exclude_mapping_id=exclude_id)
+    if not conflicts:
+        return
+    parts = [
+        f"SKU {c['sku_code']} 已被映射「{c['product_name_cn']}」(id={c['mapping_id']}) 占用"
+        for c in conflicts
+    ]
+    raise HTTPException(status_code=409, detail="；".join(parts))
+
+
+def _replace_sku_links(s, m: ProductMapping, sku_codes: list[str]) -> None:
+    """整体替换映射行的 SKU 关联子表（先清后插，中间 flush 一次）。
+
+    不能直接 `m.sku_links = [新列表]`：collection 整体赋值在同一次 flush 里
+    先 INSERT 后 DELETE，保留不变的 SKU 会撞 unique_mapping_sku 唯一约束。
+    同时把旧列 sku_code 同步为列表第一个/None：旧列已废弃不写新值，
+    但保持与列表一致可防止启动迁移把已删 SKU 幽灵搬回（回滚保险语义不变）。
+    """
+    m.sku_links.clear()  # delete-orphan 级联：标记删除
+    s.flush()            # 先落删除，再插新行，避免唯一约束撞车
+    m.sku_links.extend(ProductMappingSku(sku_code=c) for c in sku_codes)
+    m.sku_code = sku_codes[0] if sku_codes else None
 
 
 def _group_dict(g: ProductGroup, members: list[ProductGroupMember]) -> dict:
@@ -185,16 +242,19 @@ def list_products(
     q: Optional[str] = Query(default=None),
     incomplete: bool = Query(default=False),
 ):
-    """映射列表：q 模糊搜品名/税号/供应商/SKU；incomplete=true 只看待完善。"""
+    """映射列表：q 模糊搜品名/税号/供应商/SKU（含子表多 SKU）；incomplete=true 只看待完善。"""
+    from sqlalchemy.orm import selectinload
+
     with get_session() as s:
-        query = s.query(ProductMapping)
+        query = s.query(ProductMapping).options(selectinload(ProductMapping.sku_links))
         if q and q.strip():
             like = f"%{q.strip()}%"
             query = query.filter(
                 (ProductMapping.product_name_cn.like(like))
                 | (ProductMapping.hs_code.like(like))
                 | (ProductMapping.supplier_name.like(like))
-                | (ProductMapping.sku_code.like(like))
+                | (ProductMapping.sku_code.like(like))  # 旧列兜底（未迁移数据）
+                | (ProductMapping.sku_links.any(ProductMappingSku.sku_code.like(like)))
             )
         if incomplete:
             query = query.filter(ProductMapping.is_incomplete.is_(True))
@@ -237,10 +297,15 @@ def lookup_product_by_name(name: str = Query(default="")):
 
 @router.post("/products", status_code=201)
 def create_product(req: ProductUpsert):
-    """新增映射。税号缺失时自动标待完善。"""
+    """新增映射（多 SKU：写子表）。税号缺失时自动标待完善。
+
+    冲突拦截：任一 SKU 已被其他映射行占用 → 409，整体不落库（先全量校验再写入）。
+    """
     if _blank(req.product_name_cn):
         raise HTTPException(status_code=400, detail="中文品名不能为空")
+    sku_codes = _merge_sku_codes(req)
     with get_session() as s:
+        _raise_if_sku_conflict(s, sku_codes)
         m = ProductMapping(
             product_name_cn=req.product_name_cn.strip(),
             hs_code=(req.hs_code or "").strip() or None,
@@ -248,10 +313,10 @@ def create_product(req: ProductUpsert):
             inspection_required=req.inspection_required,
             name_en=(req.name_en or "").strip() or None,
             unit_code=(req.unit_code or "").strip() or None,
-            sku_code=(req.sku_code or "").strip() or None,
             factory_id=req.factory_id,
             is_incomplete=_blank(req.hs_code),
         )
+        _replace_sku_links(s, m, sku_codes)
         s.add(m)
         s.commit()
         s.refresh(m)
@@ -260,25 +325,28 @@ def create_product(req: ProductUpsert):
 
 @router.put("/products/{product_id}")
 def update_product(product_id: int, req: ProductUpsert):
-    """编辑映射：保存后 sku_code 非空时调 sync_mapping_to_sku 回填 factory_skus。
+    """编辑映射（多 SKU：子表整体替换）：保存后调 sync_mapping_to_sku 逐 SKU 回填 factory_skus。
 
+    冲突拦截：任一 SKU 已被其他映射行占用 → 409（排除本行），整体不落库。
     人工补全税号后自动清除待完善标记。返回 synced_skus 便于前端提示。
     """
     if _blank(req.product_name_cn):
         raise HTTPException(status_code=400, detail="中文品名不能为空")
+    sku_codes = _merge_sku_codes(req)
     with get_session() as s:
         m = s.get(ProductMapping, product_id)
         if m is None:
             raise HTTPException(status_code=404, detail=f"映射不存在: id={product_id}")
+        _raise_if_sku_conflict(s, sku_codes, exclude_id=product_id)
         m.product_name_cn = req.product_name_cn.strip()
         m.hs_code = (req.hs_code or "").strip() or None
         m.supplier_name = (req.supplier_name or "").strip() or None
         m.inspection_required = req.inspection_required
         m.name_en = (req.name_en or "").strip() or None
         m.unit_code = (req.unit_code or "").strip() or None
-        m.sku_code = (req.sku_code or "").strip() or None
         m.factory_id = req.factory_id
         m.is_incomplete = _blank(m.hs_code)
+        _replace_sku_links(s, m, sku_codes)
         synced = sync_mapping_to_sku(s, m)
         s.commit()
         s.refresh(m)

@@ -1826,6 +1826,9 @@ def _preview_upsert_product_mapping(args: dict, session_id: str | None = None) -
             v = args.get(key)
             if v is not None and v != "":
                 lines.append(f"{label}: {v}")
+        skus = _collect_tool_skus(args)
+        if skus:
+            lines.append(f"关联 SKU: {', '.join(skus)}")
 
         summary = f"确认{action}品名「{name}」的产品映射？"
         return _preview(summary, lines, warnings)
@@ -1833,22 +1836,53 @@ def _preview_upsert_product_mapping(args: dict, session_id: str | None = None) -
         return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
 
 
+def _collect_tool_skus(args: dict) -> list[str]:
+    """从工具入参收集 SKU 列表：sku_codes（数组）+ 旧单值 sku_code 合并去重。
+
+    外部入参保持 sku_code 单值兼容；strip、去空、去重保序。
+    """
+    raw: list = []
+    codes = args.get("sku_codes")
+    if isinstance(codes, (list, tuple)):
+        raw.extend(codes)
+    elif isinstance(codes, str):  # 容错：LLM 把数组写成逗号串
+        raw.extend(codes.split(","))
+    single = args.get("sku_code")
+    if single:
+        raw.append(single)
+    seen: set[str] = set()
+    result: list[str] = []
+    for c in raw:
+        c = str(c).strip()
+        if c and c not in seen:
+            seen.add(c)
+            result.append(c)
+    return result
+
+
 def _exec_upsert_product_mapping(
     args: dict,
     on_progress: Callable[[dict], None] | None = None,
 ) -> dict:
-    """upsert_product_mapping 执行：按品名查有则更新无则插入，必要时回填 SKU。"""
+    """upsert_product_mapping 执行：按品名查有则更新无则插入，必要时回填 SKU。
+
+    SKU 写 product_mapping_skus 子表（一品名多 SKU）；传了 sku_code/sku_codes
+    才动 SKU 列表（整体替换），不传保持现状。SKU 被其他映射行占用时返回中文
+    错误说明（不落库），不抛异常栈。
+    """
     try:
         name = (args.get("product_name_cn") or "").strip()
         if not name:
             return {"error": "product_name_cn（中文品名）为空"}
 
-        from app.db.models import ProductMapping
+        from app.db.models import ProductMapping, ProductMappingSku
         from app.db.session import get_session
-        from app.db.sync import sync_mapping_to_sku
+        from app.db.sync import check_sku_conflicts, sync_mapping_to_sku
 
         updatable = ("hs_code", "supplier_name", "inspection_required",
-                     "name_en", "unit_code", "sku_code")
+                     "name_en", "unit_code")
+        sku_given = "sku_code" in args or "sku_codes" in args
+        sku_codes = _collect_tool_skus(args) if sku_given else []
 
         with get_session() as sess:
             mapping = sess.query(ProductMapping).filter(
@@ -1857,11 +1891,37 @@ def _exec_upsert_product_mapping(
             if mapping is None:
                 mapping = ProductMapping(product_name_cn=name)
                 sess.add(mapping)
+                sess.flush()  # 先拿到 id，冲突校验排除本行才有意义
                 action = "新增"
+
+            # SKU 冲突拦截：整体不落库，中文说明返回给操作员
+            if sku_given and sku_codes:
+                conflicts = check_sku_conflicts(
+                    sess, sku_codes, exclude_mapping_id=mapping.id)
+                if conflicts:
+                    parts = [
+                        f"SKU {c['sku_code']} 已被映射「{c['product_name_cn']}」占用"
+                        for c in conflicts
+                    ]
+                    sess.rollback()
+                    return {
+                        "error": "SKU 冲突，未保存：" + "；".join(parts)
+                                 + "。如需改挂请先调整对应映射。",
+                    }
 
             for key in updatable:
                 if key in args and args[key] is not None and args[key] != "":
                     setattr(mapping, key, args[key])
+
+            if sku_given:
+                # 整体替换子表：先清（flush 落删除）再插，避免保留不变的 SKU
+                # 在同次 flush 撞 unique_mapping_sku 唯一约束；
+                # 旧列同步为第一个/None（防启动迁移幽灵搬回已删 SKU）
+                mapping.sku_links.clear()
+                sess.flush()
+                mapping.sku_links.extend(
+                    ProductMappingSku(sku_code=c) for c in sku_codes)
+                mapping.sku_code = sku_codes[0] if sku_codes else None
 
             # 关键字段补齐则清待完善标记；税号仍空则标记待完善
             mapping.is_incomplete = not bool(mapping.hs_code)
@@ -1872,11 +1932,12 @@ def _exec_upsert_product_mapping(
 
         hs_text = f"税号 {mapping.hs_code}" if mapping.hs_code else "税号未填"
         sj_text = "需商检" if mapping.inspection_required else "无需商检"
+        sku_text = f"，关联 SKU {len(sku_codes)} 个" if sku_given else ""
         sync_text = f"，已同步 {synced} 条 SKU 主数据" if synced else ""
         return {
             "status": "ok",
             "action": action,
-            "message": f"品名「{name}」的映射已{action}（{hs_text}，{sj_text}）{sync_text}。",
+            "message": f"品名「{name}」的映射已{action}（{hs_text}，{sj_text}）{sku_text}{sync_text}。",
         }
     except Exception as e:
         return _err(e)
@@ -2436,7 +2497,9 @@ TOOLS: dict[str, Tool] = {
     ),
     "upsert_product_mapping": Tool(
         name="upsert_product_mapping",
-        description="新增或更新产品映射（中文品名→税号/供应商/商检/英文品名/计量单位代码）。"
+        description="新增或更新产品映射（中文品名→税号/供应商/商检/英文品名/计量单位代码/关联 SKU）。"
+                    "一个品名可关联多个 SKU（sku_codes 数组或 sku_code 单值）；"
+                    "SKU 被其他品名占用时会拒绝并说明冲突。"
                     "写操作：须先向操作员展示 preview 并获得确认后才执行。"
                     "大批量维护引导操作员去主数据维护页。",
         parameters={
@@ -2451,6 +2514,12 @@ TOOLS: dict[str, Tool] = {
                 "inspection_required": {"type": "boolean", "description": "是否需要商检"},
                 "name_en": {"type": "string", "description": "英文品名"},
                 "unit_code": {"type": "string", "description": "计量单位代码（如 007）"},
+                "sku_code": {"type": "string", "description": "关联 SKU 编码（单个；与 sku_codes 合并）"},
+                "sku_codes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "关联 SKU 编码列表（一品名多 SKU）；传入则整体替换该品名的 SKU 列表",
+                },
             },
             "required": ["product_name_cn"],
         },

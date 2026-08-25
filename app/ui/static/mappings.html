@@ -25,6 +25,28 @@
   th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
   th.sortable:hover { color: var(--primary, #2563eb); }
   th.sortable .sort-arrow { font-size: 10px; color: var(--primary, #2563eb); }
+  /* SKU 标签式多选（产品映射弹窗） */
+  .sku-tagbox { flex: 1; border: 1px solid #cbd5e1; border-radius: 5px; padding: 6px 8px; background: #fff; }
+  .sku-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .sku-tags:not(:empty) { margin-bottom: 4px; }
+  .sku-tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;
+    border-radius: 4px; padding: 2px 6px; font-size: 12px;
+  }
+  .sku-tag .sku-tag-x { cursor: pointer; color: #93c5fd; font-weight: 700; }
+  .sku-tag .sku-tag-x:hover { color: #dc2626; }
+  .sku-add-wrap { position: relative; }
+  .sku-add-wrap input { width: 100%; border: none; outline: none; font-size: 13px; font-family: var(--font); padding: 2px 0; }
+  .sku-dropdown {
+    position: absolute; top: 100%; left: 0; right: 0; z-index: 30;
+    max-height: 200px; overflow-y: auto; background: #fff;
+    border: 1px solid #cbd5e1; border-radius: 5px; box-shadow: 0 4px 12px rgba(0,0,0,.12);
+  }
+  .sku-dropdown .sku-opt { padding: 6px 10px; cursor: pointer; font-size: 13px; }
+  .sku-dropdown .sku-opt:hover { background: #f1f5f9; }
+  .sku-dropdown .sku-opt .muted { font-size: 12px; margin-left: 6px; }
+  .sku-dropdown .sku-empty { padding: 6px 10px; font-size: 12px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -206,10 +228,17 @@
       <label>单位代码</label>
       <input id="pm-unit" type="text" placeholder="计量单位代码（如 007），可留空">
     </div>
-    <div class="field">
-      <label>SKU</label>
-      <input id="pm-sku" type="text" placeholder="关联 SKU 编码，可留空">
+    <div class="field" style="align-items:flex-start">
+      <label style="padding-top:6px">SKU</label>
+      <div class="sku-tagbox">
+        <div id="pm-sku-tags" class="sku-tags"></div>
+        <div class="sku-add-wrap">
+          <input id="pm-sku-input" type="text" placeholder="搜索 SKU 主数据，点选加入；回车可直接添加输入值" autocomplete="off">
+          <div id="pm-sku-dropdown" class="sku-dropdown" style="display:none"></div>
+        </div>
+      </div>
     </div>
+    <div class="member-hint">一个品名可关联多个 SKU；标签上的 × 可移除。SKU 已被其他映射占用时保存会提示冲突，且不保存任何改动。</div>
     <div class="field">
       <label>工厂 ID</label>
       <input id="pm-factory" type="text" placeholder="关联工厂 ID，可留空">
@@ -355,6 +384,6 @@
 <div id="toast"></div>
 
 <script src="/ui/static/ui.js?v=3"></script>
-<script src="/ui/static/mappings.js?v=3"></script>
+<script src="/ui/static/mappings.js?v=4"></script>
 </body>
 </html>
