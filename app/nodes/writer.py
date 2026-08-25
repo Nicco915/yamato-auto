@@ -32,6 +32,7 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.db.models import Factory, FactorySKU, ReviewAudit
 from app.db.session import get_session
+from app.db.sync import auto_link_new_sku_to_mapping
 from app.logging_config import bind_factory_from_state
 from app.state import AgentState
 
@@ -223,6 +224,31 @@ def _write_short_name_audit(
                        "%s: %s", type(e).__name__, e)
 
 
+def _auto_link_mappings(factory_name: str, new_items: list[dict]) -> None:
+    """新 SKU 落库后自动挂产品映射（辅助设施，与 _write_short_name_audit 同哲学）。
+
+    只在真·新 SKU（INSERT 分支）落库成功后触发；独立 session、独立事务，
+    整体失败只记 warning，绝不影响已完成的 Excel 写入/主数据落库。
+    幂等由 auto_link_new_sku_to_mapping 内部保证（先查后插 + 子表唯一约束）。
+    """
+    try:
+        with get_session() as session:
+            for item in new_items:
+                auto_link_new_sku_to_mapping(
+                    session,
+                    factory_name=factory_name,
+                    sku_code=str(item.get("sku") or ""),
+                    name_cn=item.get("name_cn"),
+                    hs_code=item.get("hs_code"),
+                    inspection_required=bool(item.get("inspection_required", False)),
+                    name_en=item.get("name_en"),
+                )
+            session.commit()
+    except Exception as e:  # noqa: BLE001 辅助设施失败静默降级，见 docstring
+        logger.warning("[Node6] 新 SKU 自动挂接产品映射失败（主流程不受影响）："
+                       "%s: %s", type(e).__name__, e)
+
+
 def _upsert_db(state: AgentState) -> tuple[int, int]:
     """主数据落库，返回 (插入数, 更新数)。"""
     cur = state.get("current_factory_data") or {}
@@ -230,6 +256,7 @@ def _upsert_db(state: AgentState) -> tuple[int, int]:
     inserted = updated = 0
     auto_short_name: str | None = None
     match_method = cur.get("match_method")
+    new_sku_items: list[dict] = []  # 真·新 SKU（INSERT 分支），commit 后自动挂映射用
 
     with get_session() as session:
         factory = session.scalar(
@@ -281,6 +308,7 @@ def _upsert_db(state: AgentState) -> tuple[int, int]:
                 )
                 session.add(record)
                 inserted += 1
+                new_sku_items.append(item)  # 挂接字段以 item 为准（人工补录值）
             elif item.get("is_human_edited"):
                 # 老 SKU 且人工微调过：UPDATE 刷新重量与合规字段
                 if unit_net is not None:
@@ -294,6 +322,9 @@ def _upsert_db(state: AgentState) -> tuple[int, int]:
                     record.inspection_required = bool(item["inspection_required"])
                 updated += 1
         session.commit()
+    if new_sku_items:
+        # 自动挂接放在主落库 commit 之后：映射是辅助设施，失败不牵连主流程
+        _auto_link_mappings(factory_name, new_sku_items)
     if auto_short_name:
         _write_short_name_audit(state, factory_name, auto_short_name,
                                 match_method or "")
