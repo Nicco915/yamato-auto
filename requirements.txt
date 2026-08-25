@@ -10,6 +10,7 @@ langchain-core>=0.3
 fastapi>=0.110
 uvicorn>=0.29
 httpx>=0.27            # 仅用于测试脚本打接口
+python-multipart>=0.0.9  # FastAPI UploadFile / Form 解析依赖
 
 # 数据库
 sqlalchemy>=2.0
