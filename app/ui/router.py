@@ -32,6 +32,7 @@ from pydantic import BaseModel
 
 from app.api import service
 from app.config import get_settings
+from app.ui.last_paths import load_last_paths, save_last_paths
 from app.ui.open_file import OpenFileError, open_with_default_app
 
 router = APIRouter()
@@ -401,13 +402,32 @@ async def usage():
 
 @router.get("/api/v1/config/defaults")
 async def config_defaults():
-    """工作台预填默认值：路径 + 单重差异预警阈值。"""
+    """工作台预填默认值：.env 默认值 + 上次成功发起批次的路径。"""
     s = get_settings()
+    last = load_last_paths()
     return {
-        "upstream_root": s.upstream_root,
-        "downstream_file_path": s.downstream_file_path,
+        "upstream_root": last.get("upstream_root") or s.upstream_root,
+        "downstream_file_path": last.get("downstream_file_path") or s.downstream_file_path,
         "weight_diff_warn_ratio": s.weight_diff_warn_ratio,
     }
+
+
+class LastPathsRequest(BaseModel):
+    """保存最近使用路径请求。"""
+
+    upstream_root: Optional[str] = None
+    downstream_file_path: Optional[str] = None
+
+
+@router.post("/api/v1/config/last-paths")
+async def save_last_paths_endpoint(request: LastPathsRequest):
+    """保存工作台最近使用路径（由发起批次成功后调用）。"""
+    await asyncio.to_thread(
+        save_last_paths,
+        request.upstream_root,
+        request.downstream_file_path,
+    )
+    return {"ok": True}
 
 
 # ---------- 文件浏览 API ----------

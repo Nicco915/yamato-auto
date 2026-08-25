@@ -285,6 +285,15 @@ async function doCreateBatch(threadId, upstreamRoot, downstreamFile, skipProcess
       location.href = "/review?thread_id=" + encodeURIComponent(threadId);
       return; // finally 仍会恢复按钮，但页面随即跳转，无影响
     }
+    // 成功后记住本次实际使用的路径，下次工作台自动回填
+    try {
+      await api("/api/v1/config/last-paths", {
+        method: "POST",
+        body: { upstream_root: upstreamRoot, downstream_file_path: downstreamFile },
+      });
+    } catch (e) {
+      // 路径记忆失败不阻塞主流程
+    }
     if (data && data.status === "skipped_all") {
       toast(data.message || "全部工厂均已处理，无可提取工厂", 5000);
     } else if (data && data.status === "completed") {
