@@ -51,7 +51,8 @@ WRITE_BORDER = Border(left=_THIN_SIDE, right=_THIN_SIDE,
                       top=_THIN_SIDE, bottom=_THIN_SIDE)
 
 # C 级 short_name 自动回填：仅高置信匹配档允许（fuzzy/contains/none 走审核页建议卡人工确认）
-_AUTO_SHORT_NAME_METHODS = frozenset({"override", "alias", "alias_ci", "exact"})
+_AUTO_SHORT_NAME_METHODS = frozenset(
+    {"override", "alias", "alias_ci", "exact", "alias_folder"})
 
 
 def _apply_write_format(cell) -> None:

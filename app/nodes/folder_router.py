@@ -18,7 +18,8 @@ import logging
 from pathlib import Path
 
 from app.config import get_settings
-from app.factory_match import load_alias_map, match_factory_folder
+from app.factory_match import (
+    load_alias_map, load_folder_match_candidates, match_factory_folder)
 from app.logging_config import bind_context
 from app.state import AgentState
 
@@ -76,6 +77,7 @@ def folder_router(state: AgentState) -> dict:
             load_alias_map(),
             cutoff=settings.fuzzy_match_score_cutoff,
             overrides=overrides,
+            folder_candidates=load_folder_match_candidates(),
         )
         if folder_name:
             folder_path = str(upstream_root / folder_name)
@@ -101,7 +103,8 @@ def folder_router(state: AgentState) -> dict:
             "factory_name": factory,
             "folder_path": folder_path,
             "match_score": match_score,
-            # 匹配方式（override/alias/alias_ci/exact/fuzzy/contains/none）：
+            # 匹配方式（override/alias/alias_ci/exact/alias_folder/fuzzy/
+            # contains/none）：
             # Node6 C 级 short_name 自动回填与 Node5 alias_suggestion 均依赖本字段
             "match_method": match_method,
             "source_documents": source_documents,

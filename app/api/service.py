@@ -729,7 +729,8 @@ def _pre_extract_factories(
     启动全部 pending → 每个工厂 running → 缓存跳过 cached / 成功 done /
     异常 failed（error 记异常类型+摘要，截 200 字符）。
     """
-    from app.factory_match import load_alias_map, match_factory_folder
+    from app.factory_match import (
+        load_alias_map, load_folder_match_candidates, match_factory_folder)
     from app.nodes.extraction_node import _run_factory_session, _try_load_cached_session
 
     root_path = Path(upstream_root).expanduser()
@@ -739,6 +740,7 @@ def _pre_extract_factories(
 
     folders = [d.name for d in root_path.iterdir() if d.is_dir()]
     alias_map = load_alias_map()
+    folder_candidates = load_folder_match_candidates()
     cutoff = get_settings().fuzzy_match_score_cutoff
     progress = _PreExtractProgress(thread_id, factories) if thread_id else None
 
@@ -754,7 +756,8 @@ def _pre_extract_factories(
 
         # Node2 逻辑：匹配文件夹
         folder_name, score, method = match_factory_folder(
-            factory, folders, alias_map, cutoff=cutoff)
+            factory, folders, alias_map, cutoff=cutoff,
+            folder_candidates=folder_candidates)
         if not folder_name:
             logger.warning("[预提取] 工厂「%s」：未匹配到文件夹，跳过", factory)
             if progress:
@@ -1037,7 +1040,8 @@ def retry_factory_extraction(
         # 该工厂首次 folder_router 未匹配到文件夹（folder_path 为空），
         # retry 时自动重跑一次文件夹匹配，避免 update_state(as_node=NODE2)
         # 跳过 Node2 后永远 no_folder_matched。
-        from app.factory_match import load_alias_map, match_factory_folder
+        from app.factory_match import (
+            load_alias_map, load_folder_match_candidates, match_factory_folder)
         upstream_root = (
             snap.values.get("upstream_root") or get_settings().upstream_root)
         root_path = Path(upstream_root).expanduser()
@@ -1046,7 +1050,8 @@ def retry_factory_extraction(
             alias_map = load_alias_map()
             cutoff = get_settings().fuzzy_match_score_cutoff
             folder_name, score, method = match_factory_folder(
-                factory, folders, alias_map, cutoff=cutoff)
+                factory, folders, alias_map, cutoff=cutoff,
+                folder_candidates=load_folder_match_candidates())
             if folder_name:
                 validated_path = root_path / folder_name
                 matched_folder_name = folder_name
@@ -1594,11 +1599,13 @@ def _resolve_reopen_factory_folder(state: dict[str, Any], factory_name: str) -> 
 
     # 2) fallback：用工厂名重新匹配文件夹
     if upstream_root.is_dir():
-        from app.factory_match import load_alias_map, match_factory_folder
+        from app.factory_match import (
+            load_alias_map, load_folder_match_candidates, match_factory_folder)
         folders = [d.name for d in upstream_root.iterdir() if d.is_dir()]
         alias_map = load_alias_map()
         folder_name, _score, _method = match_factory_folder(
-            factory_name, folders, alias_map, cutoff=settings.fuzzy_match_score_cutoff
+            factory_name, folders, alias_map, cutoff=settings.fuzzy_match_score_cutoff,
+            folder_candidates=load_folder_match_candidates(),
         )
         if folder_name:
             return str(upstream_root / folder_name)
@@ -1727,6 +1734,40 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
         out_path = writer_mod._ensure_output_copy(fake_state)
         written = writer_mod._write_excel(fake_state, out_path)
         inserted, updated = writer_mod._upsert_db(fake_state)
+
+    # 回写 factory_outputs 快照：否则 reopen 的修改只落在 Excel/DB，
+    # 下次重开读到的仍是旧快照（reopen 数据源优先级 快照 > Excel 兜底）。
+    # 仅批次已结束（无挂起 interrupt）时更新——挂起中 update_state 会销毁
+    # Node5 interrupt 任务（langgraph 实测），进行中批次维持旧快照，该边界下
+    # 重开仍显示改前的值，属已知取舍（数据本身已写入 Excel/DB）。
+    try:
+        fresh = graph.get_state(_config(thread_id))
+        fresh_outputs = ((fresh.values or {}).get("factory_outputs")) or {}
+        raw = fresh_outputs.get(factory_name)
+        if fresh.next:
+            logger.info("[reopen] 批次仍挂起审核，跳过快照回写"
+                        "（避免销毁 interrupt）：%s", factory_name)
+        elif isinstance(raw, dict) and raw:
+            snap_fac = dict(raw)
+            snap_fac["calculated_items"] = items
+            new_outputs = dict(fresh_outputs)
+            new_outputs[factory_name] = snap_fac
+            graph.update_state(_config(thread_id),
+                               {"factory_outputs": new_outputs},
+                               as_node=NODE6)
+            logger.info("[reopen] 已回写 factory_outputs 快照：%s", factory_name)
+        elif isinstance(raw, list) and raw:
+            # 旧格式列表快照（仅 calculated_items）→ 整表替换
+            new_outputs = dict(fresh_outputs)
+            new_outputs[factory_name] = list(items)
+            graph.update_state(_config(thread_id),
+                               {"factory_outputs": new_outputs},
+                               as_node=NODE6)
+            logger.info("[reopen] 已回写 factory_outputs 旧格式快照：%s",
+                        factory_name)
+        # 无快照（reopen 走 Excel 兜底）：Excel 已更新，下次重开自一致，无需写
+    except Exception as e:  # noqa: BLE001 快照回写是辅助设施，不推翻已完成的写入
+        logger.warning("⚠️ reopen 快照回写失败: %s: %s", type(e).__name__, e)
 
     # 审计留痕：复用 _prepare_audit + _write_audit（仅 approved=True 路径）
     try:
@@ -2549,7 +2590,8 @@ def prescan_factory_aliases(
     目录不存在时 warnings 且全部工厂进 unmatched。
     """
     from app.factory_match import (
-        load_alias_map, match_factory_folder, recommend_candidates)
+        load_alias_map, load_folder_match_candidates,
+        match_factory_folder, recommend_candidates)
     from app.nodes.parse_downstream import parse_requirements
 
     settings = get_settings()
@@ -2584,10 +2626,12 @@ def prescan_factory_aliases(
         return result
 
     alias_map = load_alias_map()
+    folder_candidates = load_folder_match_candidates()
     cutoff = settings.fuzzy_match_score_cutoff
     for factory in factories:
         folder, score, method = match_factory_folder(
-            factory, folders, alias_map, cutoff=cutoff)
+            factory, folders, alias_map, cutoff=cutoff,
+            folder_candidates=folder_candidates)
         if folder and (method != "fuzzy" or score >= _PRESCAN_CERTAIN_SCORE):
             result["resolved"][factory] = {
                 "folder": folder, "score": score, "method": method}
