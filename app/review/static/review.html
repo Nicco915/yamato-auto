@@ -1201,6 +1201,8 @@ async function afterResumeSuccess(data, verb) {
     $("tb-factory").textContent = "工厂: " + (payload.factory_name || "-");
     renderAliasBar(); renderMissingBar(); renderCards(); renderDocSelect();
     selectCard(0);
+    // 推进到下一工厂后恢复跳过按钮（skipFactory 成功路径只置 disabled，无人在此恢复）
+    $("btn-skip").disabled = false;
     // 推进到下一工厂后重新计算导航按钮
     await loadFactoryList();
   } else {
