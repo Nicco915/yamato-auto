@@ -30,7 +30,7 @@ from app.db.models import ReviewAudit
 from app.db.session import get_session
 from app.extraction.llm_client import usage_tracker
 from app.extraction.session import SESSIONS_DIR
-from app.graph import NODE2, NODE4, NODE5, NODE6, get_graph
+from app.graph import NODE2, NODE4, NODE5, NODE6, NODE7, get_graph
 from app.logging_config import logging_context
 
 logger = logging.getLogger(__name__)
@@ -1740,6 +1740,9 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
     # 仅批次已结束（无挂起 interrupt）时更新——挂起中 update_state 会销毁
     # Node5 interrupt 任务（langgraph 实测），进行中批次维持旧快照，该边界下
     # 重开仍显示改前的值，属已知取舍（数据本身已写入 Excel/DB）。
+    # as_node 锚点必须用 NODE7（终点节点，出边只有 →END）：update_state 会按
+    # as_node 的出边重算 next；锚 NODE6 会让条件边 _route_after_writer 重路由
+    # 出 next=(NODE7,)，批次永远卡在「进行中」（2026-08-26 test-86 生产事故）。
     try:
         fresh = graph.get_state(_config(thread_id))
         fresh_outputs = ((fresh.values or {}).get("factory_outputs")) or {}
@@ -1754,7 +1757,7 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
             new_outputs[factory_name] = snap_fac
             graph.update_state(_config(thread_id),
                                {"factory_outputs": new_outputs},
-                               as_node=NODE6)
+                               as_node=NODE7)
             logger.info("[reopen] 已回写 factory_outputs 快照：%s", factory_name)
         elif isinstance(raw, list) and raw:
             # 旧格式列表快照（仅 calculated_items）→ 整表替换
@@ -1762,7 +1765,7 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
             new_outputs[factory_name] = list(items)
             graph.update_state(_config(thread_id),
                                {"factory_outputs": new_outputs},
-                               as_node=NODE6)
+                               as_node=NODE7)
             logger.info("[reopen] 已回写 factory_outputs 旧格式快照：%s",
                         factory_name)
         # 无快照（reopen 走 Excel 兜底）：Excel 已更新，下次重开自一致，无需写
