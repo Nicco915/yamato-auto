@@ -199,7 +199,13 @@ def aggregate_ticket(
     has_set_split = False
 
     def _enrich(row: DetailRow, src_rows_name: str) -> None:
-        """映射查询：带出 inspection / unit_code；未命中记 warning 不阻断。"""
+        """映射查询：带出 inspection / unit_code；未命中记 warning 不阻断。
+
+        命中但 unit_code 为空（None/空串/纯空白）也记 warning：后续会有
+        功能自动创建「品名存在但 unit_code 为空」的映射行，届时 lookup
+        命中空行、「未命中产品映射」告警消失，空单位代码会静默写进
+        报关单，必须单独告警兜底。
+        """
         m = lookup(mapping_index, sku="", name_cn=row.name_cn)
         if m is None:
             result.warnings.append(f"未命中产品映射：{row.name_cn}")
@@ -208,6 +214,10 @@ def aggregate_ticket(
         else:
             row.inspection = bool(_get(m, "inspection_required", False))
             row.unit_code = _get(m, "unit_code", "") or ""
+            if not str(row.unit_code).strip():
+                result.warnings.append(
+                    f"「{row.name_cn}」命中产品映射但单位代码为空"
+                )
 
     for name in agg_order:
         a = agg[name]
