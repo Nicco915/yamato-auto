@@ -575,7 +575,10 @@ async function fbLoad(path) {
     if (data.drives && data.drives.length > 0) {
       drivesDiv.style.display = 'block';
       drivesDiv.innerHTML = data.drives.map(function(d) {
-        return '<button onclick="fbLoad(\'' + d + '\')" style="margin:2px;padding:4px 10px;cursor:pointer">' + d + '</button>';
+        // 盘符路径（如 C:\）末尾反斜杠紧贴闭合引号会转义出语法错误，
+        // 必须和目录条目同样转义后再进 onclick（见下方 safePath）
+        const safeDrive = d.replace(/\\/g, '\\\\');
+        return '<button onclick="fbLoad(\'' + safeDrive + '\')" style="margin:2px;padding:4px 10px;cursor:pointer">' + d + '</button>';
       }).join('');
     } else {
       drivesDiv.style.display = 'none';
