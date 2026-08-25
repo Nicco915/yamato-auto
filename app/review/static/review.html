@@ -507,7 +507,7 @@ function renderCards() {
     const metaFields = `
       <div class="grid" style="margin-top:6px">
         <label>中文品名
-          <input data-idx="${idx}" data-field="name_cn" value="${esc(item.name_cn || "")}" oninput="onMetaEdit(this)">
+          <input data-idx="${idx}" data-field="name_cn" value="${esc(item.name_cn || "")}" oninput="onMetaEdit(this)" onblur="onNameCnBlur(this)">
           ${item.is_new_sku ? `<span class="field-hint" id="hint-name_cn-${idx}"></span>` : ""}
         </label>
         <label>HS 编码
@@ -630,6 +630,67 @@ function onMetaEdit(input) {
   items[idx]._modified = true;
   markCardModified(idx);
   refreshSubmitState();
+}
+
+/* S3：新 SKU 中文品名失焦 → 按品名精确查产品映射，命中自动带出税号/商检。
+   触发门槛（全部满足才查）：
+   1) 新 SKU 卡（is_new_sku 或 _added——老 SKU 已有主数据值，不打扰）；
+   2) 品名非空；
+   3) 【铁律】税号字段当前为空——绝不覆盖人工已填（或上次带出后人工改过）的内容。
+   命中后走与手填同一条路径：写 items[idx] 字段 + _modified + markCardModified，
+   保证提交契约一致；未命中/网络异常一律静默，不打断审核流。 */
+async function onNameCnBlur(input) {
+  const idx = +input.dataset.idx;
+  const it = items[idx];
+  if (!it) return;
+  if (!(it.is_new_sku || it._added)) return;
+  const name = String(it.name_cn || "").trim();
+  if (!name) return;
+  if (String(it.hs_code ?? "").trim()) return;   // 铁律：不覆盖人工已填税号
+  let d;
+  try {
+    const r = await fetch("/api/v1/mappings/products/lookup-by-name?name=" + encodeURIComponent(name));
+    if (!r.ok) return;
+    d = await r.json();
+  } catch (e) { return; }                        // 网络异常静默
+  if (!d.found) return;                          // 未命中静默
+  if (d.hs_code) it.hs_code = d.hs_code;
+  // 商检同理不覆盖人工已填；映射布尔 → 卡片文本框口径 "1"=需要 / "0"=不需要
+  if (String(it.inspection_required ?? "").trim() === "") {
+    it.inspection_required = d.inspection_required ? "1" : "0";
+  }
+  // 卡片暂无英文品名输入框，防御性带出（未来加字段即生效）
+  if (d.name_en && it.name_en !== undefined) it.name_en = d.name_en;
+  it._modified = true;
+  // 只同步 DOM 输入框值，不整卡重渲染（避免其他输入框失焦/滚动跳变）
+  const card = $("card-" + idx);
+  if (card) {
+    const hsInp = card.querySelector('input[data-field="hs_code"]');
+    if (hsInp) hsInp.value = it.hs_code;
+    const inspInp = card.querySelector('input[data-field="inspection_required"]');
+    if (inspInp) inspInp.value = it.inspection_required;
+  }
+  markCardModified(idx);
+  showMappingLookupHint(idx);
+  refreshSubmitState();
+}
+
+/* S3：浅色小提示——HS 编码字段下方灰色小字「已从产品映射带出」（复用 field-hint 样式，
+   仅改灰色区别于弱警告橙；人工再改字段后提示仍保留，语义为"初始值来自映射"） */
+function showMappingLookupHint(idx) {
+  const card = $("card-" + idx);
+  if (!card) return;
+  const hsInp = card.querySelector('input[data-field="hs_code"]');
+  if (!hsInp) return;
+  let span = $("hint-mapping-" + idx);
+  if (!span) {
+    span = document.createElement("span");
+    span.className = "field-hint";
+    span.id = "hint-mapping-" + idx;
+    span.style.color = "#9ca3af";   // 浅灰：纯信息提示，非警告
+    hsInp.parentElement.appendChild(span);
+  }
+  span.textContent = "已从产品映射带出，可人工修改";
 }
 
 function markCardModified(idx) {

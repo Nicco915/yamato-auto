@@ -3,6 +3,7 @@
 
 端点：
 - GET    /api/v1/mappings/products          映射列表（?q= 模糊搜品名/税号/供应商，?incomplete=true 只看待完善）
+- GET    /api/v1/mappings/products/lookup-by-name   按品名精确查映射（审核页新 SKU 品名失焦自动带出税号/商检）
 - POST   /api/v1/mappings/products          新增映射
 - PUT    /api/v1/mappings/products/{id}     编辑映射（sku_code 非空时回填 factory_skus）
 - DELETE /api/v1/mappings/products/{id}     删除映射
@@ -199,6 +200,39 @@ def list_products(
             query = query.filter(ProductMapping.is_incomplete.is_(True))
         rows = query.order_by(ProductMapping.id).all()
         return [_product_dict(m) for m in rows]
+
+
+@router.get("/products/lookup-by-name")
+def lookup_product_by_name(name: str = Query(default="")):
+    """按中文品名**精确**查产品映射（审核页新 SKU 填完品名失焦时自动带出税号/商检）。
+
+    精确匹配（strip 前后空白，不用 LIKE，避免误带出相似品名）；
+    同品名多行时取 updated_at 最新的一条，并带 ambiguous=true（前端可提示可不处理）。
+    未命中返回 {"found": false}（前端静默，不打断审核流）。
+    """
+    key = (name or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="品名不能为空")
+    with get_session() as s:
+        rows = (
+            s.query(ProductMapping)
+            .filter(ProductMapping.product_name_cn == key)
+            # 最新更新优先；updated_at 可能为 NULL 或同秒并列，id 倒序兜底保证确定性
+            .order_by(ProductMapping.updated_at.desc(), ProductMapping.id.desc())
+            .all()
+        )
+        if not rows:
+            return {"found": False}
+        m = rows[0]
+        return {
+            "found": True,
+            "product_name_cn": m.product_name_cn,
+            "hs_code": m.hs_code,
+            "inspection_required": bool(m.inspection_required),
+            "name_en": m.name_en,
+            "unit_code": m.unit_code,
+            "ambiguous": len(rows) > 1,
+        }
 
 
 @router.post("/products", status_code=201)
