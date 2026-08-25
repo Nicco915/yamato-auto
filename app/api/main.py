@@ -38,6 +38,10 @@ async def lifespan(app: FastAPI):
     # 之后才用自带 dictConfig 重配 uvicorn 系列 logger，把接管结果覆盖掉；
     # startup 阶段再接管一次，确保 uvicorn 日志统一走 root 的 handler/格式
     _takeover_uvicorn()
+    # 启动幂等迁移：product_mappings.sku_code 旧列 → product_mapping_skus 子表
+    # （函数内部已兜底：失败只记 warning，绝不阻断启动）
+    from app.db.sync import ensure_mapping_skus_migrated
+    ensure_mapping_skus_migrated()
     yield
 
 

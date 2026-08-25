@@ -158,7 +158,9 @@ class ProductMapping(Base):
     __tablename__ = 'product_mappings'
     id = Column(Integer, primary_key=True, autoincrement=True)
     product_name_cn = Column(String, nullable=False, index=True)   # 中文品名（主匹配键）
-    sku_code = Column(String, ForeignKey('factory_skus.sku_code'), nullable=True)   # SKU 级精确匹配
+    # 【已废弃】SKU 级精确匹配旧列：已迁移到 product_mapping_skus 子表（一品名多 SKU），
+    # 由 app.db.sync.ensure_mapping_skus_migrated 只读搬迁；列保留不删、值不清空（回滚保险）
+    sku_code = Column(String, ForeignKey('factory_skus.sku_code'), nullable=True)
     factory_id = Column(Integer, ForeignKey('factories.factory_id'), nullable=True)
     hs_code = Column(String, nullable=True)              # 税号
     supplier_name = Column(String, nullable=True)        # 供应商报关全称（如 青岛东基恒塑料包装有限公司）
@@ -167,6 +169,23 @@ class ProductMapping(Base):
     unit_code = Column(String, nullable=True)            # 计量单位代码（自定义七，如 '007'）
     is_incomplete = Column(Boolean, nullable=False, default=False)  # 待完善标记（Node5 反向生成时 True）
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    # SKU 关联子表（一品名多 SKU）；删映射行级联删子表行
+    sku_links = relationship("ProductMappingSku", cascade="all, delete-orphan")
+
+
+# ProductMappingSku 表——产品映射的 SKU 关联子表（一品名对多 SKU）
+# sku_code 故意不加 ForeignKey：factory_skus.sku_code 本身无唯一约束，
+# 旧列的外键也是弱引用；仅靠 UniqueConstraint(mapping_id, sku_code) 防重复。
+class ProductMappingSku(Base):
+    __tablename__ = 'product_mapping_skus'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    mapping_id = Column(Integer, ForeignKey('product_mappings.id'), nullable=False, index=True)
+    sku_code = Column(String, nullable=False)              # 关联 SKU（弱引用，不加外键）
+
+    __table_args__ = (
+        UniqueConstraint("mapping_id", "sku_code", name="unique_mapping_sku"),
+    )
 
 
 # ProductGroup 表——品名组（套装拆分/同箱分摊）

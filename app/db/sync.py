@@ -1,15 +1,57 @@
 """product_mappings ↔ factory_skus 双向同步工具（供 UI 与脚本复用）。
 
 正向 sync_mapping_to_sku：品名映射 Tab 编辑 → 回填 SKU 主数据；
-反向 sync_sku_to_mapping：SKU 主数据 Tab 编辑 → 回填品名映射（仅 SKU 级行）。
+反向 sync_sku_to_mapping：SKU 主数据 Tab 编辑 → 回填品名映射（仅 SKU 级行）；
+启动迁移 ensure_mapping_skus_migrated：旧 sku_code 单列只读搬迁到
+product_mapping_skus 子表（幂等，失败只记 warning 不阻断启动）。
 """
 import logging
 
 from sqlalchemy.orm import Session
 
-from app.db.models import FactorySKU, ProductMapping
+from app.db.models import FactorySKU, ProductMapping, ProductMappingSku
 
 logger = logging.getLogger(__name__)
+
+
+def ensure_mapping_skus_migrated() -> int:
+    """启动幂等迁移：product_mappings.sku_code 旧列 → product_mapping_skus 子表。
+
+    对所有 sku_code 非空（NULL 与空串都跳过）的映射行，若子表中没有对应
+    (mapping_id, sku_code) 则插入；旧列值不清空（只读搬迁，回滚保险）。
+    幂等可重跑；失败只记 warning，绝不阻断启动。返回本次新增的子表行数。
+    """
+    from app.db.session import get_session
+
+    try:
+        with get_session() as session:
+            rows = (
+                session.query(ProductMapping)
+                .filter(ProductMapping.sku_code.isnot(None))
+                .filter(ProductMapping.sku_code != "")
+                .all()
+            )
+            existing = {
+                (link.mapping_id, link.sku_code)
+                for link in session.query(ProductMappingSku).all()
+            }
+            added = 0
+            for m in rows:
+                key = (m.id, m.sku_code)
+                if key in existing:
+                    continue  # 幂等：已搬迁过的跳过
+                session.add(ProductMappingSku(mapping_id=m.id, sku_code=m.sku_code))
+                existing.add(key)
+                added += 1
+            session.commit()
+        if added:
+            logger.info("[迁移] product_mapping_skus 搬迁完成：新增 %d 行 SKU 关联", added)
+        else:
+            logger.debug("[迁移] product_mapping_skus 无需搬迁（0 行）")
+        return added
+    except Exception as e:  # noqa: BLE001 迁移失败绝不阻断启动
+        logger.warning("[迁移] product_mapping_skus 搬迁失败（不阻断启动）: %s", e)
+        return 0
 
 
 def sync_mapping_to_sku(session: Session, mapping: ProductMapping) -> int:
