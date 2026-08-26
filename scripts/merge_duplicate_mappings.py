@@ -92,7 +92,10 @@ def apply_plans(plans: list[dict]) -> dict:
             keep = s.get(ProductMapping, p["keep_id"])
             if keep is None:
                 continue
-            existing = set(_mapping_sku_codes(keep))
+            # existing 只看子表实际行：不能用 _mapping_sku_codes（带旧列兜底），
+            # 否则子表未迁移的保留行会把旧列里的自身 SKU 误判为「已存在」，
+            # 导致它永远不会进子表（本机实测丢行，靠旧列兜底才没显示出来）
+            existing = {link.sku_code for link in keep.sku_links}
             for code in p["skus"]:
                 if code not in existing:
                     keep.sku_links.append(_new_link(code))

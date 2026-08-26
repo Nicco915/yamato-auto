@@ -145,3 +145,20 @@ def test_apply_merged_row_incomplete_when_hs_blank():
     plans, _ = mdm.plan_merges()
     mdm.apply_plans(plans)
     assert _mapping(keep).is_incomplete is True
+
+
+def test_apply_legacy_only_rows_move_all_skus():
+    """回归：子表未迁移的存量行（只有旧列 sku_code、子表为空）合并时，
+    保留行自身的 SKU 也必须进子表（本机实测曾丢行——existing 误用
+    带旧列兜底的 _mapping_sku_codes，把自身 SKU 误判为已存在）。"""
+    with get_session() as s:
+        for code in ("e01", "e02", "e03"):
+            s.add(ProductMapping(product_name_cn="旧结构品", supplier_name="供应商E",
+                                 hs_code="9617009000", unit_code="007",
+                                 sku_code=code))   # 只写旧列，子表为空
+        s.commit()
+    plans, _ = mdm.plan_merges()
+    assert len(plans) == 1 and plans[0]["skus"] == ["e01", "e02", "e03"]
+    mdm.apply_plans(plans)
+    keep_id = plans[0]["keep_id"]
+    assert _links(keep_id) == ["e01", "e02", "e03"]  # 一个都不能少
