@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -92,6 +93,27 @@ def _scan_text(text: str) -> tuple[set[str], bool, bool, bool]:
     )
 
 
+def _doc_text_via_soffice(file_path: str) -> str | None:
+    """textutil 不可用时的 doc 文本回退：soffice(LibreOffice) 转 PDF → 抽文本层。
+
+    提取段（pipeline.extract_folder / agent._route_extract）的 .doc 通道本就
+    走 soffice 转换，扫描段原先只认 macOS 自带的 textutil，导致 Windows/Linux
+    上 .doc 在扫描阶段即被判 unsupported、永远到不了提取段
+    （2026-08-27 亿钻 商业发票/装箱单 .doc 生产教训）。
+
+    返回 None = soffice 也不可用/转换失败（调用方维持原 unsupported 判定）；
+    返回 "" = 转换成功但 PDF 无文本层（罕见：扫描件转 doc），按无信号处理，
+    人工可在审核页用「重新识别」强制走视觉通道。
+    """
+    from .pipeline import _convert_doc_to_pdf  # 延迟导入：仅 textutil 缺席的平台需要
+    with tempfile.TemporaryDirectory() as tmp:
+        pdf = _convert_doc_to_pdf(file_path, tmp)
+        if pdf is None:
+            return None
+        text, has_text = pdf_to_text(pdf)
+        return text if has_text else ""
+
+
 def scan_file(file_path: str) -> FileProfile:
     """扫描单个文件，产出内容画像（不调 LLM）。"""
     suffix = Path(file_path).suffix.lower()
@@ -107,8 +129,16 @@ def scan_file(file_path: str) -> FileProfile:
                                    error="无文本层（扫描件），目标识别器无法扫描")
             channel = "pdf_text"
         elif suffix in (".doc", ".docx"):
-            html = doc_to_html(file_path)
-            text = re.sub(r"<[^>]+>", " ", html)
+            try:
+                html = doc_to_html(file_path)
+                text = re.sub(r"<[^>]+>", " ", html)
+            except UnsupportedFileError:
+                # textutil 缺席（Windows/Linux）→ soffice 回退；仍不可用则
+                # 维持原 unsupported 判定（原 error 文案含 LibreOffice 安装指引）
+                fallback = _doc_text_via_soffice(file_path)
+                if fallback is None:
+                    raise
+                text = fallback
             channel = "doc"
         elif suffix in (".jpg", ".jpeg", ".png"):
             return FileProfile(path=file_path, channel="image",
