@@ -10,6 +10,10 @@
                 支持翻页/缩放；soffice 不可用或转换失败回退 HTML 快照）；
                 csv 无格式可还原，固定走 HTML 快照
         图片  → 原样流式返回
+- GET  /api/v1/review/{thread_id}/document/hit    SKU 高亮定位（左屏叠加层数据源）
+        ?path=<绝对路径>&q=<搜索文本>
+        → {"hits": [{"page": 页码, "rects": [[x0,y0,x1,y1] 页面分数坐标]}, ...]}
+        无文本层/无命中/搜索失败一律返回空 hits，前端静默降级为普通翻页
 
 安全：path 经 resolve() 后必须落在白名单根目录内（默认 settings.upstream_root），
 否则 403，防目录穿越。缓存键含文件 mtime，文件变更自动失效。
@@ -300,6 +304,59 @@ def _render_excel_pages_cached(p: Path) -> list[bytes] | None:
 
 
 # ---------------------------------------------------------------------------
+# SKU 高亮定位：在 PDF 文本层搜索 SKU，返回整行扩展后的页面分数坐标
+# ---------------------------------------------------------------------------
+
+
+def _find_text_hits(pdf_path: str, query: str) -> list[dict]:
+    """在 PDF 各页搜索 query，返回命中页码 + 整行扩展后的页面相对分数坐标。
+
+    - 逐页 page.search_for(query)；无文本层（扫描件）/无命中 → 空列表，不抛错；
+    - 分数坐标 = rect / page.rect 宽高：PNG 渲染是页面的等比缩放，分数坐标
+      与渲染 dpi 无关，前端直接当百分比用（缩放时高亮框天然跟随）；
+    - 整行扩展：取垂直中心落在命中 rect y 带（上下各放宽 50% 带高容差）内的
+      所有词，横向扩到这些词的 min(x0)/max(x1)（视觉上即整行高亮）；
+      y 带保持命中 rect 原样；x 范围 cap 在 [0, 页宽]；
+    - 返回 [{"page": 1-based 页码, "rects": [[x0,y0,x1,y1], ...]}]，跳过无命中页。
+    """
+    import fitz  # 模块顶部已引入 vision_channel（其依赖 fitz），此处局部导入保持函数自洽
+
+    hits: list[dict] = []
+    doc = fitz.open(pdf_path)
+    try:
+        for page_index in range(len(doc)):
+            page = doc[page_index]
+            found = page.search_for(query)
+            if not found:
+                continue
+            pw = page.rect.width or 1.0
+            ph = page.rect.height or 1.0
+            words = page.get_text("words")  # (x0,y0,x1,y1,word,block,line,word_no)
+            rects: list[list[float]] = []
+            for r in found:
+                y0, y1 = r.y0, r.y1
+                band_h = (y1 - y0) or 1.0
+                cy0, cy1 = y0 - band_h * 0.5, y1 + band_h * 0.5
+                row_words = [w for w in words if cy0 <= (w[1] + w[3]) / 2 <= cy1]
+                if row_words:
+                    x0 = min(min(w[0] for w in row_words), r.x0)
+                    x1 = max(max(w[2] for w in row_words), r.x1)
+                else:
+                    x0, x1 = r.x0, r.x1
+                x0 = max(0.0, min(x0, pw))
+                x1 = max(0.0, min(x1, pw))
+                rects.append([
+                    round(x0 / pw, 5), round(y0 / ph, 5),
+                    round(x1 / pw, 5), round(y1 / ph, 5),
+                ])
+            if rects:
+                hits.append({"page": page_index + 1, "rects": rects})
+    finally:
+        doc.close()
+    return hits
+
+
+# ---------------------------------------------------------------------------
 # 数据源后端（生产=LangGraph checkpoint；演示=mock）
 # ---------------------------------------------------------------------------
 
@@ -465,6 +522,47 @@ async def get_document(
         raise HTTPException(status_code=500, detail=f"单据渲染失败: {e}") from e
 
     raise HTTPException(status_code=415, detail=f"不支持的文件类型: {suffix}")
+
+
+# 可搜索定位的单据类型（csv 无格式快照、图片无文本层，不支持命中定位）
+_HIT_SEARCHABLE_SUFFIXES = PDF_SUFFIXES | EXCEL_VIA_PDF_SUFFIXES
+
+
+@router.get("/api/v1/review/{thread_id}/document/hit")
+async def get_document_hit(
+    thread_id: str,
+    path: str = Query(..., description="单据文件绝对路径（必须在白名单内）"),
+    q: str = Query(..., description="搜索文本（通常是 SKU 条码）"),
+) -> dict[str, Any]:
+    """左屏高亮定位：在单据（PDF / Excel 转换出的 PDF）中搜索 q，
+    返回命中页码 + 整行扩展的页面分数坐标（前端叠加层画框用）。
+
+    定位是增强功能：无文本层 / 无命中 / 转换或搜索失败一律返回空 hits
+    （带 reason），前端静默降级为普通翻页，绝不 500 阻塞审核。
+    """
+    q = q.strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="q 不能为空")
+    p = _resolve_whitelisted(path, thread_id=thread_id)
+    suffix = p.suffix.lower()
+    if suffix not in _HIT_SEARCHABLE_SUFFIXES:
+        return {"hits": [], "total": 0, "reason": "unsupported_type"}
+
+    if suffix in PDF_SUFFIXES:
+        pdf_path: Path | None = p
+    else:
+        # Excel：复用 /document 同一条 soffice→PDF 磁盘缓存，不重复转换
+        pdf_path = await asyncio.to_thread(_excel_to_pdf_cached, p)
+        if pdf_path is None:
+            return {"hits": [], "total": 0, "reason": "pdf_unavailable"}
+
+    try:
+        hits = await asyncio.to_thread(_find_text_hits, str(pdf_path), q)
+    except Exception as e:  # noqa: BLE001 - 定位失败降级为空，不阻塞审核
+        logger.warning("[高亮定位] 搜索失败 path=%s: %s: %s", p, type(e).__name__, e)
+        return {"hits": [], "total": 0, "reason": "search_failed"}
+    total = sum(len(h["rects"]) for h in hits)
+    return {"hits": hits, "total": total}
 
 
 # ---------------------------------------------------------------------------
