@@ -34,7 +34,7 @@ _BACKUP_COUNT = 5
 _PROMPT_CAP = 100_000   # llm_request 的 messages 序列化上限
 _RESULT_CAP = 20_000    # tool_result / confirm_execute 的 result 序列化上限
 
-# 敏感参数键：命中即脱敏（与 loop.py 的 _SENSITIVE_KEY_PARTS 保持同一口径）
+# 敏感参数键：命中即脱敏（与 executor.py 的 _SENSITIVE_KEY_PARTS 保持同一口径）
 _SENSITIVE_KEY_PARTS = ("api_key", "apikey", "token", "secret", "password", "passwd")
 
 _logger: logging.Logger | None = None

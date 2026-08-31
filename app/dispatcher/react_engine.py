@@ -2,9 +2,8 @@
 
 设计要点：
 
-1. 双引擎并存期：DISPATCHER_ENGINE=react 时 handle_message 走本引擎，
-   legacy（缺省）仍走 loop.run_dispatch 手写循环，行为零变化。迁移验证
-   完成后 legacy 路径才退役。
+1. 唯一引擎：legacy（triage 分诊 + loop 手写循环）已删除（2026-08-31），
+   handle_message 固定走本引擎。
 
 2. 引擎本体极薄：只做 prompt 组装（react_prompt + L2 操作记忆上下文）、
    消息互转（session.history 的 {"role","content"} dict → HumanMessage/
@@ -13,15 +12,15 @@
    的闭包里（见 lc_tools.py 模块 docstring），引擎只读 collector 与
    session 状态，把图执行结果映射成对外返回契约。
 
-3. 结果映射优先级（与 legacy 循环的返回形态一一对应）：
+3. 结果映射优先级：
    soft_confirm（黄灯反问已布防）→ pending（影子写确认卡已存）→
    clarify（preview blocked 业务硬校验拦截）→ 正常终复（末条消息
    content——硬停时是 ToolMessage、正常结束是 AIMessage，都取 .content）。
-   每条分支 record_turn 写对话历史 + on_progress final 事件，与 legacy
+   每条分支 record_turn 写对话历史 + on_progress final 事件，与既有
    循环同一口径，前端/SSE 无感知。
 
 4. 超轮兜底：recursion_limit=12 打满（模型反复调工具不收敛）时返回
-   拆分提示文案，与 legacy 超 MAX_ROUNDS 的兜底一致。注意 v2 的
+   拆分提示文案，与既有超轮兜底一致。注意 v2 的
    create_react_agent 用 remaining_steps 截断——不抛 GraphRecursionError，
    而是以一条内容为 _RECURSION_SENTINEL 的 AIMessage 终止图
    （chat_agent_executor._are_more_steps_needed 分支），两条路径都要识别。
@@ -40,9 +39,9 @@ from app.dispatcher.sessions import DispatcherSession
 
 logger = logging.getLogger(__name__)
 
-RECURSION_LIMIT = 12  # react 图最大步数（对应 legacy 的 MAX_ROUNDS 防死循环）
+RECURSION_LIMIT = 12  # react 图最大步数（防工具调用死循环）
 
-# 超轮兜底文案（与 loop.py 超 MAX_ROUNDS 的兜底一致）
+# 超轮兜底文案
 _FALLBACK_TEXT = "处理步骤过多，请把问题拆小一点再问。"
 
 # v2 create_react_agent 的 remaining_steps 截断哨兵：remaining_steps < 2 且
@@ -78,7 +77,7 @@ def run_dispatch_react(message: str, session: DispatcherSession, *,
                        ) -> dict:
     """ReAct 调度主入口：组装 prompt/工具/消息 → agent.invoke → 结果映射。
 
-    返回形态（与 legacy run_dispatch 对齐）：
+    返回形态：
     - {"status": "ok", "message": 最终回复}（references 非空时附 references）
     - {"status": "ok", "intent": "soft_confirm", "message": 反问文案}
       （黄灯反问已布防，等操作员一轮内「是/算了」由入口短路消费）
@@ -89,8 +88,8 @@ def run_dispatch_react(message: str, session: DispatcherSession, *,
       （影子写工具已生成确认卡，等 execute_confirmed 走人工确认通道）
     - 超 recursion_limit 的兜底 {"status": "ok", "message": 拆分提示}
     """
-    # system prompt：react 专用 + L2 操作记忆上下文（注入语义同 loop.py）
-    # session_id 一并传入：自动追加 pinned 上下文段（与 legacy 引擎对齐）
+    # system prompt：react_prompt + L2 操作记忆上下文
+    # session_id 一并传入：自动追加 pinned 上下文段
     sys_prompt = prompts.react_prompt(phase, session_id)
     if session_id:
         from app.dispatcher.memory import OperationMemory
@@ -131,7 +130,7 @@ def run_dispatch_react(message: str, session: DispatcherSession, *,
         return {"status": "ok", "message": _FALLBACK_TEXT}
 
     # v2 remaining_steps 截断：末条是哨兵 AIMessage（模型仍想调工具但步数
-    # 耗尽），同样走超轮兜底（与 legacy 一致：不写对话历史）
+    # 耗尽），同样走超轮兜底（不写对话历史）
     last = result["messages"][-1] if result.get("messages") else None
     last_content = getattr(last, "content", "") if last is not None else ""
     if not isinstance(last_content, str):

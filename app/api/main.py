@@ -786,7 +786,7 @@ async def dispatcher_history(session_id: str = ""):
                                 detail="session_id 过长（上限 128 字符）")
 
         from app.dispatcher import sessions as _sessions
-        from app.dispatcher.loop import ACTION_TTL_SEC
+        from app.dispatcher.executor import ACTION_TTL_SEC
 
         # 先 peek 内存（快路径）
         sess = _sessions.peek_session(session_id)

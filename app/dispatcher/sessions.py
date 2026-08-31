@@ -14,13 +14,12 @@ _get_session/_record_turn（TTL 惰性清理 + 总量淘汰最旧），但**独�
   防止 LLM/前端在确认间隙篡改内容；
 - tool_history：工具调用审计流水（含确认结果），供界面回放"Agent 做过
   什么、操作员批没批"，也是排查"它为什么说已执行"类事故的依据；
-- current_slots / current_target_tool：Triage 分诊层的多轮参数收集
-  槽位——操作员分多轮才把写工具参数说全时，已提取参数暂存于此，
-  凑齐进 loop 生成 pending_action、或用户中止/换话题时清空；
-- soft_pending：Triage 黄灯区（0.6–0.8 置信的写工具请求）的软挂起
+- current_slots 已随 legacy（Triage 分诊层）删除：react 引擎的多轮协商由
+  模型自主完成，参数暂存不再需要代码侧槽位；
+- soft_pending：黄灯区（模型对写工具意图不确定）的软挂起
   状态——确认式反问已发出、等操作员一轮内答复，"是"则按已存意图
-  直接进 loop（不再过 triage），"算了"则全清，其他消息清挂起后
-  正常走新一轮分诊。
+  直接出确认卡（不进 LLM），"算了"则全清，其他消息清挂起后
+  正常走引擎。
 
 存储为进程内 dict：重启即丢（可接受，pending 状态本就短命），需要跨重启
 持久时再迁 app/db。锁只保护 dict 读写；session 本体在锁外被修改（含 LLM
@@ -53,7 +52,7 @@ class DispatcherSession:
     """单会话状态：对话历史 + 待确认写操作信封 + 工具调用审计流水。"""
 
     __slots__ = ("session_id", "history", "pending_action", "tool_history", "updated_at",
-                 "current_slots", "current_target_tool", "soft_pending",
+                 "soft_pending",
                  "pending_file_selection")
 
     def __init__(self, session_id: str | None = None) -> None:
@@ -67,10 +66,7 @@ class DispatcherSession:
         # {"ts", "tool", "args_summary", "result_summary", "confirmed"}
         self.tool_history: list[dict] = []
         self.updated_at: float = time.time()
-        # Triage 多轮参数收集槽位：未凑齐的工具参数 + 对应目标工具名
-        self.current_slots: dict = {}
-        self.current_target_tool: str | None = None
-        # Triage 黄灯区软挂起（一轮有效）：
+        # 黄灯区软挂起（一轮有效）：
         # {"target_tool": str, "slots": dict, "question": str, "armed": True}
         self.soft_pending: dict | None = None
         # UI 文件选择挂起：request_file_selection 工具触发后等待用户选择
@@ -211,7 +207,7 @@ def _hydrate_from_db(session_id: str) -> DispatcherSession | None:
                 try:
                     action = json.loads(row.pending_action_json)
                     # 延迟 import 避免循环依赖
-                    from app.dispatcher.loop import ACTION_TTL_SEC
+                    from app.dispatcher.executor import ACTION_TTL_SEC
                     created_at = float(action.get("created_at", 0))
                     if time.time() - created_at > ACTION_TTL_SEC:
                         # 陈旧：清 DB
@@ -384,24 +380,6 @@ def clear_pending(session: DispatcherSession) -> None:
     persist_pending(session)
 
 
-def set_slots(session: DispatcherSession, target_tool: str | None,
-              slots: dict) -> None:
-    """写入槽位状态（Triage 多轮参数收集用，凑齐进 loop 后由调用方清空）。"""
-    session.current_target_tool = target_tool
-    session.current_slots = dict(slots or {})
-
-
-def clear_slots(session: DispatcherSession) -> None:
-    """清空槽位状态（pending_action 创建 / confirm 终态 / qa 换话题 / 用户中止时调用）。
-
-    软挂起 soft_pending 一并清：换话题/中止/终态时状态必须一致归零，
-    否则下一轮会被入口短路误消费。
-    """
-    session.current_slots = {}
-    session.current_target_tool = None
-    session.soft_pending = None
-
-
 def set_soft_pending(session: DispatcherSession, tool: str, slots: dict,
                      question: str) -> None:
     """写入黄灯区软挂起（确认式反问已发出，等操作员一轮内答复）。"""
@@ -443,8 +421,6 @@ __all__ = [
     "record_tool",
     "persist_pending",
     "clear_pending",
-    "set_slots",
-    "clear_slots",
     "set_soft_pending",
     "clear_soft_pending",
     "set_file_selection_request",

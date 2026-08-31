@@ -15,7 +15,7 @@
      session.pending_action（服务端持有，防 LLM/前端在确认间隙篡改），
      然后硬停本轮 react 循环，等 execute_confirmed 走人工确认通道。
      一次一确认：pending_action 非空时拒绝再发起（代码保险，与
-     loop.py 语义一致）；
+     确认门语义一致）；
    - preview 返回 blocked=True（业务硬校验失败）时不让 LLM 圆场，直接转
      clarify 文案终止循环。
 
@@ -60,7 +60,7 @@ from app.dispatcher.tools import TOOLS, Tool, validate_args, visible_tools
 
 logger = logging.getLogger(__name__)
 
-TOOL_RESULT_CAP = 6000  # 只读工具结果 JSON 序列化后回喂 LLM 的字符上限（同 loop.py）
+TOOL_RESULT_CAP = 6000  # 只读工具结果 JSON 序列化后回喂 LLM 的字符上限
 
 # 一次一确认的竞态防线：ToolNode 对同一条 AIMessage 的多个工具调用是
 # 线程池并发执行的（executor.map），「查 pending 为空 → preview → 存
@@ -85,7 +85,7 @@ class RequestCollector:
 
 
 # ---------------------------------------------------------------------------
-# 紧凑摘要（与 loop.py 同口径：写 tool_history / on_progress 用，截断防爆）
+# 紧凑摘要（写 tool_history / on_progress 用，截断防爆）
 # ---------------------------------------------------------------------------
 
 def _args_summary(args: dict) -> str:
@@ -209,7 +209,7 @@ def build_pending_action(tool_name: str, args: dict,
                          collector: RequestCollector | None = None,
                          on_progress: Callable[[dict], None] | None = None,
                          session_id: str | None = None) -> dict:
-    """写工具预览 + 存 pending_action（绝不执行），与 loop.py 确认门语义一致。
+    """写工具预览 + 存 pending_action（绝不执行），与 executor.py 确认门语义一致。
 
     返回 {"ok": bool, "clarify": bool, "msg_text": str, "history_text": str,
     "action": dict | None}：
@@ -264,7 +264,7 @@ def build_pending_action(tool_name: str, args: dict,
         return {"ok": True, "clarify": True, "action": None,
                 "msg_text": clarify_text, "history_text": clarify_text}
 
-    # 组信封（字段与 loop.py 确认门完全一致），服务端持有防篡改；
+    # 组信封（字段与 executor.py 确认门完全一致），服务端持有防篡改；
     # 存卡前锁内复查——并发双写时先完成存卡者胜，后到者按一次一确认拒绝
     action = {
         "kind": "dispatcher_tool",

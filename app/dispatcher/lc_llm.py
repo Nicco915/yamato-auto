@@ -9,10 +9,9 @@
 
 2. 观测设施原样保留：on_progress 事件（llm_thinking，回调异常吞掉）、
    debug_log 的 llm_request / llm_response（mode 固定 "native-lc"），
-   与旧 loop.py 双适配器循环同一套排错口径，迁移后排错先翻 dispatcher.log
-   的习惯不变。
+   排错先翻 dispatcher.log 的习惯不变。
 
-3. mock 剧本（测试关键口，格式与旧 loop.py 的 _MOCK_SCRIPT 完全一致）：
+3. mock 剧本（测试关键口）：
    DISPATCHER_MOCK=1 时 _generate 从模块级 _SCRIPT 弹剧本直接返回，
    不碰网络、不需要 API key；llm_client 延迟 import 同理（无 key 环境
    下 import 本模块仍可跑测试）。
@@ -48,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 # DISPATCHER_MOCK=1 时的确定性剧本：条目 {"final_text": str | None,
 # "tool_calls": [{"name", "args": dict}]}（允许只写一个 key，弹剧本时归一化），
-# 格式与旧 loop.py 的 _MOCK_SCRIPT 完全一致，测试侧直接 append 或 set_script。
+# 测试侧直接 append 或 set_script。
 _SCRIPT: list[dict] = []
 
 
@@ -173,10 +172,9 @@ class QwenDispatcherChatModel(BaseChatModel):
         """同步生成一步：mock 剧本 → on_progress → 转换 → 调 llm_client → 回包。"""
         # mock 分支：DISPATCHER_MOCK=1 时弹剧本，不碰网络（确定性测试关键口）。
         # 观测口径与真实分支一致——llm_thinking 进度 + debug_log 请求/响应，
-        # 迁移期排错先翻 dispatcher.log 的习惯不变；mode 固定 "native-lc"
+        # 排错先翻 dispatcher.log 的习惯不变；mode 固定 "native-lc"
         # （react 引擎只有 native tool_calls 一种调用形态，mock 只是替换了
-        # 生成来源，与旧 loop.py mock 记 "mock" 对应——双引擎测试按
-        # DISPATCHER_ENGINE 取期望 mode）
+        # 生成来源）
         if os.environ.get("DISPATCHER_MOCK") == "1":
             self._round += 1
             if self.on_progress:

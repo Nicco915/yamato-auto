@@ -3,11 +3,11 @@
 设计要点：
 - 同一份 parameters JSON Schema 三处复用：LLM tools 定义（openai_tool_defs）、
   代码侧入参校验（validate_args）、测试断言——改一处，三处同步；
-- 铁律：LLM 只解析不做决策。只读工具（risk="read"）由 loop 直接执行 func；
-  写工具（risk="write"）绝不直接执行，由 loop 拦截走确认门——先 preview
+- 铁律：LLM 只解析不做决策。只读工具（risk="read"）由引擎直接执行 func；
+  写工具（risk="write"）绝不直接执行，由确认门拦截——先 preview
   生成人读确认依据，操作员 confirm 后才调 execute（execute 内部必须二次校验）；
 - 所有 func/preview/execute 内部异常一律捕获并返回 {"error": "..."} dict，
-  绝不向外抛出（loop 层会把 error 回喂 LLM 让它自我修正）；
+  绝不向外抛出（引擎层会把 error 回喂 LLM 让它自我修正）；
 - 一期（phase=1）只暴露只读工具；二期（phase=2）开放全部写工具。
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ class Tool:
 # ---------------------------------------------------------------------------
 
 def _err(e: Exception) -> dict:
-    """统一错误返回格式（绝不抛出，loop 会把 error 回喂 LLM）。"""
+    """统一错误返回格式（绝不抛出，引擎会把 error 回喂 LLM）。"""
     return {"error": f"{type(e).__name__}: {e}"}
 
 
@@ -97,7 +97,7 @@ def _merge_pinned_warning(args: dict, session_id: str | None,
 def _preview(summary: str, lines: list[str] | None = None,
              warnings: list[str] | None = None, **extra) -> dict:
     """写工具 preview 的统一返回结构；**extra 透传结构化附加字段
-    （如 create_batch 的 factory_scan，由 loop 转交前端确认卡）。"""
+    （如 create_batch 的 factory_scan，由引擎转交前端确认卡）。"""
     return {"summary": summary, "lines": lines or [],
             "warnings": warnings or [], **extra}
 
@@ -105,7 +105,7 @@ def _preview(summary: str, lines: list[str] | None = None,
 def _wrap_on_progress(tool_name: str, args: dict,
                       on_progress: Callable[[dict], None] | None):
     """把 service 的节点级进度事件包装成 exec_progress（W4a）：
-    补 type/tool/thread_id 字段后透传给 loop 层回调。
+    补 type/tool/thread_id 字段后透传给引擎层回调。
     on_progress 为 None 时返回 None（service 侧零开销）。"""
     if on_progress is None:
         return None
