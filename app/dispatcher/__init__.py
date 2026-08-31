@@ -68,6 +68,9 @@ _TOOL_CN = {
     "reset_split": "重置分票",
     "generate_declarations": "生成报关单",
     "upsert_product_mapping": "维护产品映射",
+    "create_factory_alias": "保存工厂对照",
+    "add_factories": "补充工厂",
+    "process_skipped_factory": "处理被跳过的工厂",
 }
 
 # 软挂起一轮窗口的确认/否定判定：strip + 小写后全串精确匹配（确定性
@@ -148,6 +151,21 @@ def _handle_message_react(message: str, session: _sessions.DispatcherSession,
             return {"status": "ok", "message": reply, "intent": "soft_cancel"}
         # 其他消息：清软挂起后继续走引擎
         _sessions.clear_soft_pending(session)
+
+    # 快路径：高频纯读查询（批次列表/批次状态/用量）规则命中时跳过 LLM
+    # 直接调只读工具返回（毫秒级）；不命中返回 None 继续走 react 引擎。
+    # 放在软挂起消费之后，避免旧软挂起被新问题搁置成 stale
+    from app.dispatcher import debug_log as _debug_log
+    from app.dispatcher import fastpath as _fastpath
+    fp = _fastpath.try_fastpath(message)
+    if fp is not None:
+        _debug_log.log_event("fastpath_hit", session_id=session_id,
+                             tool=fp["tool"], args=fp["args"])
+        _sessions.record_turn(session, message, fp["message"])
+        if on_progress:
+            on_progress({"type": "final", "message": fp["message"]})
+        return {"status": "ok", "message": fp["message"],
+                "intent": "fastpath"}
 
     return _react_engine.run_dispatch_react(
         message, session, phase=phase, session_id=session_id,
