@@ -281,11 +281,10 @@ async function doCreateBatch(threadId, upstreamRoot, downstreamFile, skipProcess
         skip_processed: !!skipProcessed,
       },
     });
-    if (data && data.status === "pending_human_review") {
-      location.href = "/review?thread_id=" + encodeURIComponent(threadId);
-      return; // finally 仍会恢复按钮，但页面随即跳转，无影响
-    }
-    // 成功后记住本次实际使用的路径，下次工作台自动回填
+    // 发起成功立即记住本次实际使用的路径，下次工作台自动回填。
+    // 必须放在 pending_human_review 跳转之前：location.href 导航会取消
+    // 进行中的 fetch，且该分支 return 后此处永远执行不到（曾导致正常
+    // 批次全部写不进 last_paths.json）
     try {
       await api("/api/v1/config/last-paths", {
         method: "POST",
@@ -293,6 +292,10 @@ async function doCreateBatch(threadId, upstreamRoot, downstreamFile, skipProcess
       });
     } catch (e) {
       // 路径记忆失败不阻塞主流程
+    }
+    if (data && data.status === "pending_human_review") {
+      location.href = "/review?thread_id=" + encodeURIComponent(threadId);
+      return; // finally 仍会恢复按钮，但页面随即跳转，无影响
     }
     if (data && data.status === "skipped_all") {
       toast(data.message || "全部工厂均已处理，无可提取工厂", 5000);
