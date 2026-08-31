@@ -2360,6 +2360,94 @@ def _fn_query_master_data(args: dict) -> dict:
     return result
 
 
+def _fn_master_data_health(args: dict) -> dict:
+    """主数据体检（只读聚合）：工厂缺短名/缺别名 + SKU 缺税号/缺单重/缺品名。
+
+    批次失败、卡审核的常见根因是主数据缺项，本工具用于发起批次前的
+    预防性检查。各类缺项各截 20 条 + 总数；全部无缺项返回健康提示。
+    """
+    from sqlalchemy import func, or_, select
+
+    from app.db.models import Factory, FactoryAlias, FactorySKU
+    from app.db.session import get_session
+
+    def _cap(rows: list, total: int) -> dict:
+        return {"total": total, "items": rows[:20],
+                "truncated": total > 20}
+
+    try:
+        with get_session() as sess:
+            factories = sess.scalars(select(Factory)).all()
+            alias_counts = dict(
+                sess.execute(
+                    select(FactoryAlias.factory_id,
+                           func.count(FactoryAlias.id))
+                    .group_by(FactoryAlias.factory_id)).all())
+            no_short_name = sorted(f.factory_name for f in factories
+                                   if not (f.short_name or "").strip())
+            no_alias = sorted(f.factory_name for f in factories
+                              if not alias_counts.get(f.factory_id))
+
+            def _sku_issues(cond, label_fn):
+                q = select(FactorySKU, Factory.factory_name).join(
+                    Factory, FactorySKU.factory_id == Factory.factory_id
+                ).where(cond)
+                rows = sess.execute(q).all()
+                return _cap([label_fn(sku, fname) for sku, fname in rows],
+                            len(rows))
+
+            sku_missing_hs = _sku_issues(
+                or_(FactorySKU.hs_code.is_(None),
+                    func.trim(FactorySKU.hs_code) == ""),
+                lambda s, f: {"sku": s.sku_code, "工厂": f})
+            sku_missing_weight = _sku_issues(
+                or_(FactorySKU.unit_net_weight.is_(None),
+                    FactorySKU.unit_net_weight == 0,
+                    FactorySKU.unit_gross_weight.is_(None),
+                    FactorySKU.unit_gross_weight == 0),
+                lambda s, f: {"sku": s.sku_code, "工厂": f,
+                              "单件净重": (float(s.unit_net_weight)
+                                        if s.unit_net_weight is not None
+                                        else None),
+                              "单件毛重": (float(s.unit_gross_weight)
+                                        if s.unit_gross_weight is not None
+                                        else None)})
+            sku_missing_name = _sku_issues(
+                or_(FactorySKU.name_cn.is_(None),
+                    func.trim(FactorySKU.name_cn) == ""),
+                lambda s, f: {"sku": s.sku_code, "工厂": f})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+    result: dict[str, Any] = {
+        "factory_no_short_name": _cap(sorted(no_short_name),
+                                      len(no_short_name)),
+        "factory_no_alias": _cap(sorted(no_alias), len(no_alias)),
+        "sku_missing_hs_code": sku_missing_hs,
+        "sku_missing_weight": sku_missing_weight,
+        "sku_missing_name_cn": sku_missing_name,
+    }
+    total_issues = (len(no_short_name) + len(no_alias)
+                    + sku_missing_hs["total"] + sku_missing_weight["total"]
+                    + sku_missing_name["total"])
+    if total_issues == 0:
+        result["message"] = "主数据健康：工厂短名/别名、SKU 税号/单重/品名均无缺项"
+    else:
+        parts = []
+        if no_short_name:
+            parts.append(f"{len(no_short_name)} 家工厂缺中文短名")
+        if no_alias:
+            parts.append(f"{len(no_alias)} 家工厂没有别名")
+        if sku_missing_hs["total"]:
+            parts.append(f"{sku_missing_hs['total']} 个 SKU 缺税号")
+        if sku_missing_weight["total"]:
+            parts.append(f"{sku_missing_weight['total']} 个 SKU 缺单重")
+        if sku_missing_name["total"]:
+            parts.append(f"{sku_missing_name['total']} 个 SKU 缺中文品名")
+        result["message"] = "主数据缺项：" + "、".join(parts)
+    return result
+
+
 # ---------------------------------------------------------------------------
 # process_skipped_factory（剧本宏：一次确认跑完 建对照 + 补充工厂 全链）
 # ---------------------------------------------------------------------------
@@ -3118,6 +3206,17 @@ TOOLS: dict[str, Tool] = {
         },
         risk="read",
         func=_fn_query_master_data,
+    ),
+    "master_data_health": Tool(
+        name="master_data_health",
+        description="主数据体检（只读）：汇总缺中文短名/缺别名的工厂清单，"
+                    "以及缺税号/缺单重/缺中文品名的 SKU 清单（各截 20 条 + 总数）。"
+                    "发起批次前的预防性检查——批次失败、卡审核的常见根因是"
+                    "主数据缺项。操作员问「主数据有没有问题」「哪些 SKU 缺税号」"
+                    "时使用。",
+        parameters={"type": "object", "properties": {}},
+        risk="read",
+        func=_fn_master_data_health,
     ),
     "process_skipped_factory": Tool(
         name="process_skipped_factory",

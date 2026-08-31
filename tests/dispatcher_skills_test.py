@@ -320,3 +320,53 @@ def test_fastpath_health_with_action_word_falls_through():
     """带动作词的句子不命中快路径（保守原则）。"""
     from app.dispatcher import fastpath
     assert fastpath.try_fastpath("把批次89重跑一下") is None
+
+
+# ---------------------------------------------------------------------------
+# Skill 3：master_data_health（隔离库）
+# ---------------------------------------------------------------------------
+
+def test_master_data_health_healthy_empty():
+    """全无缺项（本文件此前用例不写库，此处库为空）→ 健康提示。
+    注意：本用例依赖文件内执行顺序，必须在写入缺项数据的用例之前跑。"""
+    r = dispatcher_tools._fn_master_data_health({})
+    assert r.get("error") is None
+    assert "健康" in r["message"]
+    assert r["factory_no_short_name"]["total"] == 0
+    assert r["sku_missing_hs_code"]["total"] == 0
+
+
+def test_master_data_health_detects_gaps():
+    """三类缺项全部检出 + 计数正确。"""
+    with get_session() as sess:
+        sess.add(Factory(factory_name="健康厂", short_name="健康"))
+        sess.add(Factory(factory_name="缺短名厂"))
+        sess.add(Factory(factory_name="缺别名厂", short_name="缺别名"))
+        sess.commit()
+        fac = sess.query(Factory).filter_by(factory_name="健康厂").one()
+        sess.add(FactoryAlias(factory_id=fac.factory_id, alias="健康厂别名"))
+        sess.add(FactorySKU(factory_id=fac.factory_id, sku_code="1111111111111",
+                            name_cn="坐垫", hs_code="9404904000",
+                            unit_net_weight=1.0, unit_gross_weight=2.0))
+        sess.add(FactorySKU(factory_id=fac.factory_id, sku_code="2222222222222",
+                            name_cn="枕头"))  # 缺税号 + 缺单重
+        sess.add(FactorySKU(factory_id=fac.factory_id, sku_code="3333333333333",
+                            hs_code="1234567890", unit_net_weight=0,
+                            unit_gross_weight=1.5))  # 缺品名 + 净重 0
+        sess.commit()
+
+    r = dispatcher_tools._fn_master_data_health({})
+    assert r.get("error") is None
+    assert "缺项" in r["message"]
+    assert r["factory_no_short_name"]["items"] == ["缺短名厂"]
+    assert r["factory_no_alias"]["total"] == 2  # 缺短名厂 + 缺别名厂
+    hs_skus = {i["sku"] for i in r["sku_missing_hs_code"]["items"]}
+    assert hs_skus == {"2222222222222"}
+    weight_skus = {i["sku"] for i in r["sku_missing_weight"]["items"]}
+    assert weight_skus == {"2222222222222", "3333333333333"}
+    name_skus = {i["sku"] for i in r["sku_missing_name_cn"]["items"]}
+    assert name_skus == {"3333333333333"}
+    msg = r["message"]
+    assert "1 家工厂缺中文短名" in msg and "2 家工厂没有别名" in msg
+    assert "1 个 SKU 缺税号" in msg and "2 个 SKU 缺单重" in msg
+    assert "1 个 SKU 缺中文品名" in msg
