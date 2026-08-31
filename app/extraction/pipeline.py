@@ -39,7 +39,8 @@ from .schemas import ExtractedItem
 from .vision_channel import IMAGE_SUFFIXES, PDF_SUFFIXES, extract_vision
 
 DOC_SUFFIXES = {".doc", ".docx"}
-# openpyxl 能改写的格式（xlsx / xlsm）；legacy .xls 必须走普通分页（见下方注释）
+# openpyxl 能改写的格式（xlsx / xlsm）；legacy .xls 先经 soffice 转成 xlsx
+# 副本再进同一预处理管线（见 convert_excel_to_pdf）
 _OPENPYXL_SUFFIXES = {".xlsx", ".xlsm"}
 # 明显的系统垃圾文件
 IGNORE_NAMES = {".DS_Store", "Thumbs.db"}
@@ -206,6 +207,49 @@ def _reset_topleft_for_soffice(src: Path, work_dir: Path) -> Path | None:
     return str(tmp_xlsx)
 
 
+def _convert_xls_to_xlsx(soffice: str, profile_arg: str,
+                         src: Path, work_dir: Path) -> Path | None:
+    """.xls 先经 soffice 转一份 .xlsx 副本（work_dir/_xls_conv/ 下，不动源文件），
+    成功返回副本路径，失败返回 None（调用方回退原始 .xls 走普通分页）。
+
+    为什么要先转 xlsx：SinglePageSheets 能把每个 sheet 收成单页，避免老式 .xls
+    按打印设置把一个 sheet 拆成多页（审核左屏翻页割裂，TOP 请款资料已复现）；
+    但 SinglePageSheets 以 topLeftCell 为页面锚点，必须先经 openpyxl 重置——
+    openpyxl 只能写 xlsx/xlsm，所以 .xls 先做一次格式转换再走统一管线。
+    转换出的副本与源文件同名（仅后缀不同），保证下游 PDF 产物命名不变。
+    """
+    conv_dir = work_dir / "_xls_conv"
+    conv_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            [
+                soffice,
+                profile_arg,
+                "--headless",
+                "--convert-to", "xlsx",
+                "--outdir", str(conv_dir),
+                str(src),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=180,
+        )
+    except subprocess.CalledProcessError as e:
+        # stderr 仅用于排障，尽力解码（Windows 上可能是 GBK）
+        stderr = (e.stderr or b"").decode("utf-8", errors="replace").strip()
+        logger.warning("[excel转PDF] .xls→.xlsx 预转换失败（退出码 %s）%s：%s",
+                       e.returncode, src, stderr[:300])
+        return None
+    except Exception:  # noqa: BLE001 - 超时/权限等，记录后回退原始 .xls
+        logger.exception("[excel转PDF] .xls→.xlsx 预转换调用异常 %s", src)
+        return None
+    out = conv_dir / (src.stem + ".xlsx")
+    if out.exists():
+        return out
+    logger.warning("[excel转PDF] .xls→.xlsx 预转换成功但未产出文件：%s", src)
+    return None
+
+
 def convert_excel_to_pdf(excel_path: str, out_dir: str) -> str | None:
     """用 soffice 把 xls/xlsx/xlsm 转成 PDF（审核页原格式显示用），失败返回 None。
 
@@ -214,13 +258,14 @@ def convert_excel_to_pdf(excel_path: str, out_dir: str) -> str | None:
     （shell=False + pathlib）。
 
     渲染策略：
+    - .xls：先用 soffice 转成 .xlsx 副本（out_dir/_xls_conv/ 下，源文件只读不动），
+      之后与 xlsx 同管线（topLeftCell 预处理 + SinglePageSheets 单页/sheet）；
+      预转换失败才回退原始 .xls 走普通分页（多页但完整，审核页已有翻页器）。
     - .xlsx/.xlsm：先复制到 out_dir/_lo_preprocess/，用 openpyxl 重置每个 sheet 的
       topLeftCell="A1" + 清空 selection（防 LibreOffice SinglePageSheets 以视图
       停留点为锚点把左上整片裁掉——兆丰 Packing 已复现），再用预处理副本走
-      SinglePageSheets；预处理失败（.xls/openpyxl 异常/无 sheetView）回退原始源
+      SinglePageSheets；预处理失败（openpyxl 异常/无 sheetView）回退原始源
       文件继续。
-    - .xls：openpyxl 不能写，直接走普通分页（多页但完整，审核页已有翻页器）；
-      SinglePageSheets 在 .xls 上同样会因 topLeftCell 裁切，所以**不**尝试。
 
     SinglePageSheets 不可用时回退普通 pdf 转换（按打印设置分页）。soffice 不可用
     或两次尝试均失败返回 None，由上层回退 HTML 快照。
@@ -232,17 +277,22 @@ def convert_excel_to_pdf(excel_path: str, out_dir: str) -> str | None:
         return None
     profile_dir = Path(out_dir) / "lo_user_profile"
     profile_dir.mkdir(parents=True, exist_ok=True)
-    # 选送 soffice 的实际源文件：xlsx/xlsm 走预处理副本，其它走原始源
+    profile_arg = f"-env:UserInstallation={profile_dir.resolve().as_uri()}"
+    # 选送 soffice 的实际源文件：.xls 先转 xlsx 副本；xlsx/xlsm 走预处理副本
     src = Path(excel_path)
     work_dir = Path(out_dir)
-    preprocessed = _reset_topleft_for_soffice(src, work_dir)
-    soffice_input = preprocessed if preprocessed else str(src)
-    expect = Path(out_dir) / (Path(excel_path).stem + ".pdf")
-    suffix_lower = src.suffix.lower()
-    # .xls 不尝试 SinglePageSheets（openpyxl 不能改写，源文件又是工厂交付的，
-    # 改源文件会污染缓存键 + 破坏只读语义；SinglePageSheets 在 .xls 上同样
-    # 会按 topLeftCell 裁切，所以直接走普通分页即可）
-    if suffix_lower == ".xls":
+    effective_src = src
+    if src.suffix.lower() == ".xls":
+        converted = _convert_xls_to_xlsx(soffice, profile_arg, src, work_dir)
+        if converted is not None:
+            effective_src = converted
+    preprocessed = _reset_topleft_for_soffice(effective_src, work_dir)
+    soffice_input = preprocessed if preprocessed else str(effective_src)
+    # 产物名取源文件 stem（.xls 预转换副本同名，命名不变）
+    expect = Path(out_dir) / (src.stem + ".pdf")
+    # effective_src 仍是 .xls 说明预转换失败：SinglePageSheets 在未重置
+    # topLeftCell 的 .xls 上会按视图停留点裁切，只能走普通分页
+    if effective_src.suffix.lower() == ".xls":
         filters = ["pdf"]
     else:
         filters = [
