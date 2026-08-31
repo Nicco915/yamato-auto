@@ -152,6 +152,9 @@
                        font-weight: 600; cursor: pointer; }
   #btn-diff-ok { background: #2563eb; color: #fff; }
   #btn-diff-cancel { background: #e5e7eb; color: #374151; }
+  /* 重提差异一次确认弹窗按钮 */
+  #btn-rx-all { background: #2563eb; color: #fff; }
+  #btn-rx-keep, #btn-rx-each { background: #e5e7eb; color: #374151; }
   .dbinfo { margin-top: 4px; font-size: 11px; color: #6b7280; }
   .field-hint { display: block; font-size: 11px; color: #d97706; margin-top: 2px; min-height: 14px; }
   #done-view { display: none; margin: 60px auto; text-align: center; }
@@ -228,6 +231,19 @@
     <div class="modal-btns">
       <button id="btn-diff-cancel" onclick="closeDiffModal()">返回修改</button>
       <button id="btn-diff-ok" onclick="confirmSubmit()">确认提交</button>
+    </div>
+  </div>
+</div>
+
+<!-- 重提差异一次确认弹窗（点遮罩不关闭，必须三选一） -->
+<div id="reextract-modal" class="modal-mask" style="display:none">
+  <div class="modal-card">
+    <h3>重新识别结果确认</h3>
+    <div id="reextract-body" style="overflow-y:auto;min-height:0"></div>
+    <div class="modal-btns">
+      <button id="btn-rx-keep" onclick="rxKeepAll()">全部保留</button>
+      <button id="btn-rx-each" onclick="rxConfirmEach()">逐个确认</button>
+      <button id="btn-rx-all" onclick="rxOverwriteAll()">全部覆盖</button>
     </div>
   </div>
 </div>
@@ -860,16 +876,56 @@ async function reextractDoc() {
   }
 }
 
-/* D2 合并策略（方案 §5.3）：sku 不在当前卡片 → 新建卡（标"重提"tag）；
-   已存在 → 弹确认：保留当前值 / 用重提值覆盖（覆盖标 _modified），不静默覆盖。
+/* D2 合并策略（方案 §5.3 修订）：sku 不在当前卡片 → 新建卡（标"重提"tag）；
+   已存在且三个数值字段与当前卡片完全一致 → 静默跳过（去噪，不弹窗）；
+   已存在且有差异 → 汇总进一个弹窗一次确认：全部覆盖 / 全部保留 / 逐个确认。
+   覆盖语义收窄：只覆盖 件数/净重/毛重 + calculation，name_cn/hs_code/
+   inspection_required 保留卡片现值（保护人工已填，与税号铁律一致）；
+   重提侧为空的数值字段不覆盖当前值（不静默丢值）。
    数值/单重由 renderCalc 即时算，最终以 Node5 重算为准（计算隔离不变）。 */
+
+/* 数值归一化："1,500"/"1500.0"/1500/" 1500 " 视同；null/undefined/"" 互视同 */
+function _normNum(v) {
+  if (v === undefined || v === null) return null;
+  const s = String(v).replace(/[,，\s]/g, "");
+  if (s === "") return null;
+  const n = parseFloat(s);
+  return isNaN(n) ? s : n;
+}
+const RX_NUM_FIELDS = ["total_quantity", "total_net_weight", "total_gross_weight"];
+const RX_FIELD_LABELS = { total_quantity: "件数", total_net_weight: "净重", total_gross_weight: "毛重" };
+
+function _rxSame(ced, ned) {
+  return RX_NUM_FIELDS.every((f) => _normNum(ced[f]) === _normNum(ned[f]));
+}
+
+/* 收窄覆盖：仅三个数值字段（重提侧空值不盖）+ calculation；
+   品名/税号/商检不动；db_record/is_new_sku/status 属主数据回查元信息，随重提更新 */
+function _rxApplyOverwrite(cur, ni) {
+  const ced = cur.extracted_data || {};
+  const ned = ni.extracted_data || {};
+  const merged = { ...ced };
+  RX_NUM_FIELDS.forEach((f) => {
+    if (_normNum(ned[f]) !== null) merged[f] = ned[f];
+  });
+  cur.extracted_data = merged;
+  if (ni.calculation) cur.calculation = ni.calculation;
+  if (ni.db_record !== undefined) cur.db_record = ni.db_record;
+  if (ni.is_new_sku !== undefined) cur.is_new_sku = ni.is_new_sku;
+  if (ni.status) cur.status = ni.status;
+  cur._modified = true; cur._reextract = true;
+}
+
+let _rxDiffs = [];   // 待确认差异项 [{idx, sku, ni}]
+let _rxStats = null; // 本次合并计数 {added, overwritten, same, kept}
+
 function mergeReextracted(newItems) {
   if (!newItems.length) {
     toast("重新识别完成：该文件未提取到条目", 3500);
     return;
   }
-  const fmt = (v) => (v === undefined || v === null || v === "") ? "—" : v;
-  let added = 0, overwritten = 0, kept = 0;
+  let added = 0, same = 0;
+  _rxDiffs = [];
   newItems.forEach((ni) => {
     const sku = String(ni.sku ?? "").trim();
     const idx = sku ? items.findIndex((i) => String(i.sku ?? "").trim() === sku) : -1;
@@ -878,32 +934,84 @@ function mergeReextracted(newItems) {
       item._added = true; item._reextract = true; item._modified = true; item._sku0 = sku;
       items.push(item);
       added++;
+    } else if (_rxSame(items[idx].extracted_data || {}, ni.extracted_data || {})) {
+      same++;  // 三个数值字段完全一致：静默跳过，不弹窗不改数据
     } else {
-      const cur = items[idx];
-      const ced = cur.extracted_data || {};
-      const ned = ni.extracted_data || {};
-      const msg = `SKU ${sku} 已在卡片中。\n` +
-        `当前值：件数 ${fmt(ced.total_quantity)} / 净重 ${fmt(ced.total_net_weight)} / 毛重 ${fmt(ced.total_gross_weight)}\n` +
-        `重提值：件数 ${fmt(ned.total_quantity)} / 净重 ${fmt(ned.total_net_weight)} / 毛重 ${fmt(ned.total_gross_weight)}\n\n` +
-        "确定 = 用重提值覆盖；取消 = 保留当前值";
-      if (!confirm(msg)) { kept++; return; }
-      cur.extracted_data = { ...ced, ...ned };
-      if (ni.calculation) cur.calculation = ni.calculation;
-      if (ni.db_record !== undefined) cur.db_record = ni.db_record;
-      if (ni.is_new_sku !== undefined) cur.is_new_sku = ni.is_new_sku;
-      if (ni.status) cur.status = ni.status;
-      ["name_cn", "hs_code", "inspection_required"].forEach((f) => {
-        if (ni[f] !== undefined) cur[f] = ni[f];
-      });
-      cur._modified = true; cur._reextract = true;
-      overwritten++;
+      _rxDiffs.push({ idx, sku, ni });
     }
     // 重提命中缺失列表 → 从 missing 前端状态移除（红条联动）
     if (sku) missingSkus = missingSkus.filter((s) => String(s) !== sku);
   });
+  _rxStats = { added, same, overwritten: 0, kept: 0 };
+  if (!_rxDiffs.length) { _rxFinish(); return; }
+  _rxShowModal();
+}
+
+/* 差异汇总弹窗：每 SKU 一行，三个数值字段各一格，无变化的字段灰显 */
+function _rxShowModal() {
+  const fmt = (v) => (v === undefined || v === null || v === "") ? "—" : v;
+  const rows = _rxDiffs.map((d) => {
+    const ced = items[d.idx].extracted_data || {};
+    const ned = d.ni.extracted_data || {};
+    const cells = RX_NUM_FIELDS.map((f) => {
+      if (_normNum(ced[f]) === _normNum(ned[f])) {
+        return '<td style="color:#9ca3af">无变化</td>';
+      }
+      return `<td>${esc(String(fmt(ced[f])))} → <b>${esc(String(fmt(ned[f])))}</b></td>`;
+    }).join("");
+    return `<tr><td>${esc(d.sku)}</td>${cells}</tr>`;
+  }).join("");
+  $("reextract-body").innerHTML =
+    `<p style="margin:0 0 8px;font-size:13px;color:#374151">以下 ${_rxDiffs.length} 个 SKU 的重提值与当前卡片不一致（覆盖仅更新数值字段，品名/税号/商检保留当前值）：</p>` +
+    `<table class="diff-table"><tr><th>SKU</th><th>件数</th><th>净重</th><th>毛重</th></tr>${rows}</table>`;
+  $("reextract-modal").style.display = "flex";
+}
+
+function _rxClose() { $("reextract-modal").style.display = "none"; }
+
+function rxOverwriteAll() {
+  _rxDiffs.forEach((d) => _rxApplyOverwrite(items[d.idx], d.ni));
+  _rxStats.overwritten = _rxDiffs.length;
+  _rxClose();
+  _rxFinish();
+}
+
+function rxKeepAll() {
+  _rxStats.kept = _rxDiffs.length;
+  _rxClose();
+  _rxFinish();
+}
+
+/* 逐个确认：回退逐条 confirm 的谨慎入口，覆盖语义与批量路径一致 */
+function rxConfirmEach() {
+  _rxClose();
+  const fmt = (v) => (v === undefined || v === null || v === "") ? "—" : v;
+  _rxDiffs.forEach((d) => {
+    const cur = items[d.idx];
+    const ced = cur.extracted_data || {};
+    const ned = d.ni.extracted_data || {};
+    const msg = `SKU ${d.sku} 已在卡片中。\n` +
+      `当前值：件数 ${fmt(ced.total_quantity)} / 净重 ${fmt(ced.total_net_weight)} / 毛重 ${fmt(ced.total_gross_weight)}\n` +
+      `重提值：件数 ${fmt(ned.total_quantity)} / 净重 ${fmt(ned.total_net_weight)} / 毛重 ${fmt(ned.total_gross_weight)}\n\n` +
+      "确定 = 用重提值覆盖（仅数值字段）；取消 = 保留当前值";
+    if (confirm(msg)) {
+      _rxApplyOverwrite(cur, d.ni);
+      _rxStats.overwritten++;
+    } else {
+      _rxStats.kept++;
+    }
+  });
+  _rxFinish();
+}
+
+function _rxFinish() {
   renderMissingBar();
   renderCards();
-  toast(`重新识别完成：新增 ${added} 项，覆盖 ${overwritten} 项，保留 ${kept} 项`, 4000);
+  const s = _rxStats;
+  toast(`重新识别完成：新增 ${s.added} 项，覆盖 ${s.overwritten} 项，` +
+        `一致跳过 ${s.same} 项，保留 ${s.kept} 项`, 4000);
+  _rxDiffs = [];
+  _rxStats = null;
 }
 
 async function openLocalDoc() {
