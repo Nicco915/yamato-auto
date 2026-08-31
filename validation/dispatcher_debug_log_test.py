@@ -14,14 +14,13 @@ DISPATCHER_MOCK=1 剧本驱动；日志写到真实 app/data/logs/dispatcher.log
 （测试后清理自己写入的验证——只断言文件内容含本会话标记，不删文件：
 该文件是滚动日志，可能已有生产记录）。
 
-双引擎可跑：用例 1 直调当前引擎的主循环（_dual_engine.run_dispatch），
-剧本经 _dual_engine.set_scripts 同注两条 mock 通道；llm_request 的 mode
-字段按引擎取期望——legacy 的 mock 分支记 "mock"，react 引擎只有 native
+用例 1 直调 react 引擎本体（_react_script.run_dispatch），
+剧本经 _react_script.set_scripts 注入 mock 通道；llm_request 的 mode
+字段恒为 "native-lc"——react 引擎只有 native
 tool_calls 一种调用形态（lc_llm mock 模式也记 "native-lc"）。
 
 用法（在 app/ 目录下）：
   DISPATCHER_MOCK=1 python3 validation/dispatcher_debug_log_test.py
-  DISPATCHER_ENGINE=react DISPATCHER_MOCK=1 python3 validation/dispatcher_debug_log_test.py
 """
 from __future__ import annotations
 
@@ -39,10 +38,10 @@ APP_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(APP_ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from app.dispatcher import debug_log, loop, sessions  # noqa: E402
+from app.dispatcher import debug_log, executor, sessions  # noqa: E402
 from app.dispatcher.tools import TOOLS, Tool  # noqa: E402
 
-from _dual_engine import engine, run_dispatch, set_scripts  # noqa: E402
+from _react_script import run_dispatch, set_scripts  # noqa: E402
 
 LOG_FILE = APP_ROOT / "app" / "data" / "logs" / "dispatcher.log"
 
@@ -120,9 +119,9 @@ try:
     req = next(e for e in events if e["event"] == "llm_request")
     check('"role": "system"' in req["messages"]
           and "测试消息" in req["messages"], "llm_request 含完整 prompt")
-    # mode 按引擎取期望：legacy 的 mock 分支记 "mock"；react 引擎只有
+    # mode 恒为 native-lc：react 引擎只有
     # native tool_calls 一种调用形态，lc_llm mock 模式也记 "native-lc"
-    expected_mode = "native-lc" if engine() == "react" else "mock"
+    expected_mode = "native-lc"
     check(req["mode"] == expected_mode and req["round"] == 1,
           "llm_request 带 mode/round")
 
@@ -151,7 +150,7 @@ try:
     check(MARK in gate["summary"], "confirm_gate 记录预览摘要")
 
     print("== 2. confirm 执行 / 拒绝落盘 ==")
-    applied = loop.execute_confirmed(session, None, session_id=sid)
+    applied = executor.execute_confirmed(session, None, session_id=sid)
     check(applied["status"] == "applied", "确认执行成功")
     events = read_log_lines(MARK)
     kinds = [e["event"] for e in events]
@@ -161,7 +160,7 @@ try:
           "confirm_execute 记录工具与状态")
     check(ce["args"]["token"] == "***", "confirm_execute 参数脱敏")
 
-    rejected = loop.execute_confirmed(session, None, session_id=sid)
+    rejected = executor.execute_confirmed(session, None, session_id=sid)
     check(rejected["status"] == "error", "无 pending 时拒绝")
     events = read_log_lines(MARK)
     check(any(e["event"] == "confirm_rejected" for e in events),

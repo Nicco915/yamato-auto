@@ -6,7 +6,6 @@
 
 说明：
 - DISPATCHER_MOCK=1：不产生真实 LLM 调用
-- DISPATCHER_ENGINE=react：测试 react 引擎路径（文件选择主要在 react 引擎中实现）
 - 全程 monkeypatch，测试结束恢复原引用
 """
 from __future__ import annotations
@@ -23,14 +22,10 @@ if str(APP_ROOT) not in sys.path:
 
 # 必须在 import app.dispatcher 之前设置
 os.environ["DISPATCHER_MOCK"] = "1"
-os.environ["DISPATCHER_ENGINE"] = "react"
 
 import app.dispatcher as dispatcher  # noqa: E402
 from app.dispatcher import sessions as _sessions  # noqa: E402
 from app.dispatcher import tools as _tools  # noqa: E402
-
-# 重钉（防止 llm_client import 时 load_dotenv 覆盖）
-os.environ["DISPATCHER_ENGINE"] = "react"
 
 
 def test_tool_exists():

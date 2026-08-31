@@ -10,11 +10,10 @@
 
 用法：
   EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 GUIDE_MOCK=1 python3 validation/dispatcher_guide_test.py
-  DISPATCHER_ENGINE=react EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 GUIDE_MOCK=1 python3 validation/dispatcher_guide_test.py
+  EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 GUIDE_MOCK=1 python3 validation/dispatcher_guide_test.py
 
-双引擎可跑：用例 4/5 直调调度主循环，经 _dual_engine.run_dispatch 按
-DISPATCHER_ENGINE 分流（legacy→loop.run_dispatch，react→react_engine），
-剧本经 _dual_engine.set_scripts 同注两条 mock 通道。
+用例 4/5 经 _react_script.run_dispatch 直调 react 引擎本体，
+剧本经 _react_script.set_scripts 注入 mock 通道。
 
 隔离（血泪红线）：checkpoint/master db、output、sessions 目录全部指向
 临时目录（import app 之后再设 env + cache_clear + 真实库断言守卫，
@@ -38,7 +37,7 @@ from app.dispatcher import tools  # noqa: E402
 from app.dispatcher.guide import ask_guide  # noqa: E402
 from app.dispatcher.sessions import DispatcherSession  # noqa: E402
 
-from _dual_engine import run_dispatch, set_scripts  # noqa: E402
+from _react_script import run_dispatch, set_scripts  # noqa: E402
 from _test_isolation import isolate_to_tmp  # noqa: E402
 
 # ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----

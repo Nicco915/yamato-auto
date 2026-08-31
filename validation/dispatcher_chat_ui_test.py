@@ -16,10 +16,9 @@
 
 用法（在 app/ 目录下）：
   EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_chat_ui_test.py
-  DISPATCHER_ENGINE=react EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_chat_ui_test.py
+  EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_chat_ui_test.py
 
-双引擎可跑：case 2/3/4 经 handle_message/confirm（入口按
-DISPATCHER_ENGINE 分流），剧本经 _dual_engine.set_scripts 同注两条
+case 2/3/4 经 handle_message/confirm，剧本经 _react_script.set_scripts 注入
 mock 通道；confirm 通道两引擎共用（execute_confirmed），断言同一标准。
 """
 from __future__ import annotations
@@ -44,7 +43,7 @@ from app.api.main import app  # noqa: E402
 from app.dispatcher import sessions  # noqa: E402
 from app.dispatcher.summarize import summarize_applied  # noqa: E402
 
-from _dual_engine import set_scripts  # noqa: E402
+from _react_script import set_scripts  # noqa: E402
 from _test_isolation import isolate_to_tmp  # noqa: E402
 
 # ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----

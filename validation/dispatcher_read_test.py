@@ -6,25 +6,20 @@
 1. 查询问答：list_batches 工具真被调用，final_text 原样返回；
 2. 多轮工具串联：get_batch_status + get_batch_detail 两步后给最终回复；
 3. 未知工具：hack_system 回喂错误，不崩溃；
-4. 坏参数：缺必填 thread_id，错误被回喂给第二轮 llm_step；
-5. 轮数上限：工具调用不收敛 → "处理步骤过多" 兜底（legacy 6 轮全执行；
-   react recursion_limit=12 下 6 次模型调用、5 次工具执行后截断）；
+4. 坏参数：缺必填 thread_id，错误被回喂给第二轮模型调用；
+5. 轮数上限：工具调用不收敛 → "处理步骤过多" 兜底
+   （react recursion_limit=12 下 6 次模型调用、5 次工具执行后截断）；
 6. explain_errors 降级：不存在 thread 返回 {"error": ...}；真实批次
    （checkpoints 库里有则用，没有则跳过该子项）返回结构完整；
-7. json 适配器回归：DISPATCHER_STEP_MODE=json 时用例 1 重跑（mock 仍生效；
-   仅 legacy 适用——react 引擎固定 native tool_calls，该环境变量无感）；
-8. TestClient 端点冒烟：POST /api/v1/dispatcher/chat 200 / 缺 message 400 /
+7. TestClient 端点冒烟：POST /api/v1/dispatcher/chat 200 / 缺 message 400 /
    confirm 无 session 无 action 400。
 
-双引擎可跑：剧本经 _dual_engine.set_scripts 同注 legacy/react 两条 mock
-通道（各自 pop 消费，独立深拷贝），默认 legacy，
-DISPATCHER_ENGINE=react 时同一套断言再跑一遍；
+剧本经 _react_script.set_scripts 注入 react 引擎 mock 通道；
 session_id 每用例唯一，避免历史串扰。sqlite checkpoint 为共享文件，
 遇 database lock 类瞬时错误 sleep 1s 重试一次再断言失败。
 
 用法（在 app/ 目录下）：
-  python3 validation/dispatcher_read_test.py                        # legacy 引擎
-  DISPATCHER_ENGINE=react python3 validation/dispatcher_read_test.py  # react 引擎
+  python3 validation/dispatcher_read_test.py
 
 隔离（血泪红线）：checkpoint/master db、output、sessions 目录全部指向
 临时目录（import app 之后再设 env + cache_clear + 真实库断言守卫，
@@ -51,11 +46,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app import dispatcher  # noqa: E402
 from app.api import service  # noqa: E402
 from app.api.main import app  # noqa: E402
-from app.dispatcher import lc_llm, loop, sessions  # noqa: E402
+from app.dispatcher import lc_llm, sessions  # noqa: E402
 from app.dispatcher.explain import explain_errors  # noqa: E402
 from app.graph import get_graph  # noqa: E402
 
-from _dual_engine import active_script, engine, set_scripts  # noqa: E402
+from _react_script import active_script, set_scripts  # noqa: E402
 from _test_isolation import isolate_to_tmp  # noqa: E402
 
 # ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----
@@ -138,12 +133,9 @@ def case_3_unknown_tool() -> None:
 def case_4_bad_args() -> None:
     """坏参数：缺必填 thread_id → 校验拦截，错误回喂第二轮，模型自我修正。
 
-    回喂路径两引擎不同（断言按引擎条件，语义不变量相同——坏参数绝不执行、
-    错误回文进第二轮 LLM 输入）：
-    - legacy：loop 内 validate_args 拦截，回喂中文「参数错误」tool 消息
-      （spy 包 loop.llm_step 抓 messages dict）；
-    - react：ToolNode 对 args_schema 做 pydantic 校验，失败回喂英文
-      ValidationError ToolMessage（spy 包 lc_llm._generate 抓 BaseMessage）。
+    回喂路径：ToolNode 对 args_schema 做 pydantic 校验，失败回喂英文
+    ValidationError ToolMessage（spy 包 lc_llm._generate 抓 BaseMessage）。
+    语义不变量——坏参数绝不执行、错误回文进第二轮 LLM 输入。
     """
     sid = "DISP-READ-TEST-C4"
     set_scripts([
@@ -151,50 +143,31 @@ def case_4_bad_args() -> None:
         {"final_text": "参数不足"},
     ])
     captured: list[list] = []
-    if engine() == "react":
-        # 包一层 spy：断言第二轮 _generate 收到的消息里含校验失败回喂
-        orig = lc_llm.QwenDispatcherChatModel._generate
+    # 包一层 spy：断言第二轮 _generate 收到的消息里含校验失败回喂
+    orig = lc_llm.QwenDispatcherChatModel._generate
 
-        def spy(self, messages, stop=None, run_manager=None, **kwargs):
-            captured.append(list(messages))
-            return orig(self, messages, stop=stop, run_manager=run_manager,
-                        **kwargs)
+    def spy(self, messages, stop=None, run_manager=None, **kwargs):
+        captured.append(list(messages))
+        return orig(self, messages, stop=stop, run_manager=run_manager,
+                    **kwargs)
 
-        lc_llm.QwenDispatcherChatModel._generate = spy
-        try:
-            r = dispatcher.handle_message("看看批次状态", session_id=sid)
-        finally:
-            lc_llm.QwenDispatcherChatModel._generate = orig
-    else:
-        # 包一层 spy：断言第二轮 llm_step 收到的 messages 里含参数错误回喂
-        orig = loop.llm_step
-
-        def spy(messages, *, phase):
-            captured.append([dict(m) for m in messages])
-            return orig(messages, phase=phase)
-
-        loop.llm_step = spy
-        try:
-            r = dispatcher.handle_message("看看批次状态", session_id=sid)
-        finally:
-            loop.llm_step = orig
+    lc_llm.QwenDispatcherChatModel._generate = spy
+    try:
+        r = dispatcher.handle_message("看看批次状态", session_id=sid)
+    finally:
+        lc_llm.QwenDispatcherChatModel._generate = orig
     assert r["status"] == "ok", r
     assert r["message"] == "参数不足", r
     assert len(captured) == 2, f"应走 2 轮 LLM 步进: {len(captured)}"
     second = captured[1]
-    if engine() == "react":
-        # ToolNode 校验失败的回喂：ToolMessage 含 pydantic 错误（指明缺
-        # thread_id 字段；英文文案来自 pydantic/langgraph，不做中文断言）
-        assert any("thread_id" in str(m.content)
-                   and ("validation error" in str(m.content)
-                        or "Field required" in str(m.content))
-                   for m in second
-                   if m.__class__.__name__ == "ToolMessage"), \
-            f"第二轮 messages 应含校验失败回喂: {second}"
-    else:
-        assert any(m.get("role") == "tool" and "参数错误" in str(m.get("content"))
-                   for m in second), \
-            f"第二轮 messages 应含参数错误回喂: {second}"
+    # ToolNode 校验失败的回喂：ToolMessage 含 pydantic 错误（指明缺
+    # thread_id 字段；英文文案来自 pydantic/langgraph，不做中文断言）
+    assert any("thread_id" in str(m.content)
+               and ("validation error" in str(m.content)
+                    or "Field required" in str(m.content))
+               for m in second
+               if m.__class__.__name__ == "ToolMessage"), \
+        f"第二轮 messages 应含校验失败回喂: {second}"
     hist = sessions.get_session(sid).tool_history
     assert not hist, f"参数校验失败的工具不应执行/入审计流水: {hist}"
 
@@ -202,18 +175,13 @@ def case_4_bad_args() -> None:
 def case_5_max_rounds() -> None:
     """轮数上限：工具调用仍不收敛 → 返回「处理步骤过多」兜底提示。
 
-    截断口径两引擎不同（断言按引擎条件，不变量相同——必走兜底文案）：
-    - legacy：MAX_ROUNDS=6 轮全部执行后超轮兜底，tool_history 恰 6 条；
-    - react：recursion_limit=12，每个工具调用耗 2 个图步（agent+tools），
-      第 6 次模型调用后 remaining_steps<2 以截断哨终止（实测口径，
-      与 dispatcher_react_engine_test 超轮用例一致），tool_history 恰 5 条。
+    截断口径：recursion_limit=12，每个工具调用耗 2 个图步（agent+tools），
+    第 6 次模型调用后 remaining_steps<2 以截断哨终止（实测口径，
+    与 dispatcher_react_engine_test 超轮用例一致），tool_history 恰 5 条。
     """
     sid = "DISP-READ-TEST-C5"
-    if engine() == "react":
-        from app.dispatcher.react_engine import RECURSION_LIMIT
-        rounds, expected_tools = RECURSION_LIMIT, 5
-    else:
-        rounds, expected_tools = loop.MAX_ROUNDS, loop.MAX_ROUNDS
+    from app.dispatcher.react_engine import RECURSION_LIMIT
+    rounds, expected_tools = RECURSION_LIMIT, 5
     set_scripts([
         {"tool_calls": [{"id": f"c{i}", "name": "list_batches", "args": {}}]}
         for i in range(rounds)
@@ -250,25 +218,6 @@ def case_6_explain_degraded() -> None:
           f"causes={len(r2['causes'])}, suggestions={len(r2['suggestions'])}")
 
 
-def case_7_json_mode_regression() -> None:
-    """json 适配器回归：DISPATCHER_STEP_MODE=json 时用例 1 重跑（mock 仍生效）。"""
-    sid = "DISP-READ-TEST-C7"
-    os.environ["DISPATCHER_STEP_MODE"] = "json"
-    try:
-        set_scripts([
-            {"tool_calls": [{"id": "c1", "name": "list_batches", "args": {}}]},
-            {"final_text": "json 模式回复"},
-        ])
-        r = with_lock_retry(lambda: dispatcher.handle_message(
-            "列一下批次", session_id=sid))
-        assert r["status"] == "ok", r
-        assert r["message"] == "json 模式回复", r
-        hist = sessions.get_session(sid).tool_history
-        assert any(h["tool"] == "list_batches" for h in hist), hist
-    finally:
-        os.environ.pop("DISPATCHER_STEP_MODE", None)
-
-
 def case_8_endpoint_smoke() -> None:
     """TestClient 端点冒烟：200 / 缺 message 400 / confirm 无凭据 400。"""
     client = TestClient(app)
@@ -300,8 +249,7 @@ CASES = [
     ("4. 坏参数被回喂", case_4_bad_args),
     ("5. 轮数上限兜底", case_5_max_rounds),
     ("6. explain_errors 模板降级", case_6_explain_degraded),
-    ("7. json 适配器回归", case_7_json_mode_regression),
-    ("8. TestClient 端点冒烟", case_8_endpoint_smoke),
+    ("7. TestClient 端点冒烟", case_8_endpoint_smoke),
 ]
 
 

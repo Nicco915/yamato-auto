@@ -12,10 +12,9 @@
 
 用法：
   EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_memory_test.py
-  DISPATCHER_ENGINE=react EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_memory_test.py
+  EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_memory_test.py
 
-双引擎可跑：case 6 经 handle_message/confirm 端到端（入口按
-DISPATCHER_ENGINE 分流），剧本经 _dual_engine.set_scripts 同注两条
+case 6 经 handle_message/confirm 端到端，剧本经 _react_script.set_scripts 注入
 mock 通道。
 
 隔离（血泪红线）：L2 记忆落 master.db、case 6 建批次落 checkpoints.db，
@@ -39,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from app.dispatcher.memory import OperationMemory  # noqa: E402
 from app import dispatcher  # noqa: E402
 
-from _dual_engine import set_scripts  # noqa: E402
+from _react_script import set_scripts  # noqa: E402
 from _test_isolation import isolate_to_tmp  # noqa: E402
 
 # ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----

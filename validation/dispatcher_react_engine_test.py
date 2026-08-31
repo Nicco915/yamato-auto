@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """调度 Agent react 引擎（create_react_agent）端到端测试。
 
-DISPATCHER_ENGINE=react + DISPATCHER_MOCK=1，经 lc_llm.set_script 注入
+DISPATCHER_MOCK=1，经 lc_llm.set_script 注入
 确定性剧本（注入型工具的影子写/反问在 ToolNode 内以完整 ToolCall 调用，
 剧本里的 tool_calls 无需给 id——lc_llm mock 自动补 mockcall_N）。
 
@@ -14,8 +14,6 @@ DISPATCHER_ENGINE=react + DISPATCHER_MOCK=1，经 lc_llm.set_script 注入
 4. 黄灯否定：布防后「算了」→ soft_cancel + soft_pending 清空；
 5. 并行双写只出一卡：同轮 create_batch + rerun，一次一确认恰好一卡；
 6. 超轮兜底：剧本全是无终复的只读工具调用 → GraphRecursionError 兜底文案；
-7. legacy 回归：切 DISPATCHER_ENGINE=legacy 跑旧路径（triage 空剧本降级
-   + loop 剧本 final_text），确认旧路未破。
 
 用法（在 app/ 目录下）：
   python3 validation/dispatcher_react_engine_test.py
@@ -34,7 +32,6 @@ from pathlib import Path
 
 os.environ.setdefault("EXTRACTION_MOCK", "1")
 os.environ["DISPATCHER_MOCK"] = "1"
-os.environ["DISPATCHER_ENGINE"] = "react"
 
 APP_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(APP_ROOT))
@@ -42,7 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from app import dispatcher  # noqa: E402
 from app.api import service  # noqa: E402
-from app.dispatcher import lc_llm, loop, sessions  # noqa: E402
+from app.dispatcher import lc_llm, sessions  # noqa: E402
 from app.graph import get_graph  # noqa: E402
 
 from _test_isolation import isolate_to_tmp  # noqa: E402
@@ -248,26 +245,6 @@ def case_6_recursion_fallback() -> None:
     print("  ✓ 超轮兜底：GraphRecursionError → 拆分提示文案")
 
 
-def case_7_legacy_regression() -> None:
-    """legacy 回归：切 DISPATCHER_ENGINE=legacy，旧路径（triage 空剧本降级
-    + loop 剧本 final_text）行为不变。"""
-    sid = fresh_session_id("C7")
-    os.environ["DISPATCHER_ENGINE"] = "legacy"
-    try:
-        # triage 空剧本 → run_triage 返回 None → 降级旧 loop 循环；
-        # loop 剧本第一条即 final_text → 直接终复
-        lc_llm.clear_script()
-        loop._MOCK_SCRIPT.clear()
-        loop._MOCK_SCRIPT.append({"final_text": "旧路兜底回复"})
-        r = dispatcher.handle_message("随便问一句", session_id=sid)
-        assert r["status"] == "ok", r
-        assert r["message"] == "旧路兜底回复", r
-        assert r.get("session_id") == sid, r
-        print("  ✓ legacy 回归：triage 降级 + loop 循环行为不变")
-    finally:
-        os.environ["DISPATCHER_ENGINE"] = "react"
-
-
 def case_8_stale_pending_no_masking() -> None:
     """陈旧 pending 不遮蔽新问题：上一轮未确认的确认卡挂在 session 上，
     本轮用户问新问题应正常回答（E2E 实证 bug 的回归——react_engine 用
@@ -349,7 +326,6 @@ def main() -> int:
     run("4. 黄灯否定（算了 → soft_cancel）", case_4_soft_confirm_cancel)
     run("5. 并行双写只出一卡", case_5_parallel_double_write_single_card)
     run("6. 超轮兜底", case_6_recursion_fallback)
-    run("7. legacy 回归", case_7_legacy_regression)
     run("8. 陈旧 pending 不遮蔽新问题", case_8_stale_pending_no_masking)
 
     passed = sum(1 for _, ok, _ in results if ok)

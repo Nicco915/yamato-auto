@@ -14,9 +14,9 @@ dispatcher_read_test.py 隔离）：
 
 用法（在 app/ 目录下）：
   EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_write_test.py
-  DISPATCHER_ENGINE=react EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_write_test.py
+  EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/dispatcher_write_test.py
 
-双引擎可跑：剧本经 _dual_engine.set_scripts 同注 legacy/react 两条 mock
+剧本经 _react_script.set_scripts 注入 react 引擎 mock
 通道（确认门拦截、篡改防护、TTL、审计落库等安全断言两引擎同一标准）。
 
 隔离（血泪红线）：checkpoint/master db、output、alias_map、sessions 目录
@@ -51,7 +51,7 @@ from app.api.main import app  # noqa: E402
 from app.dispatcher import sessions  # noqa: E402
 from app.graph import get_graph  # noqa: E402
 
-from _dual_engine import set_scripts  # noqa: E402
+from _react_script import set_scripts  # noqa: E402
 from _test_isolation import isolate_to_tmp  # noqa: E402
 
 # ---- 隔离（必须在全部 app import 之后，首个 db 使用之前）----

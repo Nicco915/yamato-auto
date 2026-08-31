@@ -20,10 +20,9 @@ Node2 overrides / dispatcher 两轮确认端到端）。
 
 用法（在 app/ 目录下）：
   EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/factory_alias_test.py
-  DISPATCHER_ENGINE=react EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/factory_alias_test.py
+  EXTRACTION_MOCK=1 DISPATCHER_MOCK=1 python3 validation/factory_alias_test.py
 
-双引擎可跑：case 6 经 handle_message/confirm（入口按 DISPATCHER_ENGINE
-分流），剧本经 _dual_engine.set_scripts 同注两条 mock 通道；
+case 6 经 handle_message/confirm，剧本经 _react_script.set_scripts 注入 mock 通道；
 case 1–5 直调匹配/预扫/落盘/Node2，与引擎无关。
 """
 from __future__ import annotations
@@ -50,7 +49,7 @@ from app.api import service  # noqa: E402
 from app.config import get_settings  # noqa: E402
 from app.nodes.folder_router import folder_router  # noqa: E402
 
-from _dual_engine import set_scripts  # noqa: E402
+from _react_script import set_scripts  # noqa: E402
 from _test_isolation import isolate_to_tmp  # noqa: E402
 
 # ---- 夹具目录（隔离前先建好，ALIAS_MAP_PATH 随隔离指向它）----
