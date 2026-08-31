@@ -420,6 +420,9 @@ _TOOL_CN = {
     "reset_split": "重置分票",
     "generate_declarations": "生成报关单",
     "upsert_product_mapping": "维护产品映射",
+    "create_factory_alias": "保存工厂对照",
+    "add_factories": "补充工厂",
+    "process_skipped_factory": "处理被跳过的工厂",
 }
 
 

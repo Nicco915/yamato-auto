@@ -2160,6 +2160,72 @@ def _fn_query_master_data(args: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# process_skipped_factory（剧本宏：一次确认跑完 建对照 + 补充工厂 全链）
+# ---------------------------------------------------------------------------
+
+def _preview_process_skipped_factory(args: dict, session_id: str | None = None) -> dict:
+    """剧本宏预览：一次展示两步计划 + 前置校验警告（folder 合法性 /
+    批次存在性 / 工厂是否已被处理）。"""
+    thread_id = (args.get("thread_id") or "").strip()
+    factory = (args.get("factory") or "").strip()
+    folder = (args.get("folder") or "").strip()
+    warnings: list[str] = []
+    try:
+        from app.factory_match import validate_subfolder
+        validate_subfolder(get_settings().upstream_root, folder)
+    except ValueError as e:
+        warnings.append(str(e))
+    try:
+        state = service.get_order_state(thread_id)
+        if not state.get("exists"):
+            warnings.append(f"批次不存在: {thread_id}")
+        else:
+            values = state.get("values") or {}
+            # 工厂已写入（approve 过）则本次补充不会重复处理，提前告知
+            if factory in (values.get("factory_outputs") or {}):
+                warnings.append(
+                    f"工厂「{factory}」在本批次已审核写入，补充时不会重复处理")
+    except Exception as e:  # noqa: BLE001 预览期校验失败不阻塞，仅提示
+        warnings.append(f"批次状态查询失败: {type(e).__name__}: {e}")
+    warnings = _merge_pinned_warning(args, session_id, warnings)
+    return _preview(
+        f"将处理批次 {thread_id} 中被跳过的工厂「{factory}」",
+        [f"第 1 步：永久保存对照——工厂「{factory}」→ 文件夹「{folder}」，"
+         "后续批次自动生效",
+         f"第 2 步：重新解析装箱单，把「{factory}」补入批次 {thread_id} "
+         "重新提取，完成后批次重新挂起等待审核"],
+        warnings)
+
+
+def _exec_process_skipped_factory(args: dict,
+                                  on_progress: Callable[[dict], None] | None = None
+                                  ) -> dict:
+    """剧本宏执行：顺序跑 建对照 → 补充工厂，与两个独立工具共用执行体。
+
+    失败语义：第一步失败则不执行第二步；第二步失败时明确回报系统状态
+    （对照已保存成功 + 补充失败原因），不沉默回滚已成功的第一步。
+    """
+    step1 = _exec_create_factory_alias(args)
+    if step1.get("error"):
+        return {"error": f"第 1 步（保存对照）失败：{step1['error']}"}
+    msg1 = step1.get("message") or "对照已保存"
+    if on_progress:
+        on_progress({"type": "exec_progress", "tool": "process_skipped_factory",
+                     "thread_id": args.get("thread_id"),
+                     "message": "对照已保存，开始补充工厂…"})
+    step2 = _exec_add_factories(args, on_progress=on_progress)
+    if step2.get("error"):
+        return {"error": f"{msg1}；但第 2 步（补充工厂）失败：{step2['error']}",
+                "partial": True}
+    return {"ok": True,
+            "message": f"{msg1}。{step2.get('message') or ''}".strip(),
+            "factory": args.get("factory"), "folder": args.get("folder"),
+            "factories": step2.get("factories") or [],
+            "status": step2.get("status"),
+            "thread_id": step2.get("thread_id")}
+
+
+# ---------------------------------------------------------------------------
 # 工具注册表
 # ---------------------------------------------------------------------------
 
@@ -2805,6 +2871,33 @@ TOOLS: dict[str, Tool] = {
         },
         risk="read",
         func=_fn_query_master_data,
+    ),
+    "process_skipped_factory": Tool(
+        name="process_skipped_factory",
+        description="剧本宏：一次确认跑完「处理被跳过工厂」全链——第 1 步永久保存"
+                    "工厂↔文件夹对照（后续批次自动生效），第 2 步把该工厂补入批次"
+                    "重新提取并重新挂起审核。操作员要处理已完成批次里因没匹配上"
+                    "文件夹而被跳过的工厂、且已告知对应文件夹名时使用（等价于"
+                    "create_factory_alias + add_factories 组合，但只需一次确认）。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "thread_id": _THREAD_ID_PROP,
+                "factory": {
+                    "type": "string",
+                    "description": "被跳过的工厂名（装箱单/单据里的工厂名）",
+                },
+                "folder": {
+                    "type": "string",
+                    "description": "对应的上游文件夹名（一级子目录名，不是完整路径）",
+                },
+            },
+            "required": ["thread_id", "factory", "folder"],
+        },
+        risk="write",
+        preview=_preview_process_skipped_factory,
+        execute=_exec_process_skipped_factory,
     ),
 }
 
