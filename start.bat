@@ -45,6 +45,9 @@ echo [OK] Starting FastAPI server on http://127.0.0.1:%PORT%
 echo      Press Ctrl+C to stop.
 echo.
 
+REM ---------- 5. Auto-open browser (delayed 3s, wait for uvicorn ready) ----------
+start "" /min cmd /c "timeout /t 3 /nobreak >nul & start "" http://127.0.0.1:%PORT%/"
+
 .venv\Scripts\python.exe -m uvicorn app.api.main:app --host 127.0.0.1 --port %PORT%
 
 if errorlevel 1 (
