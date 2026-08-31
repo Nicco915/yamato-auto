@@ -545,14 +545,37 @@ function openFileBrowser(targetId, type, extensions) {
   _fbExtensions = extensions;
   _fbCurrentPath = null;
   document.getElementById('file-browser-modal').style.display = 'flex';
-  fbLoad(null);
+  // 起始路径取目标输入框当前值（工作台已回填上次使用的路径）：
+  // dir 直接定位该目录；file 定位文件所在父目录；为空/失效回退默认视图
+  const cur = ((document.getElementById(targetId) || {}).value || '').trim();
+  if (cur && type === 'dir') {
+    fbLoad(cur, true);
+  } else if (cur && type === 'file') {
+    fbLoad(_fbParentPath(cur), true);
+  } else {
+    fbLoad(null);
+  }
+}
+
+// 从文件路径推父目录（与 fbNavigateUp 同一套跨平台分隔符处理）
+function _fbParentPath(p) {
+  const isAbsoluteUnix = p.startsWith('/');
+  const parts = p.split(/[\\/]/).filter(Boolean);
+  parts.pop();
+  let parent = parts.join('/');
+  if (parent && parent.match(/^[A-Za-z]:$/)) {
+    parent = parent + '/';
+  }
+  if (isAbsoluteUnix && parent) parent = '/' + parent;
+  if (!parent) parent = isAbsoluteUnix ? '/' : '';
+  return parent || null;
 }
 
 function closeFileBrowser() {
   document.getElementById('file-browser-modal').style.display = 'none';
 }
 
-async function fbLoad(path) {
+async function fbLoad(path, silentFallback) {
   const params = new URLSearchParams();
   if (path) params.set('path', path);
   params.set('type', _fbType);
@@ -561,6 +584,9 @@ async function fbLoad(path) {
   try {
     const res = await fetch('/api/v1/files/browse?' + params);
     if (!res.ok) {
+      // 打开浏览器时带入的记忆路径可能已失效（目录被删/盘符拔出），
+      // 静默回退默认视图；浏览途中点目录失败才弹窗
+      if (silentFallback) { fbLoad(null); return; }
       alert('加载失败: ' + await res.text());
       return;
     }
