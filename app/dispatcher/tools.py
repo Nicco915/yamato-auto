@@ -136,7 +136,9 @@ def _fn_list_batches(args: dict) -> dict:
 
 
 def _fn_get_batch_status(args: dict) -> dict:
-    """单批次轻量摘要：list_batches 摘要 + next_nodes / validation_status。"""
+    """单批次轻量摘要：list_batches 摘要 + next_nodes / validation_status
+    + unprocessed_factories（被跳过/驳回/未写入的工厂名单，供 Agent 发现
+    可补入对象——list_batches 摘要层原本看不到）。"""
     try:
         thread_id = args["thread_id"]
         batches = service.list_batches().get("batches", [])
@@ -145,10 +147,21 @@ def _fn_get_batch_status(args: dict) -> dict:
             return {"error": f"批次不存在: {thread_id}"}
         state = service.get_order_state(thread_id)
         values = state.get("values") or {}
+        # 未处理工厂 = 装箱单要求（有 filter 取交集）− 待处理队列 − 当前工厂
+        # − 已写入（factory_outputs 只有 approve 的工厂才进）
+        req = set((values.get("downstream_requirements") or {}).keys())
+        factory_filter = values.get("factory_filter")
+        if factory_filter:
+            req &= set(factory_filter)
+        pending = set(values.get("pending_factories") or [])
+        current = (values.get("current_factory_data") or {}).get("factory_name")
+        done = set((values.get("factory_outputs") or {}).keys())
+        unprocessed = sorted(req - pending - {current} - done)
         return {
             **summary,
             "next_nodes": state.get("next_nodes"),
             "validation_status": values.get("validation_status"),
+            "unprocessed_factories": unprocessed,
         }
     except Exception as e:  # noqa: BLE001
         return _err(e)
@@ -1944,6 +1957,209 @@ def _exec_upsert_product_mapping(
 
 
 # ---------------------------------------------------------------------------
+# create_factory_alias / add_factories / query_master_data
+# ---------------------------------------------------------------------------
+
+def _preview_create_factory_alias(args: dict, session_id: str | None = None) -> dict:
+    """create_factory_alias 预览：展示对照内容；folder 校验失败提前进 warnings。"""
+    factory = (args.get("factory") or "").strip()
+    folder = (args.get("folder") or "").strip()
+    lines = [f"工厂: {factory}", f"对应文件夹: {folder}"]
+    warnings: list[str] = []
+    try:
+        from app.factory_match import validate_subfolder
+        validate_subfolder(get_settings().upstream_root, folder)
+    except ValueError as e:
+        warnings.append(str(e))
+    return _preview(
+        f"将永久保存对照：工厂「{factory}」→ 文件夹「{folder}」，"
+        "后续批次自动按此对照匹配文件夹",
+        lines, warnings)
+
+
+def _exec_create_factory_alias(args: dict,
+                               on_progress: Callable[[dict], None] | None = None
+                               ) -> dict:
+    """create_factory_alias 执行：与审核页 save-alias 同一服务端口径
+    （validate_subfolder 校验 + short_name 冲突检测 + save_alias_entries 落库，
+    DB 权威 + json 回退）。"""
+    from fastapi import HTTPException
+
+    from app.factory_match import save_alias_entries, validate_subfolder
+    from app.review.router import _ensure_factory_short_name
+
+    factory = (args.get("factory") or "").strip()
+    folder = (args.get("folder") or "").strip()
+    if not factory:
+        return {"error": "工厂名不能为空"}
+    try:
+        validate_subfolder(get_settings().upstream_root, folder)
+    except ValueError as e:
+        return {"error": str(e)}
+    try:
+        _ensure_factory_short_name(factory, folder)
+    except HTTPException as e:  # 409 short_name 冲突
+        return {"error": str(e.detail)}
+    try:
+        saved = save_alias_entries({factory: folder})
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+    msg = (f"已永久保存对照：工厂「{factory}」→ 文件夹「{folder}」，"
+           "后续批次自动生效")
+    overwritten = saved.get("overwritten") or []
+    if overwritten:
+        msg += f"（覆盖了原有对照: {'、'.join(overwritten)}）"
+    return {"ok": True, "message": msg, "factory": factory, "folder": folder}
+
+
+def _preview_add_factories(args: dict, session_id: str | None = None) -> dict:
+    """add_factories 预览：批次存在性检查 + 动作说明（实际补入名单以执行时
+    重新解析装箱单为准）。"""
+    thread_id = args["thread_id"]
+    warnings: list[str] = []
+    try:
+        state = service.get_order_state(thread_id)
+        if not state.get("exists"):
+            return _preview("无法补充工厂", [],
+                            [f"批次不存在: {thread_id}"])
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"批次状态查询失败: {type(e).__name__}: {e}")
+    warnings = _merge_pinned_warning(args, session_id, warnings)
+    return _preview(
+        f"将重新解析装箱单，把批次 {thread_id} 中未处理的工厂"
+        "（装箱单新增/被跳过/被驳回的）补入本批次重新提取，"
+        "完成后批次重新挂起等待审核；已审核写入的工厂不受影响",
+        [], warnings)
+
+
+def _exec_add_factories(args: dict,
+                        on_progress: Callable[[dict], None] | None = None
+                        ) -> dict:
+    """add_factories 执行：透传 service.add_factories_to_batch；
+    批次运行中/不存在的错误如实透传。"""
+    try:
+        result = service.add_factories_to_batch(
+            args["thread_id"],
+            on_progress=_wrap_on_progress("add_factories", args, on_progress),
+        )
+    except (ValueError, RuntimeError) as e:
+        return {"error": str(e)}
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+    factories = result.get("factories") or []
+    if not result.get("added"):
+        return {"ok": True,
+                "message": result.get("message") or "没有待补充的工厂",
+                "factories": []}
+    msg = f"已补入 {len(factories)} 家工厂：{'、'.join(factories)}。"
+    if result.get("status") == "pending_human_review":
+        msg += "批次已完成重新提取并挂起，请前往审核页审核。"
+    else:
+        msg += "批次已处理完成。"
+    return {"ok": True, "message": msg, "factories": factories,
+            "status": result.get("status"),
+            "thread_id": result.get("thread_id")}
+
+
+def _fn_query_master_data(args: dict) -> dict:
+    """主数据查询：先按 SKU 精确查（产品映射子表 + 工厂 SKU 表），
+    再按工厂名/短名/别名模糊查；两路结果合并返回。"""
+    q = (args.get("query") or "").strip()
+    if not q:
+        return {"error": "query 不能为空"}
+    from sqlalchemy import func, or_, select
+
+    from app.db.models import (
+        Factory,
+        FactoryAlias,
+        FactorySKU,
+        ProductMapping,
+        ProductMappingSku,
+    )
+    from app.db.session import get_session
+
+    result: dict[str, Any] = {"query": q, "sku_matches": [], "factory_matches": []}
+    try:
+        with get_session() as sess:
+            # ---- SKU 精确匹配：产品映射子表 + 工厂 SKU 表 ----
+            seen: set[tuple] = set()
+            links = sess.scalars(
+                select(ProductMappingSku)
+                .where(ProductMappingSku.sku_code == q)
+            ).all()
+            for link in links:
+                m = sess.get(ProductMapping, link.mapping_id)
+                if m is None:
+                    continue
+                key = ("mapping", m.id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                result["sku_matches"].append({
+                    "sku": q, "来源": "产品映射",
+                    "中文品名": m.product_name_cn, "英文品名": m.name_en,
+                    "税号": m.hs_code,
+                    "商检": "需要" if m.inspection_required else "不需要",
+                    "供应商": m.supplier_name,
+                })
+            sku_rows = sess.scalars(
+                select(FactorySKU).where(FactorySKU.sku_code == q)
+            ).all()
+            for r in sku_rows:
+                f = sess.get(Factory, r.factory_id)
+                key = ("factory_sku", r.sku_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                result["sku_matches"].append({
+                    "sku": q, "来源": "工厂SKU主数据",
+                    "工厂": f.factory_name if f else None,
+                    "中文品名": r.name_cn, "英文品名": r.name_en,
+                    "税号": r.hs_code,
+                    "商检": "需要" if r.inspection_required else "不需要",
+                    "单件净重": (float(r.unit_net_weight)
+                               if r.unit_net_weight is not None else None),
+                    "单件毛重": (float(r.unit_gross_weight)
+                               if r.unit_gross_weight is not None else None),
+                })
+
+            # ---- 工厂模糊匹配：工厂名/短名/别名 LIKE %q% ----
+            like = f"%{q}%"
+            fac_ids: set[int] = set()
+            for f in sess.scalars(select(Factory).where(or_(
+                    Factory.factory_name.like(like),
+                    Factory.short_name.like(like)))).all():
+                fac_ids.add(f.factory_id)
+            for a in sess.scalars(select(FactoryAlias).where(
+                    FactoryAlias.alias.like(like))).all():
+                fac_ids.add(a.factory_id)
+            for fid in sorted(fac_ids)[:10]:
+                f = sess.get(Factory, fid)
+                if f is None:
+                    continue
+                aliases = sess.scalars(
+                    select(FactoryAlias.alias)
+                    .where(FactoryAlias.factory_id == fid)
+                ).all()
+                sku_count = sess.scalar(
+                    select(func.count(FactorySKU.sku_id))
+                    .where(FactorySKU.factory_id == fid)
+                ) or 0
+                result["factory_matches"].append({
+                    "工厂名": f.factory_name, "中文短名": f.short_name,
+                    "别名": sorted(aliases), "主数据SKU数": sku_count,
+                })
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+    if not result["sku_matches"] and not result["factory_matches"]:
+        result["message"] = f"主数据中未找到与「{q}」相关的 SKU 或工厂"
+    # 防超长：SKU 命中截 20 条
+    result["sku_matches"] = result["sku_matches"][:20]
+    return result
+
+
+# ---------------------------------------------------------------------------
 # 工具注册表
 # ---------------------------------------------------------------------------
 
@@ -1975,8 +2191,10 @@ TOOLS: dict[str, Tool] = {
     ),
     "get_batch_status": Tool(
         name="get_batch_status",
-        description="查询单个批次的轻量状态摘要（状态/进度/下一节点/校验结果）。"
-                    "比 get_batch_detail 快，操作员只问“某某批次现在怎么样了”时优先用它。",
+        description="查询单个批次的轻量状态摘要（状态/进度/下一节点/校验结果/"
+                    "未处理工厂名单）。比 get_batch_detail 快，操作员只问"
+                    "“某某批次现在怎么样了”时优先用它；unprocessed_factories "
+                    "字段列出被跳过/驳回/未写入的工厂（可用 add_factories 补入）。",
         parameters={
             "type": "object",
             "properties": {"thread_id": _THREAD_ID_PROP},
@@ -2213,7 +2431,8 @@ TOOLS: dict[str, Tool] = {
                     "适用场景：当前工厂识别失败/超时/生成了人工补录占位数据，"
                     "操作员要求重试该工厂。"
                     "写操作：须先向操作员展示 preview 并获得确认后才执行。"
-                    "仅挂起待审核批次可用；未挂起批次会报错。",
+                    "仅挂起待审核批次可用；未挂起批次会报错。"
+                    "注意：批次已完成时应改用 add_factories 补入跳过/未处理的工厂。",
         parameters={
             "type": "object",
             "properties": {
@@ -2526,6 +2745,66 @@ TOOLS: dict[str, Tool] = {
         risk="write",
         preview=_preview_upsert_product_mapping,
         execute=_exec_upsert_product_mapping,
+    ),
+    "create_factory_alias": Tool(
+        name="create_factory_alias",
+        description="永久保存工厂↔文件夹对照（工厂别名）。操作员告知「某工厂对应"
+                    "某个文件夹」时使用；保存后后续所有批次自动按此对照匹配。"
+                    "文件夹名是上游根目录下现存的一级子目录名，不是完整路径。"
+                    "对照冲突（工厂已有不一致的中文短名等）会拒绝并提示去主数据页处理。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "factory": {
+                    "type": "string",
+                    "description": "工厂名（装箱单/单据里的工厂名）",
+                },
+                "folder": {
+                    "type": "string",
+                    "description": "对应的上游文件夹名（一级子目录名，不是完整路径）",
+                },
+            },
+            "required": ["factory", "folder"],
+        },
+        risk="write",
+        preview=_preview_create_factory_alias,
+        execute=_exec_create_factory_alias,
+    ),
+    "add_factories": Tool(
+        name="add_factories",
+        description="补充工厂：重新解析装箱单，把批次中未处理的工厂（装箱单新增的、"
+                    "被跳过的、被驳回的）补入该批次重新提取，完成后重新挂起审核。"
+                    "已完成/挂起中的批次可用；正在运行的批次会报错。"
+                    "已审核写入的工厂绝不重复处理。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。",
+        parameters={
+            "type": "object",
+            "properties": {"thread_id": _THREAD_ID_PROP},
+            "required": ["thread_id"],
+        },
+        risk="write",
+        preview=_preview_add_factories,
+        execute=_exec_add_factories,
+    ),
+    "query_master_data": Tool(
+        name="query_master_data",
+        description="查询主数据：传入 SKU 条码或工厂名/别名。SKU 命中返回品名/税号/"
+                    "商检/单重/所属工厂；工厂命中返回工厂名/中文短名/别名列表/"
+                    "主数据 SKU 数。操作员问「这个 SKU 是什么」「这个工厂的税号」"
+                    "「某工厂有哪些别名」等主数据问题时使用。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "SKU 条码或工厂名/别名",
+                },
+            },
+            "required": ["query"],
+        },
+        risk="read",
+        func=_fn_query_master_data,
     ),
 }
 
