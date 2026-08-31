@@ -154,16 +154,73 @@ def _convert_doc_to_pdf(doc_path: str, out_dir: str) -> str | None:
     return None
 
 
-def _reset_topleft_for_soffice(src: Path, work_dir: Path) -> Path | None:
-    """把 xlsx/xlsm 复制到 work_dir 下并重置每个 sheet 的 topLeftCell/selection，
-    返回预处理后副本路径；无法处理（如 .xls、openpyxl 打开失败、文件无 sheetView）
-    时返回 None（调用方应回退原始源文件继续转换）。
+def _digit_run_need(value) -> int | None:
+    """单元格值是长数字串（≥8 位，如 13 位 JAN 条码）时返回所需列宽（位数+2 余量），
+    否则返回 None。按内容判定、不按单元格格式：
+    - 文本值：strip 后全是数字且 ≥8 位（工厂单据里条码多为文本格式）；
+    - 数字值（排除 bool）：整数部分 ≥8 位（窄列会显示 ### 或科学计数，同样丢内容）。
+    """
+    if isinstance(value, str):
+        s = value.strip()
+        if len(s) >= 8 and s.isdigit():
+            return len(s) + 2
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        iv = int(abs(value))
+        digits = len(str(iv))
+        if digits >= 8:
+            return digits + 2
+    return None
 
-    为什么不重置源文件：缓存键 = (源路径, mtime)，修改源文件会污染键判定；
-    为什么不就地预处理：源文件是工厂交付的原始单据，必须保留只读语义。
-    LibreOffice SinglePageSheets 以 topLeftCell 为页面锚点，未重置时若上次
-    保存停留在 D15/AC30 之类位置，左上整片会被裁掉（JAN CODE / 品名列消失），
-    兆丰 XD-261830-001-1.26/1.28 都踩过此坑。
+
+def _autofit_digit_columns(ws) -> bool:
+    """把含长数字串的过窄列加宽到能完整显示，返回是否有改动。
+
+    窄列 + 自动换行时，13 位条码会在 PDF 里断成两行（中地 XD-265099 实测），
+    文本层里条码不再是连续字符串，审核页高亮定位搜不到；数字格式则显示 ###。
+    只加宽不缩窄，只动含长数字串的列（品名/规格等列不碰，版式变化最小）。
+    列宽单位 ≈ 字符数，需求宽度 = 数字位数 + 2 余量。
+    """
+    from openpyxl.utils import get_column_letter
+
+    default_w = ws.sheet_format.defaultColWidth or 8.43
+    need_by_col: dict[int, float] = {}
+    for row in ws.iter_rows():
+        for cell in row:
+            need = _digit_run_need(cell.value)
+            if need is None:
+                continue
+            cur = need_by_col.get(cell.column)
+            if cur is None or need > cur:
+                need_by_col[cell.column] = need
+    changed = False
+    for col_idx, need in need_by_col.items():
+        letter = get_column_letter(col_idx)
+        dim = ws.column_dimensions.get(letter)
+        current = dim.width if (dim is not None and dim.width) else default_w
+        if need > current:
+            ws.column_dimensions[letter].width = float(need)
+            changed = True
+    return changed
+
+
+def _preprocess_for_soffice(src: Path, work_dir: Path) -> Path | None:
+    """把 xlsx/xlsm 复制到 work_dir 下做转换前预处理，返回副本路径；
+    无法处理（如 .xls、openpyxl 打开失败、文件无 sheetView）时返回 None
+    （调用方应回退原始源文件继续转换）。
+
+    预处理两项职责：
+    1. 重置每个 sheet 的 topLeftCell/selection 到 A1——LibreOffice
+       SinglePageSheets 以 topLeftCell 为页面锚点，未重置时若上次保存停留在
+       D15/AC30 之类位置，左上整片会被裁掉（JAN CODE / 品名列消失），
+       兆丰 XD-261830-001-1.26/1.28 都踩过此坑。
+    2. 列宽自适应（_autofit_digit_columns）——窄列里的长数字条码在 PDF 里
+       折行/显示 ###，文本层断裂导致审核页高亮搜索不到（中地 XD-265099 实测）。
+
+    为什么不改源文件：缓存键 = (源路径, mtime)，修改源文件会污染键判定；
+    源文件是工厂交付的原始单据，必须保留只读语义。
     """
     if src.suffix.lower() not in _OPENPYXL_SUFFIXES:
         return None  # .xls：openpyxl 不能写，跳过预处理
@@ -193,10 +250,12 @@ def _reset_topleft_for_soffice(src: Path, work_dir: Path) -> Path | None:
                     if sel.sqref != "A1":
                         sel.sqref = "A1"
                         changed = True
+            if _autofit_digit_columns(ws):
+                changed = True
         if changed:
             wb.save(tmp_xlsx)
     except Exception:  # noqa: BLE001 - 任何 openpyxl 异常都回退源文件
-        logger.warning("[excel转PDF] topLeftCell 预处理失败，回退原始源文件：%s",
+        logger.warning("[excel转PDF] 预处理失败，回退原始源文件：%s",
                        src, exc_info=True)
         try:
             if tmp_xlsx.exists():
@@ -259,11 +318,12 @@ def convert_excel_to_pdf(excel_path: str, out_dir: str) -> str | None:
 
     渲染策略：
     - .xls：先用 soffice 转成 .xlsx 副本（out_dir/_xls_conv/ 下，源文件只读不动），
-      之后与 xlsx 同管线（topLeftCell 预处理 + SinglePageSheets 单页/sheet）；
+      之后与 xlsx 同管线（预处理 + SinglePageSheets 单页/sheet）；
       预转换失败才回退原始 .xls 走普通分页（多页但完整，审核页已有翻页器）。
-    - .xlsx/.xlsm：先复制到 out_dir/_lo_preprocess/，用 openpyxl 重置每个 sheet 的
-      topLeftCell="A1" + 清空 selection（防 LibreOffice SinglePageSheets 以视图
-      停留点为锚点把左上整片裁掉——兆丰 Packing 已复现），再用预处理副本走
+    - .xlsx/.xlsm：先复制到 out_dir/_lo_preprocess/，用 openpyxl 预处理
+      （重置每个 sheet 的 topLeftCell="A1" + 清空 selection，防 SinglePageSheets
+      以视图停留点为锚点把左上整片裁掉——兆丰 Packing 已复现；另加长数字串
+      列宽自适应，防条码折行——中地已复现），再用预处理副本走
       SinglePageSheets；预处理失败（openpyxl 异常/无 sheetView）回退原始源
       文件继续。
 
@@ -286,7 +346,7 @@ def convert_excel_to_pdf(excel_path: str, out_dir: str) -> str | None:
         converted = _convert_xls_to_xlsx(soffice, profile_arg, src, work_dir)
         if converted is not None:
             effective_src = converted
-    preprocessed = _reset_topleft_for_soffice(effective_src, work_dir)
+    preprocessed = _preprocess_for_soffice(effective_src, work_dir)
     soffice_input = preprocessed if preprocessed else str(effective_src)
     # 产物名取源文件 stem（.xls 预转换副本同名，命名不变）
     expect = Path(out_dir) / (src.stem + ".pdf")
