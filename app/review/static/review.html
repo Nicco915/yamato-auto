@@ -266,6 +266,8 @@ let factoryList = [];      // 当前批次所有工厂 [{factory, role}]
 let currentFactoryIndex = -1;  // 当前工厂在 factoryList 中的索引
 let missingSkus = [];      // D3：缺失 SKU 前端状态（添加后移除，红条联动）
 let reextractBusy = false; // D2：重提请求进行中（防重复点击，5-40s）
+let hitState = null;       // SKU 高亮定位：{doc, sku, byPage: {页码: [[x0,y0,x1,y1] 分数坐标]}}
+let hitSeq = 0;            // 高亮请求序号（防快速连点卡片串结果）
 /* 缩放状态 */
 let zoomPerDoc = {};        // { path: zoom_ratio } 单据缩放记忆
 let curZoom = 1;            // 当前缩放比（1=适应宽度）
@@ -366,6 +368,7 @@ function initItems() {
   missingSkus = [...(payload.missing_skus || [])];
   seenIdx = new Set();
   searchMatches = [];
+  hitState = null; hitSeq++;   // 高亮定位状态随 payload 重置（并使在途请求失效）
   const s = $("sku-search");
   if (s) { s.value = ""; }
   const sc = $("search-count");
@@ -819,7 +822,11 @@ function renderDocSelect() {
   });
 }
 
-function onDocSelect(path) { loadDocument(path, 1); }
+function onDocSelect(path) {
+  // 手动切换单据：带上当前选中 SKU 尝试高亮（未选中/不可搜索则普通浏览）
+  const sku = (items[selectedIdx] && items[selectedIdx].sku) || "";
+  applySkuHit(path, sku);
+}
 
 /* 「打开本地文件」按钮：把当前 curDoc 交给后端 → 后端启动系统默认程序。
    curDoc 为占位符（extraction_error: / reconstructed_from_output_excel /
@@ -1043,6 +1050,65 @@ async function openLocalDoc() {
   }
 }
 
+/* ================= SKU 高亮定位（左屏叠加层） ================= */
+/* 可搜索定位的单据类型（与后端 _HIT_SEARCHABLE_SUFFIXES 对齐）；
+   csv/图片/HTML 快照不请求 hit 接口，行为不变 */
+const HIT_SEARCHABLE_SUFFIXES = new Set(["pdf", "xls", "xlsx", "xlsm"]);
+
+/* 选中 SKU 卡片 / 手动切换单据时调用：命中则自动翻到首个命中页并整行高亮；
+   未命中/不支持/失败一律静默降级为普通浏览（不打扰审核主流程） */
+async function applySkuHit(src, sku) {
+  const seq = ++hitSeq;
+  hitState = null;
+  sku = String(sku ?? "").trim();
+  const suffix = src ? src.split(".").pop().toLowerCase() : "";
+  if (!src) return;
+  if (!sku || !HIT_SEARCHABLE_SUFFIXES.has(suffix)) {
+    if (src !== curDoc) loadDocument(src, 1);
+    else drawHitOverlays();
+    return;
+  }
+  let targetPage = 1, byPage = null;
+  try {
+    const r = await fetch(`/api/v1/review/${encodeURIComponent(threadId)}/document/hit` +
+      `?path=${encodeURIComponent(src)}&q=${encodeURIComponent(sku)}`);
+    if (r.ok) {
+      const d = await r.json();
+      if (d && d.hits && d.hits.length) {
+        byPage = {};
+        d.hits.forEach((h) => { byPage[h.page] = h.rects; });
+        targetPage = d.hits[0].page;
+      }
+    }
+  } catch (_) { /* 定位失败静默降级 */ }
+  if (seq !== hitSeq) return;  // 等待期间又选了别的卡片/单据，丢弃过期结果
+  hitState = byPage ? { doc: src, sku, byPage } : null;
+  if (src === curDoc) {
+    // 同一单据换 SKU：命中页变了才重载文档，否则只重画高亮框
+    if (byPage && targetPage !== curPage) loadDocument(src, targetPage);
+    else drawHitOverlays();
+  } else {
+    loadDocument(src, targetPage);
+  }
+}
+
+/* 在 img 的 wrapper 上按当前页画高亮框（百分比分数坐标，缩放天然跟随） */
+function drawHitOverlays() {
+  const wrap = $("doc-view").querySelector(".hit-wrap");
+  if (!wrap) return;
+  wrap.querySelectorAll(".hit-box").forEach((n) => n.remove());
+  if (!hitState || hitState.doc !== curDoc) return;
+  (hitState.byPage[curPage] || []).forEach((rc) => {
+    const d = document.createElement("div");
+    d.className = "hit-box";
+    d.style.cssText = "position:absolute;pointer-events:none;box-sizing:border-box;" +
+      "background:rgba(255,235,59,.35);border:2px solid #f59e0b;" +
+      "left:" + rc[0] * 100 + "%;top:" + rc[1] * 100 + "%;" +
+      "width:" + (rc[2] - rc[0]) * 100 + "%;height:" + (rc[3] - rc[1]) * 100 + "%;";
+    wrap.appendChild(d);
+  });
+}
+
 async function loadDocument(path, page) {
   if (!isRealDocPath(path)) {
     $("doc-view").innerHTML = "<span style='color:#9ca3af;margin-top:40px'>该 SKU 无有效来源文件，请从上方单据列表手动选择</span>";
@@ -1089,10 +1155,17 @@ async function loadDocument(path, page) {
       pageCount = parseInt(r.headers.get("X-Page-Count") || "1", 10);
       const blob = await r.blob();
       view.innerHTML = "";
+      // wrapper：高亮框的定位基准（百分比坐标相对它），fit-content 随 img 缩放，
+      // margin auto 保持与原 img 居中表现一致
+      const wrap = document.createElement("div");
+      wrap.className = "hit-wrap";
+      wrap.style.cssText = "position:relative;width:fit-content;margin:0 auto;";
       const img = document.createElement("img");
       img.onload = () => onImgLoaded(img);
       img.src = URL.createObjectURL(blob);
-      view.appendChild(img);
+      wrap.appendChild(img);
+      view.appendChild(wrap);
+      drawHitOverlays();
       setPager(pageCount);
     }
   } catch (e) {
@@ -1231,7 +1304,8 @@ $("doc-view").addEventListener("gestureend", (e) => {
   e.preventDefault();
 });
 
-/* 点击卡片：左屏跳到该 SKU 的 source_file；若 source_file 是占位符则回退到工厂单据列表 */
+/* 点击卡片：左屏跳到该 SKU 的 source_file 并高亮其所在行；
+   若 source_file 是占位符则回退到工厂单据列表 */
 function selectCard(idx) {
   selectedIdx = idx;
   seenIdx.add(idx);
@@ -1240,7 +1314,9 @@ function selectCard(idx) {
   if (!isRealDocPath(src)) {
     src = (payload.source_documents || [])[0] || "";
   }
-  if (src && src !== curDoc) loadDocument(src, 1);
+  if (!src) return;
+  // 命中定位：跳到该 SKU 所在页并整行高亮；不支持/未命中静默降级为普通浏览
+  applySkuHit(src, items[idx] ? items[idx].sku : "");
 }
 
 /* ================= 提交与流转 ================= */
