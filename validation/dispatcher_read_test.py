@@ -86,7 +86,9 @@ def case_1_query() -> None:
         {"tool_calls": [{"id": "c1", "name": "list_batches", "args": {}}]},
         {"final_text": "当前有 N 个批次…"},
     ])
-    r = with_lock_retry(lambda: dispatcher.handle_message("现在有哪些批次？",
+    # 「现在有哪些批次」类短查询现在走快路径（fastpath，不进 LLM）；
+    # 本用例验证 LLM 只读链路，故用快路径不放行的问法
+    r = with_lock_retry(lambda: dispatcher.handle_message("帮我看看目前都有哪些批次在跑",
                                                           session_id=sid))
     assert r["status"] == "ok", r
     assert r["message"] == "当前有 N 个批次…", r

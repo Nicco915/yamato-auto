@@ -86,7 +86,9 @@ def case_1_readonly_chain() -> None:
         {"tool_calls": [{"name": "get_usage", "args": {}}]},
         {"final_text": "用量如下"},
     ])
-    r = dispatcher.handle_message("查一下用量", session_id=sid)
+    # 「查一下用量」等短查询现在走快路径（fastpath，不进 LLM）；
+    # 本用例验证 LLM 链路，故用快路径不放行的问法
+    r = dispatcher.handle_message("帮我查一下当前的调用用量和失败次数", session_id=sid)
     assert r["status"] == "ok", r
     assert r["message"] == "用量如下", r
     assert r.get("session_id") == sid, r
@@ -290,7 +292,8 @@ def case_8_stale_pending_no_masking() -> None:
         {"tool_calls": [{"name": "get_usage", "args": {}}]},
         {"final_text": "用量回答如下"},
     ])
-    r2 = dispatcher.handle_message("查一下用量", session_id=sid)
+    # 同上：避开快路径句式，确保走 LLM 链路
+    r2 = dispatcher.handle_message("帮我查一下当前的调用用量和失败次数", session_id=sid)
     assert r2["status"] == "ok", r2
     assert r2["message"] == "用量回答如下", r2
     # 旧 pending 原样保留（等 confirm），对话历史记的是本轮回答
