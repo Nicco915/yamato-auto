@@ -7,7 +7,7 @@
 
 隔离策略：
 - 不走 db 也不走 LLM，只调 app.extraction.pipeline.convert_excel_to_pdf
-  和 app.extraction.pipeline._reset_topleft_for_soffice；不读 llm_client
+  和 app.extraction.pipeline._preprocess_for_soffice；不读 llm_client
   的真实 .env，因此不需要 isolate_to_tmp。
 - 临时目录用 stdlib tempfile.TemporaryDirectory，进程退出时自动清理。
 
@@ -51,7 +51,7 @@ os.environ.setdefault(
 )
 
 from app.extraction.pipeline import (  # noqa: E402
-    _reset_topleft_for_soffice,
+    _preprocess_for_soffice,
     convert_excel_to_pdf,
 )
 
@@ -181,15 +181,15 @@ def test_normal_xlsx_with_topleft_a1_roundtrip():
 
 
 # ---------------------------------------------------------------------------
-# _reset_topleft_for_soffice 单元测试
+# _preprocess_for_soffice 单元测试
 # ---------------------------------------------------------------------------
 
 
 def test_preprocess_xlsx_resets_topleft_and_selection():
-    """_reset_topleft_for_soffice 把 xlsx 复制到 _lo_preprocess/ 并重置视图。"""
+    """_preprocess_for_soffice 把 xlsx 复制到 _lo_preprocess/ 并重置视图。"""
     src = FIXTURES / "Packing XD-261830-001-1.26.xlsx"
     with tempfile.TemporaryDirectory() as work:
-        out = _reset_topleft_for_soffice(src, Path(work))
+        out = _preprocess_for_soffice(src, Path(work))
         assert out is not None
         assert (Path(work) / "_lo_preprocess" / src.name).exists()
         # 验证副本内 topLeftCell == "A1" 且 selection 全部归位 A1
@@ -211,11 +211,11 @@ def test_preprocess_xlsx_resets_topleft_and_selection():
 
 
 def test_preprocess_xls_short_circuits():
-    """_reset_topleft_for_soffice 对 .xls 直接返回 None（openpyxl 不能写）。"""
+    """_preprocess_for_soffice 对 .xls 直接返回 None（openpyxl 不能写）。"""
     with tempfile.NamedTemporaryFile(suffix=".xls", delete=False) as f:
         fake_xls = f.name
     try:
-        out = _reset_topleft_for_soffice(Path(fake_xls), Path(tempfile.gettempdir()))
+        out = _preprocess_for_soffice(Path(fake_xls), Path(tempfile.gettempdir()))
         assert out is None
     finally:
         Path(fake_xls).unlink(missing_ok=True)
@@ -229,10 +229,102 @@ def test_preprocess_falls_back_on_openpyxl_error():
         broken = f.name
     Path(broken).write_bytes(b"this is not a real xlsx file")
     try:
-        out = _reset_topleft_for_soffice(Path(broken), Path(tempfile.gettempdir()))
+        out = _preprocess_for_soffice(Path(broken), Path(tempfile.gettempdir()))
         assert out is None
     finally:
         Path(broken).unlink(missing_ok=True)
+
+
+# ---------------------------------------------------------------------------
+# 列宽自适应（窄列长数字条码折行修复）单元测试
+# ---------------------------------------------------------------------------
+
+
+def test_digit_run_need_rules():
+    """_digit_run_need 命中规则：按内容不按格式，≥8 位纯数字才命中。"""
+    from app.extraction.pipeline import _digit_run_need
+    # 文本条码（工厂单据主流格式）
+    assert _digit_run_need("4549509515203") == 15
+    assert _digit_run_need(" 4549509515203 ") == 15   # 带空白也命中
+    # 短数字/含字母/空值不命中
+    assert _digit_run_need("1234567") is None         # 7 位，不到 8
+    assert _digit_run_need("24K1532") is None         # 含字母
+    assert _digit_run_need("CUSHION") is None
+    assert _digit_run_need("") is None
+    assert _digit_run_need(None) is None
+    # 数字格式（窄列显示 ###/科学计数，同样命中）
+    assert _digit_run_need(4549509515203) == 15
+    assert _digit_run_need(4549509515203.0) == 15
+    assert _digit_run_need(480) is None               # 数量级不命中
+    assert _digit_run_need(True) is None              # bool 排除
+
+
+def test_preprocess_widens_narrow_digit_column():
+    """窄列长数字条码列被加宽；够宽的列/纯文本列/短数字列不动。"""
+    from openpyxl import Workbook, load_workbook
+    from openpyxl.styles import Alignment
+    wb = Workbook()
+    ws = wb.active
+    ws.column_dimensions["A"].width = 6               # 窄列 + 换行 → 折行场景
+    ws.column_dimensions["B"].width = 20              # 本来就够宽
+    a = ws["A1"]; a.value = "4549509515203"; a.alignment = Alignment(wrap_text=True)
+    ws["B1"] = "4549509518860"
+    ws["C1"] = "CUSHION 65*115CM"                     # 纯文本不命中
+    ws["D1"] = 480                                    # 短数字不命中
+    with tempfile.NamedTemporaryFile(
+        suffix=".xlsx", delete=False, dir=tempfile.gettempdir()
+    ) as f:
+        src_path = f.name
+    try:
+        wb.save(src_path)
+        with tempfile.TemporaryDirectory() as work:
+            out = _preprocess_for_soffice(Path(src_path), Path(work))
+            assert out is not None
+            wb2 = load_workbook(out)
+            ws2 = wb2.active
+            assert ws2.column_dimensions["A"].width >= 15, (
+                f"窄列未加宽: {ws2.column_dimensions['A'].width}"
+            )
+            assert ws2.column_dimensions["B"].width == 20, (
+                f"够宽的列不应被改动: {ws2.column_dimensions['B'].width}"
+            )
+            c_dim = ws2.column_dimensions["C"]
+            assert not c_dim.width or c_dim.width < 15, (
+                f"纯文本列不应被加宽: {c_dim.width}"
+            )
+    finally:
+        Path(src_path).unlink(missing_ok=True)
+
+
+@requires_soffice
+def test_wrapped_barcode_searchable_after_convert():
+    """真实转换：窄列+换行的 13 位条码，转换后 PDF 文本层含完整条码。
+
+    修复前条码在 PDF 里断成两行（45495095152 / 03），审核页高亮定位搜不到
+    （中地 XD-265099 实测）；列宽自适应后文本层保持连续字符串。
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment
+    wb = Workbook()
+    ws = wb.active
+    ws.column_dimensions["A"].width = 6
+    a = ws["A1"]; a.value = "4549509515203"; a.alignment = Alignment(wrap_text=True)
+    ws["B1"] = "CUSHION"
+    with tempfile.NamedTemporaryFile(
+        suffix=".xlsx", delete=False, dir=tempfile.gettempdir()
+    ) as f:
+        src_path = f.name
+    try:
+        wb.save(src_path)
+        with tempfile.TemporaryDirectory() as tmp:
+            out_pdf = convert_excel_to_pdf(src_path, tmp)
+            assert out_pdf is not None, "convert failed"
+            text = _pdf_text(out_pdf).replace("\n", "")
+            assert "4549509515203" in text, (
+                f"条码在 PDF 文本层断裂/丢失: {text[:200]}"
+            )
+    finally:
+        Path(src_path).unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +386,7 @@ def test_xls_preconvert_success_uses_singlepage():
                 outdir = cmd[cmd.index("--outdir") + 1]
                 if conv_filter == "xlsx":
                     # 预转换：产出 xlsx 副本（内容随意——openpyxl 打不开时
-                    # _reset_topleft_for_soffice 只记 warning 返回 None，
+                    # _preprocess_for_soffice 只记 warning 返回 None，
                     # soffice_input 回退为该 xlsx 原样，不影响过滤器断言）
                     Path(outdir, Path(fake).stem + ".xlsx").write_bytes(b"fake-xlsx")
                 else:
