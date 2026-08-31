@@ -47,8 +47,11 @@
   #doc-toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
                  border-bottom: 1px solid #e5e7eb; font-size: 13px; flex-wrap: wrap; }
   #doc-toolbar select { max-width: 320px; }
-  #doc-view { flex: 1; overflow: auto; display: flex; align-items: flex-start;
-              justify-content: flex-start; padding: 8px; background: #e8eaed; }
+  #doc-view { flex: 1; overflow: auto; display: block; padding: 8px; background: #e8eaed; }
+  /* 容器不能用 display:flex/grid 之外的布局约束：img 作为 flex item 时受
+     min-width:auto(=图片固有宽度) 约束，CSS width 超过固有像素宽会被钳死
+     （实测最高只有 naturalWidth/viewW≈130%，之后缩放条%继续涨但画面不动）。
+     改 block 后缩放可一路到 400%，越界出横向滚动条。 */
   #doc-view img { display: block; margin: 0 auto; box-shadow: 0 1px 6px rgba(0,0,0,.3); background:#fff; }
   #doc-view iframe { width: 100%; height: 100%; border: 0; background: #fff; }
   .pager { display: flex; align-items: center; gap: 6px; }
