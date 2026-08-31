@@ -423,6 +423,7 @@ _TOOL_CN = {
     "create_factory_alias": "保存工厂对照",
     "add_factories": "补充工厂",
     "process_skipped_factory": "处理被跳过的工厂",
+    "split_and_generate": "一键分票并生成报关单",
 }
 
 

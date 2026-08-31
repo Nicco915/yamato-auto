@@ -1812,6 +1812,168 @@ def _exec_generate_declarations(
         return _err(e)
 
 
+# ---------------------------------------------------------------------------
+# split_and_generate（剧本宏：一次确认跑完 分票 → 确认 → 生成报关单 全链）
+# ---------------------------------------------------------------------------
+
+def _split_status(thread_id: str) -> str:
+    """分票状态探测：not_started / pending_review / confirmed / 其他原样返回。
+
+    与 _fn_get_split_proposal 同一判定口径：先查 split graph state，
+    再查 Declaration 表已确认行。
+    """
+    split_thread_id = f"split-{thread_id}"
+    try:
+        from app.split.graph import get_split_graph
+        graph = get_split_graph()
+        snap = graph.get_state({"configurable": {"thread_id": split_thread_id}})
+        if snap.values:
+            status = snap.values.get("status", "")
+            # 图在 human_review 挂起 = 方案已生成待确认
+            if snap.next and snap.values.get("proposal"):
+                return "pending_review"
+            if status:
+                return status
+    except Exception:  # noqa: BLE001 探测失败按未开始处理，由后续步骤报错
+        pass
+    try:
+        from app.db.models import Declaration
+        from app.db.session import get_session
+        with get_session() as sess:
+            confirmed = sess.query(Declaration).filter(
+                Declaration.split_thread_id == split_thread_id,
+                Declaration.status == "confirmed",
+            ).count()
+        if confirmed > 0:
+            return "confirmed"
+    except Exception:  # noqa: BLE001
+        pass
+    return "not_started"
+
+
+def _preview_split_and_generate(args: dict, session_id: str | None = None) -> dict:
+    """一键分票预览：当前分票状态 + 将执行的步骤清单 + 前置警告。
+
+    状态机前置（执行时按状态跳过已完成步骤）：
+    - not_started：① 启动分票生成方案 → ② 确认方案 → ③ 生成报关单
+    - pending_review：方案已生成待确认，从 ② 开始
+    - confirmed：方案已确认，只执行 ③
+    """
+    thread_id = (args.get("thread_id") or "").strip()
+    invoice_number = (args.get("invoice_number") or "").strip()
+    warnings: list[str] = []
+    lines: list[str] = []
+
+    if not thread_id:
+        return _preview("无法一键分票", [], ["thread_id 为空"])
+    if not invoice_number:
+        warnings.append("invoice_number（发票号码段）为空，确认后生成报关单会失败")
+
+    try:
+        state = service.get_order_state(thread_id)
+        if not state.get("exists"):
+            return _preview("无法一键分票", [], [f"批次不存在: {thread_id}"])
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"批次状态查询失败: {type(e).__name__}: {e}")
+
+    status = _split_status(thread_id)
+    step_lines = {
+        "not_started": ["第 1 步：启动分票，生成推荐分票方案",
+                        "第 2 步：按推荐方案确认分票（写入票数）",
+                        "第 3 步：生成全部报关单"],
+        "pending_review": ["（分票方案已生成，跳过启动步骤）",
+                           "第 1 步：按现有方案确认分票（写入票数）",
+                           "第 2 步：生成全部报关单"],
+        "confirmed": ["（分票方案已确认，直接生成）",
+                      "第 1 步：生成全部报关单"],
+    }
+    lines.extend(step_lines.get(status,
+                                [f"当前分票状态为 {status}，可能不适合一键链路，"
+                                 "建议改用单个分票工具逐步操作"]))
+    if status not in step_lines:
+        warnings.append(f"当前分票状态为 {status}，一键链路可能不适用")
+
+    # 已生成过报关单 → 提醒会重新生成
+    files = _fn_list_declaration_files({"thread_id": thread_id})
+    if files.get("total"):
+        warnings.append(f"该批次已生成过 {files['total']} 份报关单，"
+                        "确认后将重新生成覆盖")
+
+    lines.append(f"发票号码段: {invoice_number or '（未提供）'}"
+                 "（完整发票号自动拼为 YIL+港口字母+号码段）")
+    warnings = _merge_pinned_warning(args, session_id, warnings)
+    return _preview(f"确认对批次 {thread_id} 一键分票并生成报关单？",
+                    lines, warnings)
+
+
+def _exec_split_and_generate(
+    args: dict,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """一键分票执行：按当前状态跳过已完成步骤，顺序跑 启动 → 确认 → 生成。
+
+    失败语义同 process_skipped_factory：失败步骤之前的成功不沉默回滚，
+    回报里标明已完成到哪一步（partial: True）。
+    """
+    thread_id = (args.get("thread_id") or "").strip()
+    if not thread_id:
+        return {"error": "thread_id 不能为空"}
+    if not (args.get("invoice_number") or "").strip():
+        return {"error": "invoice_number（发票号码段）不能为空"}
+
+    def _progress(msg: str) -> None:
+        if on_progress:
+            on_progress({"type": "exec_progress", "tool": "split_and_generate",
+                         "thread_id": thread_id, "message": msg})
+
+    status = _split_status(thread_id)
+    done: list[str] = []
+
+    # 第 1 步：启动分票（not_started 才需要）
+    if status == "not_started":
+        r1 = _exec_start_split(args, on_progress=on_progress)
+        if r1.get("error"):
+            return {"error": f"第 1 步（启动分票）失败：{r1['error']}"}
+        if r1.get("status") != "pending_review":
+            # 未挂起到人工审核（空方案等异常态），不继续自动确认
+            return {"error": f"分票启动后未进入待确认状态"
+                             f"（{r1.get('message') or r1.get('status')}），"
+                             "请用 get_split_proposal 查看后用单步工具处理"}
+        done.append("分票方案已生成")
+        _progress("分票方案已生成，按推荐方案确认…")
+    elif status == "pending_review":
+        pass  # 已有方案待确认，直接进入第 2 步
+    elif status == "confirmed":
+        done.append("分票方案此前已确认")
+    else:
+        return {"error": f"当前分票状态为 {status}，不适合一键链路，"
+                         "请用单个分票工具逐步操作"}
+
+    # 第 2 步：确认分票（confirmed 状态跳过）
+    if status != "confirmed":
+        r2 = _exec_confirm_split(args, on_progress=on_progress)
+        if r2.get("error"):
+            prefix = "；".join(done) + "；" if done else ""
+            return {"error": f"{prefix}但确认分票失败：{r2['error']}",
+                    "partial": bool(done)}
+        done.append(f"分票已确认（共 {r2.get('total_declarations')} 票）")
+        _progress("分票已确认，开始生成报关单…")
+
+    # 第 3 步：生成报关单
+    r3 = _exec_generate_declarations(args, on_progress=on_progress)
+    if r3.get("error"):
+        prefix = "；".join(done) + "；" if done else ""
+        return {"error": f"{prefix}但生成报关单失败：{r3['error']}",
+                "partial": True}
+
+    files = _fn_list_declaration_files({"thread_id": thread_id})
+    msg = "；".join(done + [r3.get("message") or "报关单已生成"])
+    return {"ok": True, "message": msg,
+            "count": r3.get("count"), "warnings": r3.get("warnings") or [],
+            "files_total": files.get("total", 0),
+            "thread_id": thread_id}
+
+
 def _preview_upsert_product_mapping(args: dict, session_id: str | None = None) -> dict:
     """upsert_product_mapping 预览：展示将写入的映射字段。"""
     try:
@@ -2779,6 +2941,38 @@ TOOLS: dict[str, Tool] = {
         risk="write",
         preview=_preview_generate_declarations,
         execute=_exec_generate_declarations,
+    ),
+    "split_and_generate": Tool(
+        name="split_and_generate",
+        description="一键分票并生成报关单（剧本宏）：一次确认跑完"
+                    "「启动分票 → 确认方案 → 生成全部报关单」全链，"
+                    "已完成的分票步骤自动跳过。"
+                    "必须提供 invoice_number（发票号码段，如 656），"
+                    "操作员没给时要先追问。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。"
+                    "注意：需要调整分票方案细节（拆票/改柜型/强制通过警告）时，"
+                    "请改用 start_split/confirm_split 等单个工具逐步操作，"
+                    "本宏是一键默认链路。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "thread_id": _THREAD_ID_PROP,
+                "invoice_number": {
+                    "type": "string",
+                    "description": "发票号码段（人工提供），如 '656'；"
+                                   "完整发票号自动拼为 YIL+港口字母+号码段",
+                },
+                "source_file_path": {
+                    "type": "string",
+                    "description": "可选，批次 filled Excel 的绝对路径；"
+                                   "缺省时从上游批次 state 取 final_output_path",
+                },
+            },
+            "required": ["thread_id", "invoice_number"],
+        },
+        risk="write",
+        preview=_preview_split_and_generate,
+        execute=_exec_split_and_generate,
     ),
     "upsert_product_mapping": Tool(
         name="upsert_product_mapping",
