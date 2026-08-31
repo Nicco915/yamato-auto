@@ -1077,7 +1077,10 @@ async function applySkuHit(src, sku) {
       if (d && d.hits && d.hits.length) {
         byPage = {};
         d.hits.forEach((h) => { byPage[h.page] = h.rects; });
-        targetPage = d.hits[0].page;
+        // 同一单据内换 SKU：当前页本身命中就留在原地（不跳回第一命中页，
+        // 发票/箱单双 sheet 单据核净毛重不被打断）；切换单据时 curPage 是
+        // 旧单据的页码，无参考意义，仍取第一命中页
+        targetPage = (src === curDoc && byPage[curPage]) ? curPage : d.hits[0].page;
       }
     }
   } catch (_) { /* 定位失败静默降级 */ }
