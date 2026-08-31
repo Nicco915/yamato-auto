@@ -11,7 +11,8 @@
    - DB 异常 → 降级沉默（不抛）
 2. preview 集成：写工具预览含 pinned 不一致警告（验证 session_id 透传
    进 11 个 preview 函数 + 警告进 warnings）
-3. pinned 上下文注入：prompts.system_prompt / executor_prompt / react_prompt
+3. pinned 上下文注入：prompts.react_prompt（legacy 引擎已删除，system_prompt/
+   executor_prompt 随之退役）
    在 session_id 有 pinned 时追加「会话上下文」段；无 pinned 时不追加。
 
 用法（在 app/ 目录下）：
@@ -220,69 +221,8 @@ def integration_set_paths_no_thread_id_no_warn():
 
 
 # ---------------------------------------------------------------------------
-# 3. pinned 上下文注入：prompts.* 三函数
+# 3. pinned 上下文注入：prompts.react_prompt（legacy prompt 已随引擎删除）
 # ---------------------------------------------------------------------------
-
-def injection_system_prompt_with_pinned():
-    """system_prompt(phase, session_id) 有 pinned → 含「会话上下文」段。"""
-    from app.db.models import ChatSession as _ChatSessionOrm
-    from app.db.session import get_session as _get_db_session
-    from app.dispatcher import prompts
-
-    sid = "PINNED-INJ-SYSPROMPT"
-    pinned = "BATCH-CTX-001"
-    with _get_db_session() as db:
-        row = db.get(_ChatSessionOrm, sid)
-        if row is None:
-            db.add(_ChatSessionOrm(session_id=sid))
-            db.commit()
-        row = db.get(_ChatSessionOrm, sid)
-        row.pinned_thread_id = pinned
-        db.commit()
-    try:
-        sp = prompts.system_prompt(2, sid)
-        assert "会话上下文" in sp, f"system_prompt 应含「会话上下文」段: head={sp[:300]}"
-        assert pinned in sp, f"system_prompt 应含 pinned 批次号: head={sp[:300]}"
-        # 无 session_id 时应不含该段
-        sp_none = prompts.system_prompt(2)
-        assert "会话上下文" not in sp_none, "session_id=None 时应不含上下文段"
-        print(f"  ✓ system_prompt(2, sid) 注入 pinned 上下文段（含 {pinned}）")
-    finally:
-        with _get_db_session() as db:
-            row = db.get(_ChatSessionOrm, sid)
-            if row:
-                row.pinned_thread_id = None
-                db.commit()
-
-
-def injection_executor_prompt_with_pinned():
-    """executor_prompt(phase, session_id) 有 pinned → 含上下文段。"""
-    from app.db.models import ChatSession as _ChatSessionOrm
-    from app.db.session import get_session as _get_db_session
-    from app.dispatcher import prompts
-
-    sid = "PINNED-INJ-EXEC"
-    pinned = "BATCH-CTX-002"
-    with _get_db_session() as db:
-        row = db.get(_ChatSessionOrm, sid)
-        if row is None:
-            db.add(_ChatSessionOrm(session_id=sid))
-            db.commit()
-        row = db.get(_ChatSessionOrm, sid)
-        row.pinned_thread_id = pinned
-        db.commit()
-    try:
-        sp = prompts.executor_prompt(2, sid)
-        assert "会话上下文" in sp, "executor_prompt 应含「会话上下文」段"
-        assert pinned in sp, "executor_prompt 应含 pinned 批次号"
-        print(f"  ✓ executor_prompt(2, sid) 注入 pinned 上下文段")
-    finally:
-        with _get_db_session() as db:
-            row = db.get(_ChatSessionOrm, sid)
-            if row:
-                row.pinned_thread_id = None
-                db.commit()
-
 
 def injection_react_prompt_with_pinned():
     """react_prompt(phase, session_id) 有 pinned → 含上下文段。"""
@@ -314,14 +254,14 @@ def injection_react_prompt_with_pinned():
 
 
 def injection_no_prompt_no_segment():
-    """session_id=None 时三个 prompt 都不应含「会话上下文」段。"""
+    """session_id=None 时 prompt 不应含「会话上下文」段。"""
     from app.dispatcher import prompts
 
-    for fn_name in ("system_prompt", "executor_prompt", "react_prompt"):
+    for fn_name in ("react_prompt",):
         sp = getattr(prompts, fn_name)(2)
         assert "会话上下文" not in sp, \
             f"{fn_name}(2) session_id=None 时应不含上下文段"
-    print("  ✓ session_id=None → 三 prompt 不含上下文段")
+    print("  ✓ session_id=None → prompt 不含上下文段")
 
 
 # ---------------------------------------------------------------------------
@@ -343,10 +283,8 @@ INTEG_CASES = [
 ]
 
 INJ_CASES = [
-    ("3.1 system_prompt 注入 pinned", injection_system_prompt_with_pinned),
-    ("3.2 executor_prompt 注入 pinned", injection_executor_prompt_with_pinned),
-    ("3.3 react_prompt 注入 pinned", injection_react_prompt_with_pinned),
-    ("3.4 session_id=None 三 prompt 不含段", injection_no_prompt_no_segment),
+    ("3.1 react_prompt 注入 pinned", injection_react_prompt_with_pinned),
+    ("3.2 session_id=None prompt 不含段", injection_no_prompt_no_segment),
 ]
 
 
