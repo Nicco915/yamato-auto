@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""convert_excel_to_pdf 单测：覆盖兆丰 Packing 裁切修复（C1）+ .xls 回退普通分页。
+"""convert_excel_to_pdf 单测：覆盖兆丰 Packing 裁切修复（C1）+ .xls 预转换管线。
 
 运行方式（依赖 LibreOffice 可用）：
     cd app && PYTHONPATH=. python3 -m pytest tests/test_pipeline_excel_render.py -v
@@ -22,9 +22,10 @@
 - 临时副本不影响源：转换前后源文件 mtime 不变，且临时副本位于 out_dir/
   _lo_preprocess/ 下，转换后被调用方清掉（这里直接用 TemporaryDirectory
   验证 out_dir 干净）。
-- .xls：mock subprocess.run 验证只走普通 pdf 过滤器，不尝试 SinglePageSheets
-  （避免 .xls 走 SinglePageSheets 路径被 topLeftCell 裁切；同时 openpyxl
-  不能写 .xls，不能预处理）。
+- .xls 预转换失败兜底：mock subprocess.run 让 .xls→.xlsx 预转换不产出文件，
+  验证回退原始 .xls 走普通 pdf 过滤器（修复前旧行为即兜底）。
+- .xls 预转换成功：mock 让 .xls→.xlsx 产出副本，验证随后走 SinglePageSheets
+  单页管线（每个 sheet 一页，修复 TOP 请款资料一 sheet 拆多页问题）。
 - 预处理函数 .xls 短路：返回 None。
 - 预处理函数 openpyxl 异常：WARNING 日志 + 返回 None（不影响主流程）。
 """
@@ -235,20 +236,22 @@ def test_preprocess_falls_back_on_openpyxl_error():
 
 
 # ---------------------------------------------------------------------------
-# .xls 走普通分页（不尝试 SinglePageSheets）—— mock subprocess.run
+# .xls 预转换管线：先转 xlsx 再走 SinglePageSheets；预转换失败回退普通分页
+# （mock subprocess.run）
 # ---------------------------------------------------------------------------
 
+_SINGLEPAGE_FILTER = (
+    'pdf:calc_pdf_Export:{"SinglePageSheets":{"type":"boolean","value":"true"}}'
+)
 
-def test_xls_uses_plain_pdf_filter_only():
-    """convert_excel_to_pdf 对 .xls 只调用普通 pdf 过滤器，不走 SinglePageSheets。"""
+
+def test_xls_preconvert_fails_falls_back_to_plain_pdf():
+    """.xls→.xlsx 预转换失败（未产出 xlsx）时，回退原始 .xls 走普通 pdf 过滤器。"""
     # 造一个最小 .xls 后缀文件（内容无所谓，mock 不真读）
     with tempfile.NamedTemporaryFile(suffix=".xls", delete=False) as f:
         fake = f.name
     try:
         with tempfile.TemporaryDirectory() as tmp:
-            # mock _find_soffice 返回固定路径，subprocess.run 记录调用
-            # 第一次 subprocess.run 调用后写出假 pdf 文件以驱动主循环返回
-            real_run = subprocess.run
             calls_filters: list[str] = []
 
             def fake_run(cmd, **kwargs):
@@ -256,15 +259,12 @@ def test_xls_uses_plain_pdf_filter_only():
                 if "--convert-to" in cmd:
                     idx = cmd.index("--convert-to")
                     calls_filters.append(cmd[idx + 1])
-                # 写出伪 PDF 让主循环 expect.exists() 命中
-                # cmd: [..., '--outdir', outdir, src]
+                # 一律只写伪 PDF：预转换（--convert-to xlsx）期望的产物是
+                # stem+".xlsx"，这里故意不产出 → _convert_xls_to_xlsx 返回
+                # None → 主流程回退原始 .xls 走普通 pdf
                 outdir = cmd[cmd.index("--outdir") + 1]
                 Path(outdir, Path(fake).stem + ".pdf").write_bytes(b"%PDF-fake")
-                return real_run.__self_class__(  # type: ignore[attr-defined]
-                    cmd, check=True, capture_output=True, timeout=180
-                ) if False else subprocess.CompletedProcess(
-                    cmd, 0, stdout=b"", stderr=b""
-                )
+                return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
 
             with patch("app.extraction.pipeline.subprocess.run", side_effect=fake_run), \
                  patch("app.extraction.pipeline._find_soffice",
@@ -272,8 +272,44 @@ def test_xls_uses_plain_pdf_filter_only():
                 out = convert_excel_to_pdf(fake, tmp)
 
             assert out is not None
-            assert calls_filters == ["pdf"], (
-                f".xls 应只走普通 pdf 过滤器，实际: {calls_filters}"
+            assert calls_filters == ["xlsx", "pdf"], (
+                f".xls 应先尝试预转换 xlsx，失败后回退普通 pdf，实际: {calls_filters}"
+            )
+    finally:
+        Path(fake).unlink(missing_ok=True)
+
+
+def test_xls_preconvert_success_uses_singlepage():
+    """.xls→.xlsx 预转换成功时，后续走 SinglePageSheets 单页管线（不再普通分页）。"""
+    with tempfile.NamedTemporaryFile(suffix=".xls", delete=False) as f:
+        fake = f.name
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            calls_filters: list[str] = []
+
+            def fake_run(cmd, **kwargs):
+                idx = cmd.index("--convert-to")
+                conv_filter = cmd[idx + 1]
+                calls_filters.append(conv_filter)
+                outdir = cmd[cmd.index("--outdir") + 1]
+                if conv_filter == "xlsx":
+                    # 预转换：产出 xlsx 副本（内容随意——openpyxl 打不开时
+                    # _reset_topleft_for_soffice 只记 warning 返回 None，
+                    # soffice_input 回退为该 xlsx 原样，不影响过滤器断言）
+                    Path(outdir, Path(fake).stem + ".xlsx").write_bytes(b"fake-xlsx")
+                else:
+                    # pdf 系过滤器：产出伪 PDF 让主循环 expect.exists() 命中
+                    Path(outdir, Path(fake).stem + ".pdf").write_bytes(b"%PDF-fake")
+                return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+
+            with patch("app.extraction.pipeline.subprocess.run", side_effect=fake_run), \
+                 patch("app.extraction.pipeline._find_soffice",
+                       return_value="/fake/soffice"):
+                out = convert_excel_to_pdf(fake, tmp)
+
+            assert out is not None
+            assert calls_filters == ["xlsx", _SINGLEPAGE_FILTER], (
+                f".xls 预转换成功后应走 SinglePageSheets，实际: {calls_filters}"
             )
     finally:
         Path(fake).unlink(missing_ok=True)
