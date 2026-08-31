@@ -68,6 +68,14 @@ _BATCH_STATUS_RES = [
     re.compile(
         r"^(?:状态|进度)(?:查询|查看)?(?:批次|批号)\s*([A-Za-z0-9][\w\-]{1,30})$"),
 ]
+# ---- 批次体检句式（需提取批次号）----
+_BATCH_HEALTH_RES = [
+    # 「批次89体检」「89体检」「体检批次89」「体检 89」
+    re.compile(
+        r"^(?:批次|批号)?\s*([A-Za-z0-9][\w\-]{1,30}?)\s*的?体检$"),
+    re.compile(
+        r"^体检\s*(?:批次|批号)?\s*([A-Za-z0-9][\w\-]{1,30})$"),
+]
 # 批次号提取的排除词（别把句式里的关键词当批次号）
 _NOT_BATCH_ID = {"批次", "批号", "所有", "全部", "当前", "目前", "状态",
                  "进度", "情况"}
@@ -153,6 +161,52 @@ def _extract_batch_id(norm: str) -> str | None:
     return None
 
 
+def _extract_health_batch_id(norm: str) -> str | None:
+    for rx in _BATCH_HEALTH_RES:
+        m = rx.match(norm)
+        if m:
+            token = m.group(1)
+            if token not in _NOT_BATCH_ID:
+                return token
+    return None
+
+
+def _fmt_batch_health(thread_id: str, result: dict) -> str:
+    if result.get("error"):
+        return f"没有找到批次「{thread_id}」，请检查批次号是否正确。"
+    status = _STATUS_CN.get(result.get("status"),
+                            result.get("status") or "未知")
+    lines = [f"批次 {thread_id} 体检：{status}"]
+    prog = result.get("progress")
+    if isinstance(prog, dict) and prog.get("total"):
+        lines.append(f"进度 {prog.get('done', 0)}/{prog['total']}")
+    factories = result.get("factories") or []
+    if factories:
+        role_cn = {"done": "已完成", "pending": "待处理", "current": "处理中",
+                   "skipped": "已跳过"}
+        counts: dict[str, int] = {}
+        for f in factories:
+            counts[f.get("role") or "unknown"] = \
+                counts.get(f.get("role") or "unknown", 0) + 1
+        lines.append("工厂：" + "、".join(
+            f"{role_cn.get(r, r)} {n} 家" for r, n in sorted(counts.items())))
+        problematic = [f for f in factories if f.get("issues")]
+        if problematic:
+            lines.append("有问题的工厂：")
+            for f in problematic[:5]:
+                lines.append(
+                    f"- {f.get('factory')}（{f['issues']} 条）："
+                    f"{f.get('first_issue') or ''}")
+    unprocessed = result.get("unprocessed_factories") or []
+    if unprocessed:
+        lines.append("未处理工厂：" + "、".join(str(f) for f in unprocessed))
+    usage = result.get("usage") or {}
+    if usage.get("calls"):
+        lines.append(f"LLM 用量：{usage['calls']} 次调用，"
+                     f"共 {usage.get('total_tokens', 0):,} tokens")
+    return "\n".join(lines)
+
+
 def try_fastpath(message: str) -> dict | None:
     """命中快路径意图 → {"tool", "args", "message"}；否则 None。
 
@@ -180,6 +234,12 @@ def try_fastpath(message: str) -> dict | None:
             return None
         return {"tool": "get_usage", "args": {},
                 "message": _fmt_usage(result)}
+
+    health_id = _extract_health_batch_id(norm)
+    if health_id:
+        result = TOOLS["batch_health"].func({"thread_id": health_id})
+        return {"tool": "batch_health", "args": {"thread_id": health_id},
+                "message": _fmt_batch_health(health_id, result)}
 
     batch_id = _extract_batch_id(norm)
     if batch_id:

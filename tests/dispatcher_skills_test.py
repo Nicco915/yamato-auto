@@ -204,3 +204,119 @@ def test_split_and_generate_preview_warnings(monkeypatch):
     p2 = dispatcher_tools._preview_split_and_generate(
         {"thread_id": "89", "invoice_number": "656"})
     assert any("直接生成" in line for line in p2["lines"])
+
+
+# ---------------------------------------------------------------------------
+# Skill 2：batch_health（含快路径「体检」句式）
+# ---------------------------------------------------------------------------
+
+def _fake_service_factory(detail: dict | None, batches: list[dict] | None = None):
+    """构造假 service：list_batches + get_order_state + get_batch_detail。"""
+    class _FakeService:
+        @staticmethod
+        def list_batches():
+            return {"batches": batches if batches is not None else
+                    [{"thread_id": "89", "status": "completed"}]}
+
+        @staticmethod
+        def get_order_state(tid):
+            return {"exists": True,
+                    "values": {"validation_status": "ok",
+                               "downstream_requirements": {"A厂": {}, "B厂": {}},
+                               "factory_outputs": {"A厂": {}}}}
+
+        @staticmethod
+        def get_batch_detail(tid):
+            if detail is None:
+                raise ValueError(f"thread {tid} 不存在")
+            return detail
+
+    return _FakeService
+
+
+def test_batch_health_aggregates(monkeypatch):
+    """聚合字段齐全：状态摘要 + 工厂角色/问题 + 审计数 + 用量。"""
+    detail = {
+        "factories": [
+            {"factory": "A厂", "role": "done",
+             "session": {"issues": []}},
+            {"factory": "B厂", "role": "skipped",
+             "session": {"issues": [{"message": "未匹配到文件夹"}, {"message": "x"}]}},
+        ],
+        "audit": [{"factory_name": "A厂"}],
+    }
+    monkeypatch.setattr(dispatcher_tools, "service",
+                        _fake_service_factory(detail))
+    monkeypatch.setattr(dispatcher_tools, "_fn_get_usage",
+                        lambda args: {"calls": 3, "total_tokens": 12345})
+    r = dispatcher_tools._fn_batch_health({"thread_id": "89"})
+    assert r.get("error") is None
+    assert r["status"] == "completed"
+    assert r["unprocessed_factories"] == ["B厂"]  # A厂已写入，B厂未处理
+    roles = {f["factory"]: f["role"] for f in r["factories"]}
+    assert roles == {"A厂": "done", "B厂": "skipped"}
+    b = next(f for f in r["factories"] if f["factory"] == "B厂")
+    assert b["issues"] == 2 and "未匹配到文件夹" in b["first_issue"]
+    assert r["audit_count"] == 1
+    assert r["usage"]["calls"] == 3
+
+
+def test_batch_health_batch_not_found(monkeypatch):
+    """批次不存在：error 透传。"""
+    monkeypatch.setattr(
+        dispatcher_tools, "service",
+        _fake_service_factory(None, batches=[]))
+    r = dispatcher_tools._fn_batch_health({"thread_id": "不存在"})
+    assert r.get("error")
+
+
+def test_batch_health_detail_missing(monkeypatch):
+    """摘要有但详情抛 ValueError → error。"""
+    class _Svc(_fake_service_factory(None)):
+        @staticmethod
+        def get_batch_detail(tid):
+            raise ValueError("thread 不存在")
+    monkeypatch.setattr(dispatcher_tools, "service", _Svc)
+    r = dispatcher_tools._fn_batch_health({"thread_id": "89"})
+    assert r.get("error")
+
+
+def test_fastpath_batch_health_hit(monkeypatch):
+    """「批次89体检」「体检 89」命中快路径 batch_health。"""
+    from app.dispatcher import fastpath
+
+    captured = {}
+
+    def fake_health(args):
+        captured.update(args)
+        return {"status": "completed",
+                "factories": [{"factory": "A厂", "role": "done"},
+                              {"factory": "B厂", "role": "skipped",
+                               "issues": 1, "first_issue": "未匹配到文件夹"}],
+                "unprocessed_factories": ["B厂"],
+                "usage": {"calls": 2, "total_tokens": 100}}
+
+    monkeypatch.setattr(dispatcher_tools.TOOLS["batch_health"], "func",
+                        fake_health)
+    for text in ("批次89体检", "体检 89", "89体检"):
+        r = fastpath.try_fastpath(text)
+        assert r is not None and r["tool"] == "batch_health", f"{text} 未命中"
+        assert r["args"] == {"thread_id": "89"}
+        assert "已完成 1 家" in r["message"] and "已跳过 1 家" in r["message"]
+        assert "未处理工厂：B厂" in r["message"]
+    assert captured == {"thread_id": "89"}
+
+
+def test_fastpath_health_not_found_friendly(monkeypatch):
+    """体检批次不存在：友好文案，不回喂 LLM。"""
+    from app.dispatcher import fastpath
+    monkeypatch.setattr(dispatcher_tools.TOOLS["batch_health"], "func",
+                        lambda args: {"error": "批次不存在: 99"})
+    r = fastpath.try_fastpath("批次99体检")
+    assert r is not None and "没有找到批次" in r["message"]
+
+
+def test_fastpath_health_with_action_word_falls_through():
+    """带动作词的句子不命中快路径（保守原则）。"""
+    from app.dispatcher import fastpath
+    assert fastpath.try_fastpath("把批次89重跑一下") is None

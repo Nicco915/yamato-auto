@@ -188,6 +188,45 @@ def _fn_get_batch_detail(args: dict) -> dict:
         return _err(e)
 
 
+def _fn_batch_health(args: dict) -> dict:
+    """批次体检（只读聚合）：状态摘要 + 各工厂状态/问题摘要 + 用量。
+
+    一次调用替代 get_batch_status + get_batch_detail + get_usage 的三连查，
+    操作员问「批次X体检」「批次X全面情况」时用；只想看状态用
+    get_batch_status，只想看明细用 get_batch_detail。
+    """
+    try:
+        thread_id = args["thread_id"]
+        summary = _fn_get_batch_status(args)
+        if summary.get("error"):
+            return summary
+        report = dict(summary)
+        try:
+            detail = service.get_batch_detail(thread_id)
+        except ValueError as e:
+            return {"error": str(e)}
+        factories = []
+        for f in detail.get("factories") or []:
+            entry: dict[str, Any] = {
+                "factory": f.get("factory"),
+                "role": f.get("role"),
+            }
+            issues = (f.get("session") or {}).get("issues") or []
+            if issues:
+                first = issues[0]
+                msg = (first.get("message") if isinstance(first, dict)
+                       else str(first))
+                entry["issues"] = len(issues)
+                entry["first_issue"] = (msg or "")[:100]
+            factories.append(entry)
+        report["factories"] = factories
+        report["audit_count"] = len(detail.get("audit") or [])
+        report["usage"] = _fn_get_usage({})
+        return report
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
 def _fn_get_review_payload(args: dict) -> dict:
     """挂起审核包；未挂起时返回明确的 not_suspended 状态而非 None。"""
     try:
@@ -2443,6 +2482,20 @@ TOOLS: dict[str, Tool] = {
         },
         risk="read",
         func=_fn_get_batch_detail,
+    ),
+    "batch_health": Tool(
+        name="batch_health",
+        description="批次体检（只读聚合）：一次返回批次状态 + 各工厂状态/问题摘要"
+                    "（跳过/失败原因）+ 未处理工厂名单 + 用量。"
+                    "操作员问「批次X体检」「批次X全面情况/有什么问题」时使用；"
+                    "只问状态用 get_batch_status，只看细节用 get_batch_detail。",
+        parameters={
+            "type": "object",
+            "properties": {"thread_id": _THREAD_ID_PROP},
+            "required": ["thread_id"],
+        },
+        risk="read",
+        func=_fn_batch_health,
     ),
     "get_review_payload": Tool(
         name="get_review_payload",
