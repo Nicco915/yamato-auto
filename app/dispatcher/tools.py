@@ -2608,6 +2608,195 @@ def _execute_prepare_factory_folders(args: dict, session_id: str | None,
 
 
 # ---------------------------------------------------------------------------
+# 端到端：下游表更新与工厂刷新（Release 2）
+# ---------------------------------------------------------------------------
+
+def _current_downstream_path(thread_id: str) -> str | None:
+    """从批次配置读取当前 downstream_file_path。"""
+    try:
+        config = service._read_batch_config(thread_id)
+        return config.get("downstream_file_path") if config else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _preview_update_downstream(args: dict, session_id: str | None) -> dict:
+    """下游表更新 preview：对比新旧文件，给出差异与策略建议。"""
+    from app.orchestrator.downstream_diff import compare_downstream
+
+    thread_id = args.get("thread_id")
+    new_path = args.get("downstream_file_path")
+    if not thread_id:
+        return _preview(summary="缺少 thread_id", lines=[], warnings=[])
+    if not new_path:
+        return _preview(summary="缺少新下游表路径", lines=[], warnings=[])
+
+    old_path = _current_downstream_path(thread_id)
+    if not old_path:
+        return _preview(summary="未找到当前批次配置的下游表路径", lines=[], warnings=[])
+
+    result = compare_downstream(old_path, new_path)
+    if result.get("error"):
+        return _preview(summary="对比失败", lines=[result["error"]], warnings=[])
+
+    lines = [
+        f"旧文件：{old_path}",
+        f"新文件：{new_path}",
+        f"推荐策略：{result['recommendation']}（{result['reason']}）",
+    ]
+    if result["structure_changed"]:
+        lines.append(f"列变化：+{len(result['added_columns'])} / -{len(result['removed_columns'])}")
+    if result["added_factories"]:
+        lines.append(f"新增工厂：{', '.join(result['added_factories'])}")
+    if result["removed_factories"]:
+        lines.append(f"删除工厂：{', '.join(result['removed_factories'])}")
+    if result["changed_factories"]:
+        lines.append(f"内容变化工厂：{', '.join(result['changed_factories'])}")
+    if result["unchanged_factories"]:
+        lines.append(f"未变化工厂：{', '.join(result['unchanged_factories'])}")
+
+    warnings = []
+    if result["recommendation"] == "full":
+        warnings.append("建议全量重识别：将归档当前 output 并从头 rerun。")
+
+    return _preview(
+        summary="下游装箱单更新预览",
+        lines=lines,
+        warnings=warnings,
+        diff=result,
+    )
+
+
+def _execute_update_downstream(
+    args: dict,
+    session_id: str | None,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """下游表更新 execute：按推荐策略全量或差异处理。"""
+    from app.orchestrator.downstream_diff import compare_downstream
+
+    thread_id = args.get("thread_id")
+    new_path = args.get("downstream_file_path")
+    if not thread_id or not new_path:
+        return {"status": "error", "message": "缺少 thread_id 或 downstream_file_path"}
+
+    old_path = _current_downstream_path(thread_id)
+    if not old_path:
+        return {"status": "error", "message": "未找到当前批次配置的下游表路径"}
+
+    diff = compare_downstream(old_path, new_path)
+    if diff.get("error"):
+        return {"status": "error", "message": diff["error"]}
+
+    # 列结构变化 或 有工厂内容变化：走全量（当前版本没有安全的单工厂 diff 重提）
+    if diff["recommendation"] == "full" or diff["changed_factories"]:
+        service.update_batch_paths(thread_id, new_path, reset_checkpoint=True)
+        result = service.rerun_batch(thread_id, on_progress=on_progress)
+        return {
+            "status": "applied",
+            "message": "已全量重识别",
+            "summary_lines": ["下游表更新 → 全量重识别", f"涉及工厂数：{diff['factory_count']}"],
+            "result": result,
+        }
+
+    # 只有新增工厂：更新路径后补充工厂
+    if diff["added_factories"]:
+        service.update_batch_paths(thread_id, new_path, reset_checkpoint=False)
+        result = service.add_factories_to_batch(thread_id, on_progress=on_progress)
+        return {
+            "status": "applied",
+            "message": "已差异补充新增工厂",
+            "summary_lines": ["下游表更新 → 补充新增工厂", f"新增：{', '.join(diff['added_factories'])}"],
+            "result": result,
+        }
+
+    # 无实质变化
+    return {
+        "status": "applied",
+        "message": "下游表无实质变化，无需重识别",
+        "summary_lines": ["新旧下游表内容一致"],
+        "result": diff,
+    }
+
+
+def _preview_refresh_factory(args: dict, session_id: str | None) -> dict:
+    """刷新单个工厂 preview：确认要删除该工厂记录并重新提取。"""
+    thread_id = args.get("thread_id")
+    factory = args.get("factory")
+    if not thread_id or not factory:
+        return _preview(summary="缺少 thread_id 或 factory", lines=[], warnings=[])
+
+    return _preview(
+        summary=f"刷新工厂「{factory}」",
+        lines=[
+            f"批次：{thread_id}",
+            f"将删除工厂 {factory} 的提取记录与输出，并重新提取到审核节点。",
+        ],
+        warnings=["该操作会覆盖该工厂已审核/已写入的结果，确认后继续。"],
+    )
+
+
+def _execute_refresh_factory(
+    args: dict,
+    session_id: str | None,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """刷新单个工厂 execute：删除 session 与 factory_output，重置 checkpoint 后重跑。"""
+    from langgraph.graph import START
+
+    thread_id = args.get("thread_id")
+    factory = args.get("factory")
+    if not thread_id or not factory:
+        return {"status": "error", "message": "缺少 thread_id 或 factory"}
+
+    config = service._read_batch_config(thread_id)
+    if config is None:
+        return {"status": "error", "message": f"批次不存在: {thread_id}"}
+
+    settings = get_settings()
+
+    # 1) 删除该工厂的 session 缓存
+    session_file = service.SESSIONS_DIR / settings.safe_path_tag(thread_id) / f"{factory}.json"
+    try:
+        if session_file.exists():
+            session_file.unlink()
+    except OSError as exc:
+        logger.warning("删除 session 文件失败 %s: %s", session_file, exc)
+
+    # 2) 从 checkpoint 中移除该工厂的输出记录，避免 writer 认为已处理
+    graph = service.get_graph()
+    cfg = service._config(thread_id)
+    snap = graph.get_state(cfg)
+    if snap.values:
+        values = dict(snap.values)
+        outputs = dict(values.get("factory_outputs") or {})
+        outputs.pop(factory, None)
+        values["factory_outputs"] = outputs
+        # 把该工厂重新加入 pending，并限制只处理它
+        pending = list(values.get("pending_factories") or [])
+        if factory not in pending:
+            pending.append(factory)
+        values["pending_factories"] = pending
+        values["factory_filter"] = [factory]
+        graph.update_state(cfg, values, as_node=START)
+
+    # 3) 重跑
+    result = service.run_until_interrupt(
+        thread_id=thread_id,
+        downstream_file_path=config["downstream_file_path"],
+        upstream_root=config["upstream_root"],
+        factory_filter=[factory],
+        on_progress=on_progress,
+    )
+    return {
+        "status": "applied",
+        "message": f"工厂 {factory} 已刷新",
+        "summary_lines": [f"已删除 {factory} 旧记录并重新提取"],
+        "result": result,
+    }
+
+
+# ---------------------------------------------------------------------------
 # 工具注册表
 # ---------------------------------------------------------------------------
 
@@ -3333,6 +3522,47 @@ TOOLS: dict[str, Tool] = {
         risk="write",
         preview=_preview_prepare_factory_folders,
         execute=_execute_prepare_factory_folders,
+    ),
+    "update_downstream": Tool(
+        name="update_downstream",
+        description="下游装箱单更新后重新识别：对比新旧 Content 表，按差异大小"
+                    "选择全量重识别或仅补充新增工厂。列结构变化或已有工厂内容变化"
+                    "时走全量；仅新增工厂时走差异补充。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "thread_id": _THREAD_ID_PROP,
+                "downstream_file_path": {
+                    "type": "string",
+                    "description": "新的下游 ContentsOfTheContainer 装箱单路径",
+                },
+            },
+            "required": ["thread_id", "downstream_file_path"],
+        },
+        risk="write",
+        preview=_preview_update_downstream,
+        execute=_execute_update_downstream,
+    ),
+    "refresh_factory": Tool(
+        name="refresh_factory",
+        description="刷新批次中的单个工厂：删除该工厂的提取记录与输出，重新提取"
+                    "到审核节点。操作员补充/修正了某工厂的资料后使用。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "thread_id": _THREAD_ID_PROP,
+                "factory": {
+                    "type": "string",
+                    "description": "要重新提取的工厂名（装箱单里的工厂名）",
+                },
+            },
+            "required": ["thread_id", "factory"],
+        },
+        risk="write",
+        preview=_preview_refresh_factory,
+        execute=_execute_refresh_factory,
     ),
     "process_skipped_factory": Tool(
         name="process_skipped_factory",
