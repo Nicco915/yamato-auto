@@ -103,6 +103,17 @@ def _preview(summary: str, lines: list[str] | None = None,
             "warnings": warnings or [], **extra}
 
 
+def _add_links(result: dict, links: list[dict]) -> dict:
+    """给执行结果追加前端跳转链接；若结果已有 links，新链接放在前部。
+
+    result 必须是 dict；非 dict 时原样返回（防御性）。"""
+    if not isinstance(result, dict):
+        return result
+    existing = result.get("links") or []
+    result["links"] = list(links) + list(existing)
+    return result
+
+
 def _wrap_on_progress(tool_name: str, args: dict,
                       on_progress: Callable[[dict], None] | None):
     """把 service 的节点级进度事件包装成 exec_progress（W4a）：
@@ -593,6 +604,7 @@ def _exec_create_batch(args: dict,
     实时重算差集，差集为空返回 skipped_all 不建批次。
     on_progress（W4a）：节点级进度回调，包装成 exec_progress 透传 service。"""
     try:
+        thread_id = args["thread_id"]
         settings = get_settings()
         downstream = args.get("downstream_file_path") or settings.downstream_file_path
         upstream = args.get("upstream_root") or settings.upstream_root
@@ -612,7 +624,7 @@ def _exec_create_batch(args: dict,
                 save_result = save_alias_entries(to_save)
 
         result = service.create_batch(
-            args["thread_id"],
+            thread_id,
             downstream_file_path=args.get("downstream_file_path"),
             upstream_root=args.get("upstream_root"),
             factory_filter=factory_filter,
@@ -627,6 +639,11 @@ def _exec_create_batch(args: dict,
             result["alias_overrides_applied"] = overrides
             if to_save:
                 result["alias_saved"] = save_result
+        if not result.get("error") and thread_id:
+            _add_links(result, [
+                {"label": "去审核", "href": f"/review?thread_id={thread_id}"},
+                {"label": "查看批次", "href": f"/batch/{thread_id}"},
+            ])
         return result
     except (FileExistsError, ValueError) as e:
         return {"error": str(e)}
@@ -688,12 +705,18 @@ def _exec_rerun(args: dict,
     """rerun 执行：service.rerun_with_paths 内部校验挂起状态，异常转 {"error": ...}。
     on_progress（W4a）：节点级进度回调，包装成 exec_progress 透传 service。"""
     try:
-        return service.rerun_with_paths(
-            args["thread_id"],
+        thread_id = args["thread_id"]
+        result = service.rerun_with_paths(
+            thread_id,
             upstream_root=args.get("upstream_root"),
             downstream_file_path=args.get("downstream_file_path"),
             on_progress=_wrap_on_progress("rerun", args, on_progress),
         )
+        if result.get("status") in ("pending_review", "pending_human_review"):
+            _add_links(result, [
+                {"label": "去审核", "href": f"/review?thread_id={thread_id}"},
+            ])
+        return result
     except ValueError as e:
         return {"error": str(e)}
     except Exception as e:  # noqa: BLE001
@@ -747,12 +770,18 @@ def _exec_retry_factory(args: dict,
     异常转 {"error": ...}。folder/save（W6b 对照注入）原样透传。
     on_progress（W4a）包装成 exec_progress 透传。"""
     try:
-        return service.retry_factory_extraction(
-            args["thread_id"],
+        thread_id = args["thread_id"]
+        result = service.retry_factory_extraction(
+            thread_id,
             folder=args.get("folder"),
             save=bool(args.get("save")),
             on_progress=_wrap_on_progress("retry_factory", args, on_progress),
         )
+        if result.get("status") in ("pending_review", "pending_human_review"):
+            _add_links(result, [
+                {"label": "去审核", "href": f"/review?thread_id={thread_id}"},
+            ])
+        return result
     except ValueError as e:
         return {"error": str(e)}
     except Exception as e:  # noqa: BLE001
@@ -1435,7 +1464,7 @@ def _exec_start_split(
                     len(pg.get("groups", []))
                     for pg in proposal.get("ports", [])
                 )
-                return {
+                return _add_links({
                     "status": "pending_review",
                     "split_thread_id": split_thread_id,
                     "message": (
@@ -1443,14 +1472,14 @@ def _exec_start_split(
                         f"共 {total_tickets} 票，正在等待人工审核。"
                         f"建议打开 /split/split-{thread_id} 页面查看。"
                     ),
-                }
+                }, [{"label": "去分票页", "href": f"/split/{split_thread_id}"}])
 
         final_snap = graph.get_state(config)
-        return {
+        return _add_links({
             "status": final_snap.values.get("status", "completed"),
             "split_thread_id": split_thread_id,
             "message": f"分票已完成: split-{thread_id}",
-        }
+        }, [{"label": "去分票页", "href": f"/split/{split_thread_id}"}])
     except Exception as e:
         return _err(e)
 
@@ -1575,14 +1604,14 @@ def _exec_confirm_split(
         ):
             if "__interrupt__" in event:
                 final_snap = graph.get_state(config)
-                return {
+                return _add_links({
                     "status": "pending_review",
                     "split_thread_id": split_thread_id,
                     "message": (
                         f"分票确认后出现新的中断，"
                         f"status: {final_snap.values.get('status')}"
                     ),
-                }
+                }, [{"label": "去分票页", "href": f"/split/{split_thread_id}"}])
 
         final_snap = graph.get_state(config)
         # 统计票数
@@ -1592,7 +1621,7 @@ def _exec_confirm_split(
         )
         version = final_snap.values.get("version", 1)
 
-        return {
+        return _add_links({
             "status": "confirmed",
             "split_thread_id": split_thread_id,
             "version": version,
@@ -1601,7 +1630,7 @@ def _exec_confirm_split(
                 f"批次 {thread_id} 分票已确认，共 {total_tickets} 票"
                 f"已写入数据库。{'（强制通过）' if force else ''}"
             ),
-        }
+        }, [{"label": "去分票页", "href": f"/split/{split_thread_id}"}])
     except Exception as e:
         return _err(e)
 
@@ -1836,7 +1865,7 @@ def _exec_generate_declarations(
         count = result.get("count", 0)
         warnings = result.get("warnings") or []
         warn_text = f"，{len(warnings)} 条警告" if warnings else ""
-        return {
+        return _add_links({
             "status": "generated",
             "split_thread_id": split_thread_id,
             "count": count,
@@ -1845,7 +1874,7 @@ def _exec_generate_declarations(
                 f"批次 {thread_id} 的 {count} 份报关单已生成{warn_text}，"
                 f"可在分票页或批次页下载。"
             ),
-        }
+        }, [{"label": "查看报关单", "href": f"/split/{split_thread_id}"}])
     except ValueError as e:
         return {"error": str(e)}
     except Exception as e:
@@ -2258,9 +2287,14 @@ def _exec_add_factories(args: dict,
         msg += "批次已完成重新提取并挂起，请前往审核页审核。"
     else:
         msg += "批次已处理完成。"
-    return {"ok": True, "message": msg, "factories": factories,
-            "status": result.get("status"),
-            "thread_id": result.get("thread_id")}
+    out = {"ok": True, "message": msg, "factories": factories,
+           "status": result.get("status"),
+           "thread_id": result.get("thread_id")}
+    if result.get("status") == "pending_human_review":
+        _add_links(out, [
+            {"label": "去审核", "href": f"/review?thread_id={result.get('thread_id', args['thread_id'])}"},
+        ])
+    return out
 
 
 def _fn_query_master_data(args: dict) -> dict:
@@ -2983,6 +3017,55 @@ TOOLS: dict[str, Tool] = {
                 },
             },
             "required": ["type"],
+        },
+        risk="ui",
+        # UI 工具无 func/preview/execute，由 lc_tools 特殊处理
+    ),
+    "go_to_page": Tool(
+        name="go_to_page",
+        description="在聊天中推送一个可点击的内部页面导航按钮。"
+                    "适用场景：操作员要求跳转到审核页、分票页、批次页或对话页时，"
+                    "由 Agent 主动生成导航卡片。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "page": {
+                    "type": "string",
+                    "enum": ["review", "split", "batch", "chat"],
+                    "description": "目标页面：review=审核页，split=分票页，"
+                                   "batch=批次详情页，chat=对话页",
+                },
+                "thread_id": {
+                    "type": "string",
+                    "description": "批次线程 ID；跳转 review/split/batch 时必须提供",
+                },
+                "label": {
+                    "type": "string",
+                    "description": "按钮文案（可选），覆盖默认文案",
+                },
+            },
+            "required": ["page", "thread_id"],
+        },
+        risk="ui",
+        # UI 工具无 func/preview/execute，由 lc_tools 特殊处理
+    ),
+    "open_link": Tool(
+        name="open_link",
+        description="在聊天中推送一个可点击的外部链接。"
+                    "适用场景：需要引导操作员打开外部网页、文档或下载链接时。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "href": {
+                    "type": "string",
+                    "description": "链接地址（URL）",
+                },
+                "label": {
+                    "type": "string",
+                    "description": "链接显示文案",
+                },
+            },
+            "required": ["href", "label"],
         },
         risk="ui",
         # UI 工具无 func/preview/execute，由 lc_tools 特殊处理

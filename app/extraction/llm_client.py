@@ -54,6 +54,10 @@ MAX_API_RETRIES = 3  # 429/5xx 时最多重试 3 次
 
 DEBUG_TRUNC_LIMIT = 500  # 请求/响应原文 DEBUG 日志的截断长度
 
+# qwen 系列默认上下文窗口（token 数），用于计算上下文占用百分比。
+# 当前生产模型 qwen3.7-plus / qwen2.5 系列统一按 128K 窗口估算。
+QWEN_CONTEXT_WINDOW = 131072
+
 
 def _truncate(text: str, limit: int = DEBUG_TRUNC_LIMIT) -> str:
     """截断长文本用于 DEBUG 日志，超长时标注已截断及总长度。"""
@@ -86,6 +90,19 @@ def _sanitize_messages(messages: list[dict]) -> list[dict]:
         else:
             safe.append(m)
     return safe
+
+
+def context_percent(model: str, total_tokens: int) -> float:
+    """根据模型名计算上下文占用百分比。
+
+    - 模型名包含 "qwen"（大小写不敏感）时，按 QWEN_CONTEXT_WINDOW=131072 计算；
+    - 其余模型未知窗口，返回 0.0（避免误导）。
+    """
+    if not model or total_tokens <= 0:
+        return 0.0
+    if "qwen" in model.lower():
+        return round(total_tokens / QWEN_CONTEXT_WINDOW, 4)
+    return 0.0
 
 
 def _response_text(resp) -> str:
@@ -472,11 +489,14 @@ def chat_completion_with_tools(
     temperature: float = 0.0,
     max_tokens: int = 4096,
 ) -> dict:
-    """OpenAI 原生 tool-calling 调用，返回 {"content", "tool_calls"}。
+    """OpenAI 原生 tool-calling 调用，返回 {"content", "tool_calls",
+    "reasoning_content", "usage"}。
 
     供调度 Agent 使用（llm_client 主通道只服务提取流水线，签名不动）：
     - tools 为 OpenAI 格式的工具定义列表；与 response_format 互斥，本函数不设；
     - tool_calls 中 arguments 为 JSON 字符串，由调用方解析并校验；
+    - reasoning_content 为模型思考过程原文（仅部分模型返回，缺省为空串）；
+    - usage 含 prompt_tokens / completion_tokens / total_tokens / context_percent；
     - 重试/退避/用量记录与 chat_completion 共用 _create_with_retry。
     """
     s = get_settings()
@@ -495,4 +515,24 @@ def chat_completion_with_tools(
         }
         for tc in (msg.tool_calls or [])
     ]
-    return {"content": msg.content, "tool_calls": tool_calls}
+
+    # Release 3：捕获模型的思考过程（reasoning_content）与即时用量，
+    # 通过新增键返回给调用方，保持原有 {"content", "tool_calls"} 契约不变。
+    reasoning_content = getattr(msg, "reasoning_content", None) or ""
+    usage = getattr(resp, "usage", None)
+    prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+    completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+    total_tokens = getattr(usage, "total_tokens", 0) or (
+        prompt_tokens + completion_tokens
+    )
+    return {
+        "content": msg.content,
+        "tool_calls": tool_calls,
+        "reasoning_content": reasoning_content,
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": total_tokens,
+            "context_percent": context_percent(use_model, total_tokens),
+        },
+    }

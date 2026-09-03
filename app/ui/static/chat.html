@@ -298,9 +298,107 @@
   }
   #inp:focus { outline: 2px solid #93c5fd; border-color: var(--primary); }
   .input-hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  /* ---------- Release 3：顶部流水线状态图 ---------- */
+  #pipeline-bar {
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+    padding: 10px 16px;
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .pipeline-title {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .pipeline-steps {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow-x: auto;
+  }
+  .pipeline-step {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #6b7280;
+    white-space: nowrap;
+  }
+  .pipeline-step .dot {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+  .pipeline-step.done { color: var(--ok); }
+  .pipeline-step.done .dot { background: var(--ok); color: #fff; }
+  .pipeline-step.active { color: var(--primary); font-weight: 600; }
+  .pipeline-step.active .dot {
+    background: var(--primary);
+    color: #fff;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+  }
+  .pipeline-step.pending .dot { background: #e5e7eb; color: #9ca3af; }
+  .pipeline-step-connector {
+    width: 16px;
+    height: 1px;
+    background: #d1d5db;
+    flex-shrink: 0;
+  }
+  .pipeline-step-action { margin-left: 4px; }
+
+  /* ---------- Release 3：思考过程块（折叠） ---------- */
+  .reasoning-details {
+    margin-top: 8px;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 6px 8px;
+    background: #f9fafb;
+  }
+  .reasoning-details summary {
+    cursor: pointer;
+    font-size: 12px;
+    color: #6b7280;
+    user-select: none;
+  }
+  .reasoning-details > div {
+    margin-top: 6px;
+    font-size: 12px;
+    color: #4b5563;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* ---------- Release 3：动态指标 pill ---------- */
+  .metrics-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: #cbd5e1;
+    margin-left: auto;
+  }
+  .metrics-pill .metrics-divider {
+    width: 1px;
+    height: 12px;
+    background: #4b5563;
+  }
+  .metrics-pill span:empty { display: none; }
 </style>
 </head>
 <body>
+
+<!-- 顶部流水线状态图 -->
+<div id="pipeline-bar">
+  <div class="pipeline-title">批次流水线</div>
+  <div class="pipeline-steps" id="pipeline-steps"></div>
+</div>
 
 <div class="chat-shell">
 
@@ -358,6 +456,12 @@ const sidRestored = !!localStorage.getItem("yamato_chat_sid");
 let sessionId = localStorage.getItem("yamato_chat_sid");
 let sessionPinnedThreadId = null;  // 当前会话关联的批次号
 /* sessionId 可能为 null（首次访问），由 initChat 决定是否新建 */
+
+/* Release 3：流水线、流式消息、动态指标 */
+let reasoningText = "";            // 当前轮次累积的思考过程
+let messageDeltaBubble = null;     // 流式回复气泡 DOM
+let messageDeltaText = "";         // 流式回复累积文本
+let pipelinePollTimer = null;      // 流水线状态轮询 timer
 
 /* ================= 气泡渲染 ================= */
 function scrollBottom() {
@@ -423,6 +527,12 @@ function renderProgressBubble(active) {
     const pct = Math.min(100, Math.round(progressDone / progressTotal * 100));
     html += `<div class="progress-bar-track"><div class="progress-bar-fill" style="width:${pct}%"></div></div>`;
   }
+  if (reasoningText) {
+    html += `<details class="reasoning-details">
+      <summary>思考过程</summary>
+      <div>${escHtml(reasoningText)}</div>
+    </details>`;
+  }
   if (active) {
     html += `<div class="progress-status-row"><span class="progress-spinner"></span>处理中…</div>`;
   }
@@ -450,6 +560,7 @@ function finishProgress(finalText) {
     progressLines = [];
     progressDone = null;
     progressTotal = null;
+    reasoningText = "";
     return b;
   }
   return addAgentText(finalText || "（无回复内容）");
@@ -483,6 +594,97 @@ function batchStatusBadge(status) {
   return '<span class="batch-badge ' + s.cls + '">' + s.label + '</span>';
 }
 
+/* ================= Release 3：流水线状态图 ================= */
+function getChatThreadId() {
+  return sessionPinnedThreadId || new URLSearchParams(location.search).get("thread_id");
+}
+
+async function loadPipelineState(thread_id) {
+  if (!thread_id) {
+    $("pipeline-bar").style.display = "none";
+    return;
+  }
+  try {
+    const resp = await fetch(
+      "/api/v1/batches/" + encodeURIComponent(thread_id) + "/pipeline_state"
+    );
+    if (!resp.ok) { $("pipeline-bar").style.display = "none"; return; }
+    const data = await resp.json();
+    renderPipelineBar(data);
+  } catch (e) {
+    console.warn("流水线状态加载失败:", e);
+    $("pipeline-bar").style.display = "none";
+  }
+}
+
+function renderPipelineBar(data) {
+  const bar = $("pipeline-bar");
+  const stepsBox = $("pipeline-steps");
+  const stages = Array.isArray(data.stages) ? data.stages : [];
+  if (!stages.length) { bar.style.display = "none"; return; }
+
+  let html = "";
+  stages.forEach((s, i) => {
+    const cls = s.status === "done" ? "done" : (s.status === "active" ? "active" : "pending");
+    const dotText = s.status === "done" ? "✓" : (i + 1);
+    html += '<div class="pipeline-step ' + cls + '">'
+          + '<span class="dot">' + dotText + '</span>'
+          + '<span>' + escHtml(s.label || s.name) + '</span>';
+    if (s.status === "active" && s.needs_action && s.link_href) {
+      const label = s.link || "去处理";
+      const safeHref = escHtml(s.link_href).replace(/"/g, '&quot;');
+      html += '<span class="pipeline-step-action">'
+            + '<a class="btn btn-primary btn-sm" href="' + safeHref + '">'
+            + escHtml(label) + '</a></span>';
+    }
+    html += '</div>';
+    if (i < stages.length - 1) {
+      html += '<div class="pipeline-step-connector"></div>';
+    }
+  });
+  stepsBox.innerHTML = html;
+  bar.style.display = "flex";
+}
+
+function startPipelinePoll(thread_id) {
+  if (pipelinePollTimer) { clearInterval(pipelinePollTimer); pipelinePollTimer = null; }
+  if (!thread_id) { $("pipeline-bar").style.display = "none"; return; }
+  loadPipelineState(thread_id);
+  pipelinePollTimer = setInterval(() => loadPipelineState(thread_id), 10000);
+}
+
+/* ================= Release 3：动态指标 pill ================= */
+function updateUsagePill(tokens, context_pct) {
+  const el = $("usage-pill");
+  if (!el) return;
+  const t = tokens != null ? String(tokens) : "";
+  const p = context_pct != null ? String(context_pct) : "";
+  if (t && p) el.textContent = "已用 " + t + " tokens / " + p + "% 上下文";
+  else if (t) el.textContent = "已用 " + t + " tokens";
+  else if (p) el.textContent = "上下文 " + p + "%";
+  else el.textContent = "";
+}
+
+function updateThinkingPill(ms) {
+  const el = $("thinking-pill");
+  if (!el) return;
+  el.textContent = ms != null ? "思考 " + ms + " ms" : "";
+}
+
+function buildNavHref(event) {
+  const href = event.href || event.link_href;
+  if (href) return href;
+  const page = event.go_to_page || event.page;
+  if (!page) return "#";
+  const tid = event.thread_id || getChatThreadId();
+  const qs = tid ? "?thread_id=" + encodeURIComponent(tid) : "";
+  if (page === "review") return "/review" + qs;
+  if (page === "split") return "/split" + qs;
+  if (page === "batch") return tid ? "/batch/" + encodeURIComponent(tid) : "/batch";
+  if (page === "chat") return "/chat" + qs;
+  return "#";
+}
+
 /* ================= 发送消息（SSE 流式） ================= */
 async function send() {
   if (sending) return;
@@ -494,6 +696,13 @@ async function send() {
   inp.value = "";
   inp.disabled = true;
   $("btn-send").disabled = true;
+
+  // Release 3：每轮开始重置流式状态与指标
+  reasoningText = "";
+  messageDeltaBubble = null;
+  messageDeltaText = "";
+  updateUsagePill(null, null);
+  updateThinkingPill(null);
 
   addUserMsg(text);
 
@@ -589,17 +798,45 @@ function handleSSEEvent(event) {
     }
 
     case "final":
-      finishProgress(event.message || "（无回复内容）");
+      if (messageDeltaBubble) {
+        if (event.message) {
+          messageDeltaBubble.textContent = event.message;
+          messageDeltaText = event.message;
+        }
+        history.push({ role: "agent", text: messageDeltaText || event.message || "（无回复内容）" });
+        messageDeltaBubble = null;
+        messageDeltaText = "";
+        if (progressBubble) {
+          progressBubble.remove();
+          progressBubble = null;
+          progressLines = [];
+          progressDone = null;
+          progressTotal = null;
+          reasoningText = "";
+        }
+      } else {
+        finishProgress(event.message || "（无回复内容）");
+      }
       break;
 
     case "done":
-      // 如果还没 final（兜底），用 done 的 message
-      if (progressBubble) {
-        finishProgress(event.message || "（无回复内容）");
-      }
       // 保存 session_id
       if (event.session_id) {
         sessionId = event.session_id;
+      }
+      // 流式消息气泡收尾
+      if (messageDeltaBubble) {
+        if (event.message) {
+          messageDeltaBubble.textContent = event.message;
+          messageDeltaText = event.message;
+        }
+        history.push({ role: "agent", text: messageDeltaText || event.message || "（无回复内容）" });
+        messageDeltaBubble = null;
+        messageDeltaText = "";
+      }
+      // 兜底：老协议一次性返回完整 message
+      if (progressBubble) {
+        finishProgress(event.message || "（无回复内容）");
       }
       break;
 
@@ -618,6 +855,62 @@ function handleSSEEvent(event) {
     case "error":
       finishProgress("错误：" + (event.message || "未知错误"));
       break;
+
+    // 后端同步非流式调用：一次性返回完整 reasoning_content
+    case "reasoning":
+      reasoningText = event.content || "";
+      ensureProgressBubble();
+      renderProgressBubble(true);
+      break;
+
+    // 未来若接入流式，可逐 delta 追加
+    case "reasoning_delta":
+      reasoningText += event.delta || "";
+      ensureProgressBubble();
+      renderProgressBubble(true);
+      break;
+
+    case "message_delta":
+      if (!messageDeltaBubble) {
+        settleProgressBubble();
+        messageDeltaBubble = addBubble("agent");
+        messageDeltaText = "";
+      }
+      messageDeltaText += event.delta || "";
+      messageDeltaBubble.textContent = messageDeltaText;
+      scrollBottom();
+      break;
+
+    case "usage": {
+      const tokens = event.total_tokens != null ? event.total_tokens
+                     : (event.tokens != null ? event.tokens : null);
+      const pct = event.context_percent != null ? event.context_percent
+                  : (event.context_pct != null ? event.context_pct : null);
+      updateUsagePill(tokens, pct);
+      break;
+    }
+
+    case "thinking_time":
+      updateThinkingPill(event.elapsed_ms != null ? event.elapsed_ms : event.ms);
+      break;
+
+    case "ui_navigation": {
+      const navBubble = addBubble("agent");
+      const navText = event.message || "";
+      if (navText) {
+        const p = document.createElement("div");
+        p.textContent = navText;
+        navBubble.appendChild(p);
+      }
+      const a = document.createElement("a");
+      a.className = "btn btn-primary btn-sm";
+      a.href = buildNavHref(event);
+      a.textContent = event.label || event.link || "前往";
+      navBubble.appendChild(a);
+      history.push({ role: "agent", text: navText || a.textContent });
+      scrollBottom();
+      break;
+    }
 
     default:
       // 未知事件类型，忽略
@@ -863,6 +1156,7 @@ function startBatchPoll(action, onFirstTick) {
   const tid = action && action.args && action.args.thread_id;
   if (!tid) return;  // 无批次号的动作不动现有进度条
   stopBatchPoll(true);
+  loadPipelineState(tid);  // Release 3：同步刷新流水线状态图
   let firstTick = true;
   const tick = async () => {
     try {
@@ -915,6 +1209,7 @@ function settleProgressBubble() {
     progressLines = [];
     progressDone = null;
     progressTotal = null;
+    reasoningText = "";
   }
 }
 
@@ -1244,9 +1539,14 @@ $("btn-new-session").onclick = async () => {
     });
     const data = await resp.json();
     sessionId = data.session_id;
+    sessionPinnedThreadId = null;
     localStorage.setItem("yamato_chat_sid", sessionId);
     history.length = 0;
     $("msgs").innerHTML = "";
+    progressBubble = null; progressLines = []; progressDone = null; progressTotal = null;
+    reasoningText = ""; messageDeltaBubble = null; messageDeltaText = "";
+    updateUsagePill(null, null); updateThinkingPill(null);
+    startPipelinePoll(null);
     await loadSessionList($("session-search") ? $("session-search").value : "");
     addAgentText("已开始新会话。");
     $("inp").focus();
@@ -1356,9 +1656,13 @@ async function switchSession(sid) {
   localStorage.setItem("yamato_chat_sid", sid);
   history.length = 0;
   $("msgs").innerHTML = "";
+  progressBubble = null; progressLines = []; progressDone = null; progressTotal = null;
+  reasoningText = ""; messageDeltaBubble = null; messageDeltaText = "";
+  updateUsagePill(null, null); updateThinkingPill(null);
   await loadHistory();
   await loadSessionList($("session-search") ? $("session-search").value : "");
   resumeBatchPolling();
+  startPipelinePoll(getChatThreadId());
 }
 
 async function deleteSession(sid) {
@@ -1492,6 +1796,16 @@ function showSessionMenu(s, e) {
 
 /* ================= 初始化 ================= */
 renderTopbar("chat");
+
+// Release 3：在顶部状态栏右侧注入动态指标 pill
+(function injectMetricsPill() {
+  const topbar = document.querySelector(".topbar");
+  if (!topbar) return;
+  const pill = document.createElement("div");
+  pill.className = "metrics-pill";
+  pill.innerHTML = '<span id="usage-pill"></span><span class="metrics-divider"></span><span id="thinking-pill"></span>';
+  topbar.appendChild(pill);
+})();
 
 /* 开场白：有上次操作记忆时亮出摘要（哪个批次、什么工厂），否则静态文案 */
 async function greet() {
@@ -1642,6 +1956,9 @@ async function maybePinFromUrl() {
     localStorage.setItem("yamato_chat_sid", sessionId);
     history.length = 0;
     $("msgs").innerHTML = "";
+    progressBubble = null; progressLines = []; progressDone = null; progressTotal = null;
+    reasoningText = ""; messageDeltaBubble = null; messageDeltaText = "";
+    updateUsagePill(null, null); updateThinkingPill(null);
 
     /* 渲染两个气泡：欢迎 + 进度 */
     addAgentText("已绑定到批次 " + tid + "。可以直接问进度、错误，或发起新操作。");
@@ -1649,6 +1966,7 @@ async function maybePinFromUrl() {
 
     /* 同步左侧会话列表（含批次状态徽章） */
     await loadSessionList($("session-search") ? $("session-search").value : "");
+    startPipelinePoll(tid);
     return true;
   } catch (e) {
     toast("绑定批次失败: " + e.message);
@@ -1690,9 +2008,11 @@ async function initChat() {
   if (sessionId) {
     await loadHistory();
     resumeBatchPolling();
+    startPipelinePoll(getChatThreadId());
   } else {
     /* 没有 sessionId，新建一个 */
     await $("btn-new-session").click();
+    startPipelinePoll(getChatThreadId());
   }
   $("inp").focus();
 }

@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Callable
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -93,6 +94,15 @@ class QwenDispatcherChatModel(BaseChatModel):
     @property
     def _llm_type(self) -> str:
         return "qwen-dispatcher"
+
+    def _emit_progress(self, event: dict) -> None:
+        """安全发送 on_progress 事件：回调抛异常绝不向上传播。"""
+        if self.on_progress is None:
+            return
+        try:
+            self.on_progress(event)
+        except Exception:  # noqa: BLE001 进度回调绝不弄挂 LLM 调用
+            pass
 
     def bind_tools(self, tools, **kwargs):
         """转换工具定义为 OpenAI function 格式后存副本，返回自身浅拷贝。
@@ -177,11 +187,7 @@ class QwenDispatcherChatModel(BaseChatModel):
         # 生成来源）
         if os.environ.get("DISPATCHER_MOCK") == "1":
             self._round += 1
-            if self.on_progress:
-                try:
-                    self.on_progress({"type": "llm_thinking", "round": self._round})
-                except Exception:  # noqa: BLE001 进度回调绝不弄挂 LLM 调用
-                    pass
+            self._emit_progress({"type": "llm_thinking", "round": self._round})
             oai_messages = self._to_openai_messages(messages)
             debug_log.log_llm_request(session_id=self.session_id,
                                       round_no=self._round, mode="native-lc",
@@ -199,11 +205,7 @@ class QwenDispatcherChatModel(BaseChatModel):
             return ChatResult(generations=[ChatGeneration(message=ai)])
 
         self._round += 1
-        if self.on_progress:
-            try:
-                self.on_progress({"type": "llm_thinking", "round": self._round})
-            except Exception:  # noqa: BLE001 进度回调绝不弄挂 LLM 调用
-                pass
+        self._emit_progress({"type": "llm_thinking", "round": self._round})
 
         oai_messages = self._to_openai_messages(messages)
         debug_log.log_llm_request(session_id=self.session_id,
@@ -211,11 +213,16 @@ class QwenDispatcherChatModel(BaseChatModel):
                                   messages=oai_messages)
 
         from app.extraction import llm_client  # 延迟 import：无 API key 时 mock 仍可用
+
+        # Release 3：测量本轮 LLM 思考耗时（从请求发出到完整响应返回）。
+        # 当前为同步非流式调用，首个 token 时间以完整响应到达近似。
+        start_ts = time.perf_counter()
         resp = llm_client.chat_completion_with_tools(
             oai_messages,
             tools=self._bound_tools or None,
             source_file="dispatcher",
         )
+        elapsed_ms = int((time.perf_counter() - start_ts) * 1000)
 
         ai = self._from_response(resp)
         # 与旧循环同一格式记响应：{"final_text", "tool_calls"}（tool_calls
@@ -226,6 +233,25 @@ class QwenDispatcherChatModel(BaseChatModel):
                   "tool_calls": [{"id": tc["id"], "name": tc["name"],
                                   "args": tc.get("args") or {}}
                                  for tc in ai.tool_calls]})
+
+        # Release 3：向前端/SSE 透传思考过程、思考耗时与 token 用量。
+        # 所有回调均走 _emit_progress，异常已被吞掉，绝不抛给外层。
+        self._emit_progress({"type": "thinking_time", "elapsed_ms": elapsed_ms})
+
+        reasoning = resp.get("reasoning_content")
+        if reasoning:
+            self._emit_progress({"type": "reasoning", "content": reasoning})
+
+        usage = resp.get("usage") or {}
+        if usage.get("total_tokens", 0) > 0:
+            self._emit_progress({
+                "type": "usage",
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "completion_tokens": usage.get("completion_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
+                "context_percent": usage.get("context_percent", 0.0),
+            })
+
         return ChatResult(generations=[ChatGeneration(message=ai)])
 
 

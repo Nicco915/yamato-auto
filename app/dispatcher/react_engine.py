@@ -156,6 +156,29 @@ def run_dispatch_react(message: str, session: DispatcherSession, *,
                 "file_selection": fs_req,
                 "message": fs_req.get("title") or "请在界面上选择路径"}
 
+    # UI 导航已挂起：go_to_page / open_link 存了 pending_ui_navigation，
+    # 等前端响应（不进 LLM 当前轮）
+    if collector.go_to_page_request or collector.open_link_request:
+        nav = collector.go_to_page_request or collector.open_link_request or {}
+        kind = nav.get("kind", "go_to_page")
+        label = nav.get("label") or ""
+        thread_id = nav.get("thread_id")
+        page = nav.get("page")
+        href = nav.get("href")
+        msg_text = f"已为您准备好「{label}」入口，点击即可{"跳转" if kind == 'go_to_page' else '打开'}。"
+        sessions.record_turn(session, message, msg_text)
+        _emit_final(on_progress, msg_text)
+        navigation = {
+            "kind": kind,
+            "page": page,
+            "href": href,
+            "label": label,
+            "thread_id": thread_id,
+        }
+        return {"status": "pending_ui_navigation",
+                "navigation": navigation,
+                "message": msg_text}
+
     # 黄灯反问已布防：request_clarification 存了 soft_pending，
     # 等操作员一轮内答复（由入口短路消费，不进 LLM）
     if collector.soft_confirm_question:

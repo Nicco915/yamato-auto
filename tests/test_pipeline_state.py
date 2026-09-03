@@ -1,0 +1,82 @@
+# -*- coding: utf-8 -*-
+"""流水线状态推导服务测试。
+
+运行：
+    cd app && PYTHONPATH=. python3 -m pytest tests/test_pipeline_state.py -v
+"""
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+APP_ROOT = Path(__file__).resolve().parent.parent
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
+sys.path.insert(0, str(APP_ROOT / "validation"))
+
+os.environ["EXTRACTION_MOCK"] = "1"
+os.environ["DISPATCHER_MOCK"] = "1"
+
+from app.db import batch_store  # noqa: E402
+from app.orchestrator import pipeline_state  # noqa: E402
+from app.orchestrator.pipeline_state import _is_stage_done  # noqa: E402
+
+from _test_isolation import isolate_to_tmp  # noqa: E402
+
+TMP = isolate_to_tmp("yamato_pipeline_state_test_")
+
+
+def test_is_stage_done_basic():
+    """阶段完成判定基础逻辑。"""
+    assert _is_stage_done("parse_downstream", "folder_router") is True
+    assert _is_stage_done("folder_router", "folder_router") is False
+    assert _is_stage_done("extraction", "folder_router") is False
+    assert _is_stage_done("human_review", "split_review") is True
+
+
+def test_get_pipeline_state_not_exists():
+    """不存在的 thread_id 返回 exists=False。"""
+    result = pipeline_state.get_pipeline_state("NOT-EXIST-THREAD")
+    assert result["exists"] is False
+    assert result["thread_id"] == "NOT-EXIST-THREAD"
+
+
+def test_get_pipeline_state_with_batch_only():
+    """只有 batch 记录、没有 checkpoint 时返回 batch 状态。"""
+    thread_id = "test-batch-only"
+    batch_store.upsert_batch(
+        thread_id=thread_id,
+        watch_dir=str(TMP / "watch"),
+        folder_name="test",
+        status="running",
+    )
+    result = pipeline_state.get_pipeline_state(thread_id)
+    assert result["exists"] is True
+    assert result["thread_id"] == thread_id
+    assert result["current_phase"] == "running"
+    assert isinstance(result["stages"], list)
+    assert len(result["stages"]) > 0
+
+
+def test_stages_have_required_keys():
+    """所有阶段条目包含必要字段。"""
+    thread_id = "test-stages-keys"
+    batch_store.upsert_batch(
+        thread_id=thread_id,
+        watch_dir=str(TMP / "watch2"),
+        folder_name="test2",
+        status="completed",
+    )
+    result = pipeline_state.get_pipeline_state(thread_id)
+    for stage in result["stages"]:
+        assert "name" in stage
+        assert "label" in stage
+        assert "status" in stage
+        assert stage["status"] in ("done", "active", "pending")
+
+
+if __name__ == "__main__":
+    import pytest
+
+    pytest.main([__file__, "-v"])
