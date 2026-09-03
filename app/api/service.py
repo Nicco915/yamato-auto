@@ -26,9 +26,11 @@ from openpyxl import load_workbook
 from sqlalchemy import select
 
 from app.config import get_settings
+from app.db import batch_store
 from app.db.models import ReviewAudit
 from app.db.session import get_session
 from app.extraction.llm_client import usage_tracker
+from app.orchestrator import discovery, factory_setup
 from app.extraction.session import SESSIONS_DIR
 from app.graph import NODE2, NODE4, NODE5, NODE6, NODE7, get_graph
 from app.logging_config import logging_context
@@ -2562,7 +2564,82 @@ def create_batch(
         "run_count": 1,
     }
     _write_batch_config(thread_id, batch_config)
+
+    # 同步 batches 业务表（端到端升级新增）
+    batch_store.upsert_batch(
+        thread_id,
+        downstream_file_path=str(d_path),
+        upstream_root=str(u_path),
+        status="pending_review" if result.get("status") == "pending_human_review" else "running",
+    )
     return result
+
+
+# ---------------------------------------------------------------------------
+# 端到端批次发现与启动（Release 1）
+# ---------------------------------------------------------------------------
+
+def scan_new_batches() -> list[dict[str, Any]]:
+    """扫描监控目录返回候选批次列表。"""
+    return discovery.scan_new_batches()
+
+
+def start_batch_from_scan(
+    folder_name: str,
+    thread_id: str | None = None,
+    downstream_file_path: str | None = None,
+    upstream_root: str | None = None,
+) -> dict[str, Any]:
+    """从扫描候选中启动一个批次。
+
+    - 默认用 folder_name 作为 thread_id；
+    - 默认在监控目录 folder_name 下查找 downstream 文件；
+    - 默认把监控目录下的 folder_name 子文件夹作为 upstream_root。
+    """
+    settings = get_settings()
+    watch_dir = Path(settings.watch_dir).expanduser()
+    if not watch_dir.is_dir():
+        raise ValueError(f"监控目录未配置或不存在: {settings.watch_dir}")
+
+    subfolder = watch_dir / folder_name
+    if not subfolder.is_dir():
+        raise ValueError(f"子文件夹不存在: {subfolder}")
+
+    # 下游表：用户显式指定 > 自动匹配 > 报错
+    downstream = downstream_file_path
+    if not downstream:
+        candidates = discovery.discover_downstream_files(subfolder)
+        if len(candidates) == 1:
+            downstream = str(candidates[0])
+        elif len(candidates) > 1:
+            raise ValueError(
+                f"发现多个下游装箱单，请指定：{[p.name for p in candidates]}"
+            )
+        else:
+            raise ValueError(f"子文件夹 {folder_name} 中未找到 ContentsOfTheContainer 文件")
+
+    # 上游根：用户显式指定 > 用子文件夹本身
+    upstream = upstream_root or str(subfolder)
+
+    tid = (thread_id or folder_name).strip()
+    if not tid:
+        raise ValueError("thread_id 不能为空")
+
+    result = create_batch(tid, downstream, upstream)
+    batch_store.upsert_batch(
+        tid,
+        watch_dir=str(watch_dir),
+        folder_name=folder_name,
+        downstream_file_path=downstream,
+        upstream_root=upstream,
+        status="pending_review" if result.get("status") == "pending_human_review" else "running",
+    )
+    return result
+
+
+def undo_alias_write(factory_name: str, folder_name: str) -> bool:
+    """撤销 prepare_factory_folders 自动写入的别名。"""
+    return factory_setup.undo_alias_write(factory_name, folder_name)
 
 
 # ---------------------------------------------------------------------------
