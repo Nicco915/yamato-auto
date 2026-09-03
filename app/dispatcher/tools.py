@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 from app.api import service
 from app.config import get_settings
+from app.orchestrator import discovery, factory_setup
 
 
 @dataclass
@@ -2515,6 +2516,98 @@ def _exec_process_skipped_factory(args: dict,
 
 
 # ---------------------------------------------------------------------------
+# 端到端：工厂文件夹预处理
+# ---------------------------------------------------------------------------
+
+def _preview_prepare_factory_folders(args: dict, session_id: str | None) -> dict:
+    """工厂预处理 preview：展示匹配结果、低置信候选、将创建的空文件夹、将写入的别名。"""
+    downstream = args.get("downstream_file_path") or get_settings().downstream_file_path
+    upstream = args.get("upstream_root") or get_settings().upstream_root
+
+    if not Path(downstream).expanduser().is_file():
+        return _preview(summary="下游装箱单路径无效", lines=[f"找不到文件: {downstream}"], warnings=[])
+    if not Path(upstream).expanduser().is_dir():
+        return _preview(summary="上游文件夹路径无效", lines=[f"找不到目录: {upstream}"], warnings=[])
+
+    result = factory_setup.prepare_factory_folders(
+        downstream, upstream, auto_create_empty=False, auto_write_alias=False
+    )
+    if result.get("error"):
+        return _preview(summary="预处理失败", lines=[result["error"]], warnings=[])
+
+    lines: list[str] = []
+    lines.append(f"共 {result['factory_count']} 个工厂待匹配。")
+
+    resolved = result.get("resolved") or {}
+    if resolved:
+        lines.append("高置信直接命中：")
+        for factory, info in resolved.items():
+            lines.append(f"  • {factory} → {info['folder']}（{info['method']}，{info['score']:.0f}分）")
+
+    candidates = result.get("candidates") or {}
+    if candidates:
+        lines.append("低置信需人工选择：")
+        for factory, cands in candidates.items():
+            lines.append(f"  • {factory}：")
+            for c in cands:
+                signals = "、".join(c.get("signals") or [])
+                lines.append(f"    - {c['folder']}（{c['score']:.0f}分{('｜' + signals) if signals else ''}）")
+
+    unmatched = result.get("unmatched") or []
+    if unmatched:
+        lines.append(f"无候选工厂（将创建空文件夹）：{', '.join(unmatched)}")
+
+    warnings = []
+    if candidates:
+        warnings.append("存在低置信工厂，请在确认前用对话告知选择，或确认后由系统创建空文件夹。")
+
+    return _preview(
+        summary="工厂文件夹预处理预览",
+        lines=lines,
+        warnings=warnings,
+        factory_scan={
+            "resolved": resolved,
+            "candidates": candidates,
+            "unmatched": unmatched,
+        },
+    )
+
+
+def _execute_prepare_factory_folders(args: dict, session_id: str | None,
+                                     on_progress: Callable[[dict], None] | None = None) -> dict:
+    """工厂预处理 execute：创建空文件夹、写入别名（用户已确认后执行）。"""
+    downstream = args.get("downstream_file_path") or get_settings().downstream_file_path
+    upstream = args.get("upstream_root") or get_settings().upstream_root
+
+    result = factory_setup.prepare_factory_folders(
+        downstream, upstream, auto_create_empty=True, auto_write_alias=True
+    )
+    if result.get("error"):
+        return {"status": "error", "message": result["error"]}
+
+    summary_lines: list[str] = []
+    resolved = result.get("resolved") or {}
+    if resolved:
+        summary_lines.append(f"直接命中/创建 {len(resolved)} 个工厂文件夹")
+    created = result.get("created") or []
+    if created:
+        summary_lines.append(f"新建空文件夹：{', '.join(created)}")
+    alias_written = result.get("alias_written") or []
+    if alias_written:
+        summary_lines.append(f"自动写入别名：{len(alias_written)} 条")
+    unmatched = result.get("unmatched") or []
+    if unmatched:
+        summary_lines.append(f"仍未匹配：{', '.join(unmatched)}")
+
+    return {
+        "status": "applied",
+        "message": "工厂文件夹预处理完成",
+        "summary_lines": summary_lines,
+        "result": result,
+    }
+
+
+# ---------------------------------------------------------------------------
 # 工具注册表
 # ---------------------------------------------------------------------------
 
@@ -3217,6 +3310,29 @@ TOOLS: dict[str, Tool] = {
         parameters={"type": "object", "properties": {}},
         risk="read",
         func=_fn_master_data_health,
+    ),
+    "prepare_factory_folders": Tool(
+        name="prepare_factory_folders",
+        description="端到端预处理：解析下游装箱单得到工厂列表，自动匹配上游文件夹、"
+                    "推荐低置信候选、为缺失工厂创建空文件夹，并把成功匹配写入别名表。"
+                    "操作员发起新批次前或发现工厂文件夹不齐时使用。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "downstream_file_path": {
+                    "type": "string",
+                    "description": "下游 ContentsOfTheContainer 装箱单路径；缺省使用 .env 配置",
+                },
+                "upstream_root": {
+                    "type": "string",
+                    "description": "上游工厂文件夹根目录；缺省使用 .env 配置",
+                },
+            },
+        },
+        risk="write",
+        preview=_preview_prepare_factory_folders,
+        execute=_execute_prepare_factory_folders,
     ),
     "process_skipped_factory": Tool(
         name="process_skipped_factory",

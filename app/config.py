@@ -43,6 +43,8 @@ class Settings(BaseSettings):
         "ContentsOfTheContainer_202624_青島XD_20260708.xlsx"
     )
     upstream_root: str = "/Users/nz/Downloads/yamato/96/工厂"
+    # 监控目录：端到端扫描新批次用；空字符串表示未启用自动扫描
+    watch_dir: str = ""
     output_dir: str = "app/output"
     alias_map_path: str = "app/alias_map.json"
 

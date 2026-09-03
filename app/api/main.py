@@ -180,6 +180,26 @@ class DispatcherChatRequest(BaseModel):
     file_selection: Optional[str] = None        # 用户通过文件浏览器选择的路径
 
 
+class ScanBatchesResponse(BaseModel):
+    """扫描新批次响应。"""
+    candidates: list[Dict[str, Any]]
+    count: int
+
+
+class StartBatchRequest(BaseModel):
+    """从扫描候选中启动一个批次。"""
+    folder_name: str
+    thread_id: Optional[str] = None             # 可覆盖默认 thread_id
+    downstream_file_path: Optional[str] = None  # 可覆盖自动匹配结果
+    upstream_root: Optional[str] = None         # 可覆盖监控目录下的工厂文件夹
+
+
+class UndoAliasRequest(BaseModel):
+    """撤销自动写入的工厂别名。"""
+    factory_name: str
+    folder_name: str
+
+
 # ---------- 路由 ----------
 
 @app.post("/api/v1/orders/process")
@@ -216,6 +236,48 @@ async def resume_processing(thread_id: str, request: ReviewSubmitRequest):
 async def get_state(thread_id: str):
     """查询任务状态：next_nodes 非空表示挂起等待人工审核。"""
     return await asyncio.to_thread(service.get_order_state, thread_id)
+
+
+# ---------- 端到端批次发现（Release 1）----------
+
+@app.post("/api/v1/batches/scan", response_model=ScanBatchesResponse)
+async def scan_batches():
+    """扫描配置的监控目录，返回尚未创建 batch 记录的候选子文件夹。"""
+    result = await asyncio.to_thread(service.scan_new_batches)
+    return {"candidates": result, "count": len(result)}
+
+
+@app.post("/api/v1/batches/start")
+async def start_batch_from_scan(request: StartBatchRequest):
+    """从扫描候选中选中一个子文件夹，创建 batch 并启动提取到 Node5 挂起。"""
+    try:
+        return await asyncio.to_thread(
+            service.start_batch_from_scan,
+            request.folder_name,
+            request.thread_id,
+            request.downstream_file_path,
+            request.upstream_root,
+        )
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@app.post("/api/v1/batches/{thread_id}/undo-alias")
+async def undo_alias(thread_id: str, request: UndoAliasRequest):
+    """撤销 prepare_factory_folders 自动写入的工厂别名。"""
+    ok = await asyncio.to_thread(
+        service.undo_alias_write,
+        request.factory_name,
+        request.folder_name,
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=404,
+            detail=f"未找到可撤销的别名：{request.factory_name} -> {request.folder_name}",
+        )
+    return {"ok": True}
 
 
 @app.get("/health")

@@ -248,6 +248,34 @@ class SkuMasterAudit(Base):
 
 
 # ─────────────────────────────────────────────────────────────
+# 端到端批次业务表（End-to-end 升级新增）
+# ─────────────────────────────────────────────────────────────
+
+class Batch(Base):
+    """端到端批次业务表：补充 checkpoints.db + output/ 的批次身份，
+    承载监控目录、发现时间、状态、最终输出路径等元数据。
+
+    主键沿用 LangGraph thread_id，保持与 checkpoint、containers、declarations
+    等表一致；不建立外键，避免历史数据不一致导致失败。
+    """
+
+    __tablename__ = "batches"
+
+    thread_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    watch_dir: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    folder_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    downstream_file_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    upstream_root: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    status: Mapped[str | None] = mapped_column(String(50), nullable=True, default="unknown")
+    final_output_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+
+# ─────────────────────────────────────────────────────────────
 # 调度 Agent 会话持久化（Session 管理方案）
 # ─────────────────────────────────────────────────────────────
 
