@@ -6,3 +6,7 @@ app/output/
 data/
 .env.bak
 .claude/
+
+# macOS / logs
+**/.DS_Store
+server.log
