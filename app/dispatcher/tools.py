@@ -1174,6 +1174,133 @@ def _exec_curate_kb(args: dict,
 
 
 # ---------------------------------------------------------------------------
+# 复盘经验工具（Release 4）
+# ---------------------------------------------------------------------------
+
+def _preview_confirm_retrospective(args: dict, session_id: str | None = None) -> dict:
+    """confirm_retrospective 预览：生成/校验经验列表，并做查重预检。"""
+    try:
+        from app.dispatcher.experience import search_experience
+        from app.orchestrator.retrospective import format_for_kb, summarize_batch
+
+        thread_id = (args.get("thread_id") or "").strip()
+        if not thread_id:
+            return _preview("缺少批次 thread_id", [], ["thread_id 为空，无法生成复盘"])
+
+        state = service.get_order_state(thread_id)
+        if not state.get("exists"):
+            return _preview("批次不存在", [], [f"未找到批次: {thread_id}"])
+
+        factory = args.get("factory")
+        learnings = args.get("learnings")
+        if not learnings:
+            summary = summarize_batch(thread_id)
+            learnings = [
+                format_for_kb(lesson)
+                for lesson in summary.get("atomic_lessons", [])
+            ]
+
+        if not learnings:
+            return _preview(
+                "没有可沉淀的经验",
+                [],
+                ["当前批次没有生成可用于经验库的原子经验"],
+            )
+
+        lines: list[str] = []
+        warnings: list[str] = []
+        warnings = _merge_pinned_warning(args, session_id, warnings)
+        created_count = 0
+        merged_count = 0
+
+        for idx, item in enumerate(learnings, 1):
+            content = (item.get("content") or "").strip()
+            if not content:
+                lines.append(f"[{idx}] 内容为空，已跳过")
+                continue
+            category = item.get("category", "issue")
+            hits = search_experience(
+                content,
+                top_k=1,
+                min_score=0.85,
+                filters={
+                    "category": category,
+                    "factory": factory or item.get("factory"),
+                },
+            )
+            if hits:
+                lines.append(f"[{idx}] 将合并到已有经验（count +1）")
+                merged_count += 1
+            else:
+                lines.append(f"[{idx}] 将新增经验")
+                created_count += 1
+            title = item.get("title") or content[:60]
+            lines.append(f"     标题：{title}")
+            lines.append(f"     类别：{category}")
+            if factory or item.get("factory"):
+                lines.append(f"     工厂：{factory or item.get('factory')}")
+
+        summary_text = (
+            f"本次将沉淀 {len(learnings)} 条经验，"
+            f"其中新增 {created_count} 条、合并 {merged_count} 条。"
+        )
+        return _preview(summary_text, lines, warnings, learnings=learnings)
+    except Exception as e:  # noqa: BLE001
+        return _preview("复盘预览生成失败", [], [f"{type(e).__name__}: {e}"])
+
+
+def _exec_confirm_retrospective(
+    args: dict,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """confirm_retrospective 执行：把经验列表写入 experience namespace。
+
+    若调用方未提供 learnings，自动从批次运行痕迹生成（与 preview 保持一致）。
+    """
+    try:
+        from app.dispatcher.experience import ingest_retrospective
+        from app.orchestrator.retrospective import format_for_kb, summarize_batch
+
+        thread_id = (args.get("thread_id") or "").strip()
+        if not thread_id:
+            return {"error": "thread_id 为空"}
+
+        learnings = args.get("learnings") or []
+        if not learnings:
+            summary = summarize_batch(thread_id)
+            learnings = [
+                format_for_kb(lesson)
+                for lesson in summary.get("atomic_lessons", [])
+            ]
+        if not learnings:
+            return {"error": "当前批次没有可写入的经验条目"}
+
+        factory = args.get("factory")
+        result = ingest_retrospective({
+            "thread_id": thread_id,
+            "factory": factory,
+            "learnings": learnings,
+        })
+        ingested = result.get("ingested", [])
+        created = sum(1 for r in ingested if r.get("action") == "created")
+        merged = sum(1 for r in ingested if r.get("action") == "merged")
+        errors = [r.get("error") for r in ingested if r.get("action") == "error"]
+
+        message = f"已写入经验库：新增 {created} 条，合并 {merged} 条。"
+        if errors:
+            message += f" 失败 {len(errors)} 条。"
+        return {
+            "status": "ok",
+            "message": message,
+            "created": created,
+            "merged": merged,
+            "errors": errors,
+        }
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
+
+# ---------------------------------------------------------------------------
 # 分票工具辅助
 # ---------------------------------------------------------------------------
 
@@ -3673,6 +3800,51 @@ TOOLS: dict[str, Tool] = {
         risk="write",
         preview=_preview_process_skipped_factory,
         execute=_exec_process_skipped_factory,
+    ),
+    "confirm_retrospective": Tool(
+        name="confirm_retrospective",
+        description="对已完成或挂起的批次进行复盘，把本次操作学到的经验写入经验库。"
+                    "操作员说'总结一下这次问题'、'记下来下次用'、'这个批次有什么经验'时使用。"
+                    "写操作：preview 展示将沉淀的经验条目及查重结果，确认后才写入经验库。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "thread_id": _THREAD_ID_PROP,
+                "factory": {
+                    "type": "string",
+                    "description": "可选，指定工厂",
+                },
+                "learnings": {
+                    "type": "array",
+                    "description": "可选，要沉淀的经验列表；缺省时自动从批次运行痕迹生成",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "category": {
+                                "type": "string",
+                                "description": "经验类别，如 issue/fix/workaround/best_practice",
+                            },
+                            "content": {"type": "string", "description": "经验正文"},
+                            "title": {"type": "string", "description": "人读标题"},
+                            "tags": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "标签列表",
+                            },
+                            "confidence": {
+                                "type": "number",
+                                "description": "置信度 0-1",
+                            },
+                        },
+                        "required": ["content"],
+                    },
+                },
+            },
+            "required": ["thread_id"],
+        },
+        risk="write",
+        preview=_preview_confirm_retrospective,
+        execute=_exec_confirm_retrospective,
     ),
 }
 

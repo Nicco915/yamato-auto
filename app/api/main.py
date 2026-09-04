@@ -16,13 +16,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import Response, StreamingResponse
+from fastapi import Body, FastAPI, HTTPException
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from app.api import service
 from app.logging_config import _takeover_uvicorn, setup_logging
+import app.orchestrator.controller as controller
 from app.review.router import configure_review
 from app.review.router import router as review_router
 from app.split.router import router as split_router
@@ -285,6 +286,31 @@ async def batch_pipeline_state(thread_id: str):
     """查询批次端到端流水线状态，供 Agent 对话页顶部状态图使用。"""
     from app.orchestrator import pipeline_state
     return await asyncio.to_thread(pipeline_state.get_pipeline_state, thread_id)
+
+
+@app.post("/api/v1/batches/{thread_id}/advance")
+async def advance_batch_endpoint(thread_id: str, payload: dict = Body(default={})):
+    """推进批次到下一阶段。
+
+    根据当前流水线状态自动决策：
+    - 提取审核阶段返回 /review 跳转；
+    - 提取完成后自动启动分票图；
+    - 分票审核阶段返回 /split 跳转；
+    - 分票恢复阶段用 payload.action 作为 resume 数据推进到完成。
+    """
+    try:
+        result = await asyncio.to_thread(
+            controller.advance_batch,
+            thread_id,
+            action=payload.get("action"),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"推进批次时发生错误: {e}") from e
+    return JSONResponse(result)
 
 
 @app.get("/health")
