@@ -53,7 +53,8 @@ class DispatcherSession:
 
     __slots__ = ("session_id", "history", "pending_action", "tool_history", "updated_at",
                  "soft_pending",
-                 "pending_file_selection")
+                 "pending_file_selection",
+                 "pending_ui_navigation")
 
     def __init__(self, session_id: str | None = None) -> None:
         # 持久化 session_id（有则写 DB，无则纯内存会话）
@@ -73,6 +74,10 @@ class DispatcherSession:
         # {"type": "file"|"dir", "extensions": str|None, "title": str|None,
         #  "created_at": float}
         self.pending_file_selection: dict | None = None
+        # UI 页面导航挂起：go_to_page / open_link 工具触发后等待前端响应
+        # {"kind": "go_to_page"|"open_link", "page": ..., "href": ...,
+        #  "label": ..., "thread_id": ..., "created_at": float}
+        self.pending_ui_navigation: dict | None = None
 
 
 _SESSIONS: dict[str, DispatcherSession] = {}
@@ -413,6 +418,38 @@ def clear_file_selection_request(session: DispatcherSession) -> None:
     session.pending_file_selection = None
 
 
+def set_go_to_page_request(session: DispatcherSession, *, page: str,
+                           thread_id: str | None = None,
+                           label: str | None = None) -> None:
+    """写入 UI 页面导航挂起（go_to_page 工具触发后）。"""
+    session.pending_ui_navigation = {
+        "kind": "go_to_page",
+        "page": page,
+        "thread_id": thread_id,
+        "label": label,
+        "href": None,
+        "created_at": time.time(),
+    }
+
+
+def set_open_link_request(session: DispatcherSession, *, href: str,
+                          label: str | None = None) -> None:
+    """写入 UI 外部链接挂起（open_link 工具触发后）。"""
+    session.pending_ui_navigation = {
+        "kind": "open_link",
+        "href": href,
+        "label": label,
+        "page": None,
+        "thread_id": None,
+        "created_at": time.time(),
+    }
+
+
+def clear_ui_navigation_request(session: DispatcherSession) -> None:
+    """清空 UI 导航挂起（前端已响应或用户取消后调用）。"""
+    session.pending_ui_navigation = None
+
+
 __all__ = [
     "DispatcherSession",
     "get_session",
@@ -425,4 +462,7 @@ __all__ = [
     "clear_soft_pending",
     "set_file_selection_request",
     "clear_file_selection_request",
+    "set_go_to_page_request",
+    "set_open_link_request",
+    "clear_ui_navigation_request",
 ]

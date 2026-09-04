@@ -82,6 +82,8 @@ class RequestCollector:
     clarify_text: str | None = None                  # preview blocked 转的 clarify 文案
     soft_confirm_question: str | None = None         # request_clarification 生成的反问文案
     file_selection_request: dict | None = None       # request_file_selection 请求参数
+    go_to_page_request: dict | None = None           # go_to_page 导航请求参数
+    open_link_request: dict | None = None            # open_link 链接请求参数
 
 
 # ---------------------------------------------------------------------------
@@ -393,6 +395,76 @@ def _wrap_ui_tool(tool: Tool, session: DispatcherSession,
             msg_text = f"请在界面上选择{title}（类型: {file_type}）"
             if extensions:
                 msg_text += f"，仅限 {extensions} 格式"
+            return Command(update={"messages": [
+                ToolMessage(content=msg_text, tool_call_id=tool_call_id),
+            ]})
+
+        if tool.name == "go_to_page":
+            page = args.get("page", "")
+            thread_id = args.get("thread_id")
+            label = args.get("label")
+
+            page_label_map = {
+                "review": "审核页",
+                "split": "分票页",
+                "batch": "批次详情页",
+                "chat": "对话页",
+            }
+            page_label = page_label_map.get(page, page)
+            default_label = f"打开{page_label}"
+            display_label = label or default_label
+
+            nav = {
+                "kind": "go_to_page",
+                "page": page,
+                "thread_id": thread_id,
+                "label": display_label,
+                "href": None,
+            }
+            sessions.set_go_to_page_request(
+                session, page=page, thread_id=thread_id, label=display_label)
+            collector.go_to_page_request = nav
+
+            sessions.record_tool(
+                session, tool=tool.name,
+                args_summary=_args_summary(args),
+                result_summary=f"跳转 {page_label}", confirmed=None)
+            debug_log.log_event("ui_navigation_requested",
+                                session_id=session_id, kind="go_to_page",
+                                page=page, thread_id=thread_id,
+                                label=display_label)
+            logger.info("UI 导航挂起 | 工具=%s | page=%s | thread_id=%s",
+                        tool.name, page, thread_id)
+
+            msg_text = f"已为您准备好「{display_label}」入口，点击即可跳转。"
+            return Command(update={"messages": [
+                ToolMessage(content=msg_text, tool_call_id=tool_call_id),
+            ]})
+
+        if tool.name == "open_link":
+            href = args.get("href", "")
+            label = args.get("label", "")
+
+            nav = {
+                "kind": "open_link",
+                "href": href,
+                "label": label,
+                "page": None,
+                "thread_id": None,
+            }
+            sessions.set_open_link_request(session, href=href, label=label)
+            collector.open_link_request = nav
+
+            sessions.record_tool(
+                session, tool=tool.name,
+                args_summary=_args_summary(args),
+                result_summary=f"打开链接 {label}", confirmed=None)
+            debug_log.log_event("ui_navigation_requested",
+                                session_id=session_id, kind="open_link",
+                                href=href, label=label)
+            logger.info("UI 链接挂起 | 工具=%s | label=%s", tool.name, label)
+
+            msg_text = f"已为您准备好「{label}」链接，点击即可打开。"
             return Command(update={"messages": [
                 ToolMessage(content=msg_text, tool_call_id=tool_call_id),
             ]})

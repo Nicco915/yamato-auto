@@ -280,6 +280,13 @@ async def undo_alias(thread_id: str, request: UndoAliasRequest):
     return {"ok": True}
 
 
+@app.get("/api/v1/batches/{thread_id}/pipeline_state")
+async def batch_pipeline_state(thread_id: str):
+    """查询批次端到端流水线状态，供 Agent 对话页顶部状态图使用。"""
+    from app.orchestrator import pipeline_state
+    return await asyncio.to_thread(pipeline_state.get_pipeline_state, thread_id)
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
@@ -533,6 +540,18 @@ async def dispatcher_chat_stream(request: DispatcherChatRequest):
                 'fs_type': fs.get('type'),
                 'fs_extensions': fs.get('extensions'),
                 'fs_title': fs.get('title'),
+            }, ensure_ascii=False)}\n\n"
+
+        # UI 导航挂起：推送 ui_navigation 事件（前端渲染跳转按钮/链接）
+        if result.get("status") == "pending_ui_navigation":
+            nav = result.get("navigation", {})
+            yield f"data: {json.dumps({
+                'type': 'ui_navigation',
+                'kind': nav.get('kind'),
+                'page': nav.get('page'),
+                'href': nav.get('href'),
+                'label': nav.get('label'),
+                'thread_id': nav.get('thread_id'),
             }, ensure_ascii=False)}\n\n"
 
         yield f"data: {json.dumps({'type': 'done', **result}, ensure_ascii=False)}\n\n"
