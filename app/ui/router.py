@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from app.api import service
@@ -74,15 +74,15 @@ def _read_page(filename: str) -> HTMLResponse:
 # ---------- 页面路由 ----------
 
 
-@router.get("/", response_class=HTMLResponse)
-async def index_page() -> HTMLResponse:
-    """工作台页（批次列表 + 发起批次）。"""
-    return _read_page("dashboard.html")
+@router.get("/")
+async def index_page() -> RedirectResponse:
+    """落地页：对话优先，/ 重定向到 Agent 对话页。"""
+    return RedirectResponse("/chat")
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
 async def dashboard_page() -> HTMLResponse:
-    """工作台页（/ 的别名）。"""
+    """工作台页（批次列表 + 发起批次）。"""
     return _read_page("dashboard.html")
 
 

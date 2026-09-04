@@ -76,6 +76,36 @@ def test_stages_have_required_keys():
         assert stage["status"] in ("done", "active", "pending")
 
 
+def test_split_declaration_dir_fields():
+    """分票段新增 declaration_dir / declarations_ready 字段：目录有内容才算 ready。"""
+    from app.split.graph import NODE5_SPLIT, get_split_graph
+
+    thread_id = "test-split-decl"
+    batch_store.upsert_batch(
+        thread_id=thread_id,
+        watch_dir=str(TMP / "watch3"),
+        folder_name="test3",
+        status="completed",
+    )
+    # 直接往 checkpoint 写入一个最小分票状态（不跑图，只造 values）
+    graph = get_split_graph()
+    cfg = {"configurable": {"thread_id": f"split-{thread_id}"}}
+    graph.update_state(cfg, {"status": "completed", "proposal": {"tickets": []}}, as_node=NODE5_SPLIT)
+
+    result = pipeline_state.get_pipeline_state(thread_id)
+    split = result["split"]
+    assert split is not None
+    assert split["declaration_dir"].endswith(str(Path("declarations") / f"split-{thread_id}"))
+    assert split["declarations_ready"] is False
+
+    # 目录建出且非空后 ready=True
+    decl_dir = Path(split["declaration_dir"])
+    decl_dir.mkdir(parents=True, exist_ok=True)
+    (decl_dir / "decl.xlsx").write_text("x")
+    result2 = pipeline_state.get_pipeline_state(thread_id)
+    assert result2["split"]["declarations_ready"] is True
+
+
 if __name__ == "__main__":
     import pytest
 

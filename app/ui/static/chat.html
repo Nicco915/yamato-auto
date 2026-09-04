@@ -6,7 +6,7 @@
 <link rel="stylesheet" href="/ui/static/ui.css">
 <style>
   /* ---------- 本页专用：聊天气泡 ---------- */
-  /* body 纵向堆叠：顶栏（renderTopbar 插入）占满宽，下方 .chat-shell 横向铺开 sidebar + main */
+  /* body 纵向堆叠：下方 .chat-shell 横向铺开 sidebar + main（本页无全局顶栏） */
   body {
     display: flex;
     flex-direction: column;
@@ -298,20 +298,54 @@
   }
   #inp:focus { outline: 2px solid #93c5fd; border-color: var(--primary); }
   .input-hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
-  /* ---------- Release 3：顶部流水线状态图 ---------- */
-  #pipeline-bar {
-    background: #fff;
-    border-bottom: 1px solid var(--border);
-    padding: 10px 16px;
+  /* ---------- 会话头部：批次状态栏 + 可折叠流水线 ---------- */
+  #session-header {
+    padding: 10px 14px;
+    margin-bottom: 12px;
     display: none;
     flex-direction: column;
-    justify-content: center;
+    gap: 8px;
   }
-  .pipeline-title {
+  #batch-status-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    font-size: 13px;
+  }
+  .bsb-name { font-weight: 600; color: #1f2937; }
+  .bsb-progress { color: var(--muted); font-size: 12px; }
+  .bsb-actions, .bsb-outputs {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  /* 状态栏在白底卡片里，pill 颜色从顶栏深色改为浅色文字 */
+  #batch-status-bar .metrics-pill { color: var(--muted); }
+  #batch-status-bar .metrics-pill .metrics-divider { background: #d1d5db; }
+  .pipeline-toggle {
+    cursor: pointer;
     font-size: 12px;
     color: var(--muted);
-    margin-bottom: 6px;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
+  .pipeline-toggle:hover { color: var(--primary); }
+  .pipeline-toggle .current-stage { color: var(--primary); font-weight: 600; }
+  #pipeline-detail { margin-top: 8px; }
+  /* sidebar 底部页面入口（新标签页打开） */
+  .sidebar-footer {
+    border-top: 1px solid var(--border);
+    padding: 10px 12px;
+    display: flex;
+    gap: 14px;
+    font-size: 12px;
+  }
+  .sidebar-footer a { color: var(--muted); text-decoration: none; }
+  .sidebar-footer a:hover { color: var(--primary); }
   .pipeline-steps {
     display: flex;
     align-items: center;
@@ -394,12 +428,6 @@
 </head>
 <body>
 
-<!-- 顶部流水线状态图 -->
-<div id="pipeline-bar">
-  <div class="pipeline-title">批次流水线</div>
-  <div class="pipeline-steps" id="pipeline-steps"></div>
-</div>
-
 <div class="chat-shell">
 
 <!-- 左侧会话列表 sidebar -->
@@ -412,10 +440,32 @@
   <div id="session-list" style="flex:1; overflow-y:auto; padding:8px">
     <!-- 会话项动态生成 -->
   </div>
+  <div class="sidebar-footer">
+    <a href="/dashboard" target="_blank" rel="noopener">工作台</a>
+    <a href="/mappings" target="_blank" rel="noopener">主数据维护</a>
+  </div>
 </aside>
 
 <!-- 右侧主聊天区 -->
 <main class="chat-main">
+  <!-- 会话头部：批次状态栏 + 可折叠流水线（无绑定批次时整体隐藏） -->
+  <div id="session-header" class="card">
+    <div id="batch-status-bar">
+      <span id="bsb-left" style="display:inline-flex;align-items:center;gap:8px"></span>
+      <span id="bsb-actions" class="bsb-actions"></span>
+      <span id="bsb-outputs" class="bsb-outputs"></span>
+      <span class="metrics-pill"><span id="usage-pill"></span><span class="metrics-divider"></span><span id="thinking-pill"></span></span>
+    </div>
+    <div id="pipeline-bar">
+      <div class="pipeline-toggle" id="pipeline-toggle">
+        <span id="pipeline-arrow">▸</span><span>流水线：</span><span id="pipeline-current" class="current-stage"></span>
+      </div>
+      <div id="pipeline-detail" style="display:none">
+        <div class="pipeline-steps" id="pipeline-steps"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- 说明条 -->
   <div class="card info-bar">
     与调度 Agent 对话，管理批次全流程：查批次、解释错误、发起/重跑/审核。只读操作即时响应，写操作需确认后执行。
@@ -462,6 +512,8 @@ let reasoningText = "";            // 当前轮次累积的思考过程
 let messageDeltaBubble = null;     // 流式回复气泡 DOM
 let messageDeltaText = "";         // 流式回复累积文本
 let pipelinePollTimer = null;      // 流水线状态轮询 timer
+let pipelineExpanded = false;      // 流水线展开/收起状态（切换会话时重置为收起）
+let lastPipelineData = null;       // 最近一次 pipeline_state 响应（供状态栏按钮取数）
 
 /* ================= 气泡渲染 ================= */
 function scrollBottom() {
@@ -594,35 +646,117 @@ function batchStatusBadge(status) {
   return '<span class="batch-badge ' + s.cls + '">' + s.label + '</span>';
 }
 
-/* ================= Release 3：流水线状态图 ================= */
+/* ================= 会话头部：批次状态栏 + 可折叠流水线 ================= */
 function getChatThreadId() {
   return sessionPinnedThreadId || new URLSearchParams(location.search).get("thread_id");
 }
 
 async function loadPipelineState(thread_id) {
   if (!thread_id) {
-    $("pipeline-bar").style.display = "none";
+    $("session-header").style.display = "none";
+    lastPipelineData = null;
     return;
   }
   try {
     const resp = await fetch(
       "/api/v1/batches/" + encodeURIComponent(thread_id) + "/pipeline_state"
     );
-    if (!resp.ok) { $("pipeline-bar").style.display = "none"; return; }
+    if (!resp.ok) { $("session-header").style.display = "none"; lastPipelineData = null; return; }
     const data = await resp.json();
-    renderPipelineBar(data);
+    renderSessionHeader(thread_id, data);
   } catch (e) {
     console.warn("流水线状态加载失败:", e);
-    $("pipeline-bar").style.display = "none";
+    $("session-header").style.display = "none";
+    lastPipelineData = null;
   }
 }
 
-function renderPipelineBar(data) {
-  const bar = $("pipeline-bar");
-  const stepsBox = $("pipeline-steps");
+/* 渲染会话头部：批次状态栏（批次名/徽章/工厂进度/待办/输出按钮）+ 可折叠流水线 */
+function renderSessionHeader(thread_id, data) {
+  const header = $("session-header");
   const stages = Array.isArray(data.stages) ? data.stages : [];
-  if (!stages.length) { bar.style.display = "none"; return; }
+  if (!data.exists || !stages.length) { header.style.display = "none"; lastPipelineData = null; return; }
+  lastPipelineData = data;
 
+  const batch = data.batch || {};
+  const extract = data.extract || null;
+  const split = data.split || null;
+  const status = batch.status || "";
+  const finalOutput = (extract && extract.final_output_path) || batch.final_output_path || "";
+
+  /* ---- 左：批次名 + 状态徽章 + 工厂进度 ---- */
+  let left = '<span class="bsb-name">' + escHtml(batch.folder_name || thread_id) + '</span>'
+           + batchStatusBadge(status);
+  if (extract) {
+    const done = (extract.done_factories || []).length;
+    const pending = (extract.pending_factories || []).length;
+    const cur = extract.current_factory ? 1 : 0;
+    const total = done + pending + cur;
+    if (total > 0) {
+      left += '<span class="bsb-progress">工厂 ' + done + '/' + total
+            + (extract.current_factory ? '（当前：' + escHtml(extract.current_factory) + '）' : '')
+            + '</span>';
+    }
+  }
+  $("bsb-left").innerHTML = left;
+
+  /* ---- 待办操作按钮（规则与批次详情页一致） ---- */
+  let actions = "";
+  if (status === "pending_review") {
+    actions += '<a class="btn btn-primary btn-sm" href="/review?thread_id='
+             + encodeURIComponent(thread_id) + '">去审核</a>';
+  }
+  if (status === "completed" || status === "pending_review") {
+    actions += '<button class="btn btn-sm" id="bsb-add-factories" onclick="chatAddFactories()">补充工厂</button>';
+  } else if (status === "running") {
+    actions += '<button class="btn btn-sm" disabled title="批次正在运行，待挂起审核或完成后再补充">补充工厂</button>';
+  }
+  if (split && split.split_thread_id) {
+    actions += '<a class="btn btn-primary btn-sm" href="/split/'
+             + encodeURIComponent(split.split_thread_id) + '">查看分票</a>';
+  } else if (status === "completed") {
+    actions += '<button class="btn btn-primary btn-sm" id="bsb-start-split" onclick="chatStartSplit()">开始分票</button>';
+  }
+  $("bsb-actions").innerHTML = actions;
+
+  /* ---- 输出按钮组 ---- */
+  let outputs = "";
+  if (finalOutput) {
+    outputs += '<button class="btn btn-sm" onclick="chatOpenOutputExcel(this)"'
+             + (status !== "completed"
+                ? ' title="批次仍在运行：当前是半成品，后续工厂确认后会继续追加写入；流程继续前请先关闭 Excel"'
+                : '')
+             + '>打开输出 Excel</button>';
+  }
+  if (split && split.split_thread_id) {
+    if (split.declarations_ready) {
+      outputs += '<button class="btn btn-sm" onclick="chatOpenSplitDir(this)">打开报关单目录</button>';
+    } else {
+      outputs += '<button class="btn btn-sm" disabled title="报关单尚未生成：请在分票页确认方案并生成后再打开">打开报关单目录</button>';
+    }
+  }
+  $("bsb-outputs").innerHTML = outputs;
+
+  /* ---- 可折叠流水线 ---- */
+  const activeIdx = stages.findIndex(s => s.status === "active");
+  $("pipeline-current").textContent = activeIdx >= 0
+    ? (activeIdx + 1) + " " + (stages[activeIdx].label || stages[activeIdx].name)
+    : "✓ 已完成";
+  $("pipeline-arrow").textContent = pipelineExpanded ? "▾" : "▸";
+  renderPipelineSteps(stages);
+  $("pipeline-detail").style.display = pipelineExpanded ? "block" : "none";
+  $("pipeline-toggle").onclick = () => {
+    pipelineExpanded = !pipelineExpanded;
+    $("pipeline-arrow").textContent = pipelineExpanded ? "▾" : "▸";
+    $("pipeline-detail").style.display = pipelineExpanded ? "block" : "none";
+  };
+
+  header.style.display = "flex";
+}
+
+/* 展开态的全部阶段步骤条 */
+function renderPipelineSteps(stages) {
+  const stepsBox = $("pipeline-steps");
   let html = "";
   stages.forEach((s, i) => {
     const cls = s.status === "done" ? "done" : (s.status === "active" ? "active" : "pending");
@@ -643,12 +777,100 @@ function renderPipelineBar(data) {
     }
   });
   stepsBox.innerHTML = html;
-  bar.style.display = "flex";
+}
+
+/* ---- 状态栏按钮动作（与批次详情页同一批后端端点） ---- */
+
+/* 补充工厂：重新解析装箱单，把未处理（新增/跳过/驳回）的工厂补进本批次 */
+async function chatAddFactories() {
+  const tid = getChatThreadId();
+  if (!tid) return;
+  if (!confirm("重新解析装箱单，把未处理的工厂补进本批次继续识别？")) return;
+  const btn = $("bsb-add-factories");
+  if (btn) { btn.disabled = true; btn.textContent = "补充识别中…"; }
+  try {
+    const r = await api("/api/v1/batches/" + encodeURIComponent(tid) + "/add-factories",
+                        { method: "POST" });
+    if (r && r.added > 0) {
+      toast("已补充 " + r.added + " 家工厂：" + (r.factories || []).join("、"));
+    } else {
+      toast((r && r.message) || "没有待补充的工厂");
+    }
+    if (r && r.added > 0 && r.status === "pending_human_review") {
+      toast("批次已转入待审核，请点击「去审核」继续处理");
+    }
+  } catch (e) {
+    toast("补充工厂失败：" + (e && e.message ? e.message : e));
+  } finally {
+    loadPipelineState(tid);
+  }
+}
+
+/* 开始分票：启动分票图，成功后跳转分票页 */
+async function chatStartSplit() {
+  const tid = getChatThreadId();
+  if (!tid) return;
+  const btn = $("bsb-start-split");
+  if (btn) { btn.disabled = true; btn.textContent = "启动中…"; }
+  try {
+    const body = { thread_id: tid };
+    const finalOutput = (lastPipelineData && lastPipelineData.extract && lastPipelineData.extract.final_output_path)
+      || (lastPipelineData && lastPipelineData.batch && lastPipelineData.batch.final_output_path);
+    if (finalOutput) body.source_file_path = finalOutput;
+    const data = await api("/api/v1/split/start", { method: "POST", body: body });
+    location.href = "/split/" + encodeURIComponent(data.split_thread_id);
+  } catch (e) {
+    toast("启动分票失败：" + (e && e.message ? e.message : e));
+    if (btn) { btn.disabled = false; btn.textContent = "开始分票"; }
+  }
+}
+
+/* 打开输出 Excel：半成品也可打开（Node6 增量写入同一文件） */
+async function chatOpenOutputExcel(btn) {
+  const tid = getChatThreadId();
+  if (!tid || !btn || btn.disabled) return;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "打开中…";
+  try {
+    const resp = await fetch("/api/v1/batches/" + encodeURIComponent(tid) + "/open", { method: "POST" });
+    const data = await resp.json().catch(() => null);
+    if (resp.ok && data && data.ok) {
+      toast("已用 Excel 打开：" + String(data.path || "").split(/[\\/]/).pop());
+    } else {
+      toast((data && data.detail) ? String(data.detail) : ("打开失败（HTTP " + resp.status + "）"));
+    }
+  } catch (e) {
+    toast("网络异常，请稍后重试：" + (e && e.message ? e.message : e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+/* 打开报关单目录（分票产出是一目录多份文件，用系统文件管理器打开） */
+async function chatOpenSplitDir(btn) {
+  const splitTid = lastPipelineData && lastPipelineData.split && lastPipelineData.split.split_thread_id;
+  if (!splitTid || !btn || btn.disabled) return;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "打开中…";
+  try {
+    const data = await api("/api/v1/split/" + encodeURIComponent(splitTid) + "/open",
+                           { method: "POST" });
+    if (data && data.ok) toast("已打开报关单目录");
+    else toast((data && data.detail) ? String(data.detail) : "打开失败");
+  } catch (e) {
+    toast("打开报关单目录失败：" + (e && e.message ? e.message : e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
 }
 
 function startPipelinePoll(thread_id) {
   if (pipelinePollTimer) { clearInterval(pipelinePollTimer); pipelinePollTimer = null; }
-  if (!thread_id) { $("pipeline-bar").style.display = "none"; return; }
+  if (!thread_id) { $("session-header").style.display = "none"; lastPipelineData = null; return; }
   loadPipelineState(thread_id);
   pipelinePollTimer = setInterval(() => loadPipelineState(thread_id), 10000);
 }
@@ -1658,6 +1880,7 @@ async function switchSession(sid) {
   $("msgs").innerHTML = "";
   progressBubble = null; progressLines = []; progressDone = null; progressTotal = null;
   reasoningText = ""; messageDeltaBubble = null; messageDeltaText = "";
+  pipelineExpanded = false;        // 切换会话时流水线重置为收起
   updateUsagePill(null, null); updateThinkingPill(null);
   await loadHistory();
   await loadSessionList($("session-search") ? $("session-search").value : "");
@@ -1795,17 +2018,8 @@ function showSessionMenu(s, e) {
 })();
 
 /* ================= 初始化 ================= */
-renderTopbar("chat");
-
-// Release 3：在顶部状态栏右侧注入动态指标 pill
-(function injectMetricsPill() {
-  const topbar = document.querySelector(".topbar");
-  if (!topbar) return;
-  const pill = document.createElement("div");
-  pill.className = "metrics-pill";
-  pill.innerHTML = '<span id="usage-pill"></span><span class="metrics-divider"></span><span id="thinking-pill"></span>';
-  topbar.appendChild(pill);
-})();
+/* 对话页不再渲染全局顶栏（工作台/主数据入口在 sidebar 底部，新标签页打开）；
+   token/思考指标 pill 已内嵌在会话头部批次状态栏右侧 */
 
 /* 开场白：有上次操作记忆时亮出摘要（哪个批次、什么工厂），否则静态文案 */
 async function greet() {

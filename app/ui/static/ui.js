@@ -80,7 +80,7 @@ function renderTopbar(active) {
   const bar = document.createElement("div");
   bar.className = "topbar";
   const links = [
-    { key: "dashboard", text: "工作台", href: "/" },
+    { key: "dashboard", text: "工作台", href: "/dashboard" },
     { key: "chat", text: "Agent对话", href: "/chat" },
     { key: "mappings", text: "主数据维护", href: "/mappings" },
   ];

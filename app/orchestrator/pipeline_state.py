@@ -126,12 +126,22 @@ def _split_phase(batch_thread_id: str) -> dict[str, Any] | None:
         phase = "unknown"
 
     values = snap.values
+    # 报关单输出目录：{output}/{batch}/declarations/{split_thread_id}/
+    # 供前端判定「打开报关单目录」按钮显隐（确认方案但未生成时目录不存在/为空）
+    decl_dir = get_settings().batch_declarations_dir(batch_thread_id) / split_thread_id
+    try:
+        declarations_ready = decl_dir.is_dir() and any(decl_dir.iterdir())
+    except OSError:
+        declarations_ready = False
+
     return {
         "phase": phase,
         "split_thread_id": split_thread_id,
         "has_interrupt": has_interrupt,
         "proposal": bool(values.get("proposal")),
         "status": values.get("status"),
+        "declaration_dir": str(decl_dir),
+        "declarations_ready": declarations_ready,
     }
 
 
