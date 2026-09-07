@@ -950,7 +950,11 @@ def _preview_set_paths(args: dict, session_id: str | None = None) -> dict:
         # Pinned scope 防御：set_paths 可选带 thread_id（带时与 pinned 比对）
         warnings = _merge_pinned_warning(args, session_id, warnings)
         if args.get("thread_id"):
-            lines.append(f"确认后当前批次 {args['thread_id']} 将立即用新路径重跑")
+            # 重跑只与提取链路两个旋钮相关；监控目录变更不影响已建批次
+            if {"upstream_root", "downstream_file_path"} & paths.keys():
+                lines.append(f"确认后当前批次 {args['thread_id']} 将立即用新路径重跑")
+            else:
+                lines.append("监控目录变更只影响扫描新批次，当前批次不会重跑")
         summary = (f"将修改 {len(paths)} 项路径配置并写入 .env 持久生效"
                    if not errors else
                    f"存在 {len(errors)} 个硬错误，确认后执行会被拒绝")
@@ -3399,9 +3403,11 @@ TOOLS: dict[str, Tool] = {
     ),
     "set_paths": Tool(
         name="set_paths",
-        description="修改路径配置（白名单三项：upstream_root 上游工厂文件夹 / "
-                    "downstream_file_path 下游装箱表 / gt_source GT 基准文件），"
-                    "写入 .env 持久生效；携带 thread_id 时当前批次立即用新路径重跑。"
+        description="修改路径配置（白名单四项：upstream_root 上游工厂文件夹 / "
+                    "downstream_file_path 下游装箱表 / gt_source GT 基准文件 / "
+                    "watch_dir 监控目录），"
+                    "写入 .env 持久生效；携带 thread_id 且改了上游/下游路径时，"
+                    "当前批次立即用新路径重跑（监控目录只影响扫描新批次，不触发重跑）。"
                     "写操作：preview 展示旧→新变更与硬错误/异平台警告，确认后才执行。",
         parameters={
             "type": "object",
@@ -3409,11 +3415,13 @@ TOOLS: dict[str, Tool] = {
                 "paths": {
                     "type": "object",
                     "description": "要修改的路径，key 仅限 upstream_root / "
-                                   "downstream_file_path / gt_source，值为绝对路径",
+                                   "downstream_file_path / gt_source / watch_dir，"
+                                   "值为绝对路径",
                     "properties": {
                         "upstream_root": {"type": "string"},
                         "downstream_file_path": {"type": "string"},
                         "gt_source": {"type": "string"},
+                        "watch_dir": {"type": "string"},
                     },
                 },
                 "thread_id": {

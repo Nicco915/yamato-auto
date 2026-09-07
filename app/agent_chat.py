@@ -16,10 +16,11 @@
 4. apply_paths（confirm 后）：写回 .env（持久，先备份 .env.bak）+ 刷新运行时
    配置 + 当前批次带新路径从 Node1 重跑（scope 见用户答复：持久+当前批次）。
 
-授权范围仅限路径三旋钮，其他任何配置修改请求一律拒绝：
+授权范围仅限路径四旋钮，其他任何配置修改请求一律拒绝：
 - upstream_root        上游工厂文件夹根目录（目录）
 - downstream_file_path 下游装箱表 xlsx（文件）
 - gt_source            GT 基准文件（文件，validation 用）
+- watch_dir            监控目录（目录，扫描发现新批次用）
 
 L1 会话记忆（2026-07-28）：操作员会分多轮补充信息（先给路径、后说明类别，
 或反过来），无状态单轮解析必然失败。两层设计：
@@ -49,6 +50,7 @@ ALLOWED_PATHS: dict[str, tuple[str, str, str]] = {
     "upstream_root": ("UPSTREAM_ROOT", "dir", "上游工厂文件夹根目录"),
     "downstream_file_path": ("DOWNSTREAM_FILE_PATH", "file", "下游装箱表"),
     "gt_source": ("GT_SOURCE", "file", "GT 基准文件"),
+    "watch_dir": ("YAMATO_WATCH_DIR", "dir", "监控目录"),
 }
 
 DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
@@ -56,11 +58,12 @@ DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
 _PARSE_PROMPT = r"""你是路径配置指令解析器，服务于供应链单证提取 Agent。
 操作员会用自然语言要求修改路径配置。你会看到之前的对话历史（如有），
 操作员可能分多轮补充信息（先给路径、后说明类别，或反过来）。
-你只识别以下三类路径（其他一律不提取）：
+你只识别以下四类路径（其他一律不提取）：
 
 - upstream_root：上游工厂文件夹根目录。操作员可能说：工厂文件夹/工厂目录/上游目录/工厂文件在…
 - downstream_file_path：下游装箱表（xlsx 文件）。操作员可能说：下游表/装箱表/ContentsOfTheContainer/要填的表
 - gt_source：GT 基准文件（ground truth 对照表）。操作员可能说：GT/gt文件/基准表/对照表
+- watch_dir：监控目录（扫描发现新批次的目录）。操作员可能说：监控目录/扫描目录/批次目录/新批次放在…
 
 铁律：
 1. 只提取操作员明确给出的绝对路径，以下两种风格都算绝对路径：
@@ -83,8 +86,8 @@ _PARSE_PROMPT = r"""你是路径配置指令解析器，服务于供应链单证
 
 只输出 JSON：
 {"action": "set_paths" | "unknown" | "chat",
- "paths": {"upstream_root": "...", "downstream_file_path": "...", "gt_source": "..."},
- "category_hint": "upstream_root" | "downstream_file_path" | "gt_source",
+ "paths": {"upstream_root": "...", "downstream_file_path": "...", "gt_source": "...", "watch_dir": "..."},
+ "category_hint": "upstream_root" | "downstream_file_path" | "gt_source" | "watch_dir",
  "unclassified": ["..."],
  "reply": "一句话复述你的理解（中文）"}
 paths / category_hint / unclassified 没有内容时不要出现对应字段。"""
@@ -400,12 +403,18 @@ def apply_paths(paths: dict, thread_id: str | None = None,
         result["warnings"] = warnings
 
     if thread_id:
-        from app.api import service  # 延迟 import 避免环
-        result["rerun"] = service.rerun_with_paths(
-            thread_id,
-            upstream_root=paths.get("upstream_root"),
-            downstream_file_path=paths.get("downstream_file_path"),
-        )
+        # 重跑只认提取链路的两个旋钮；监控目录只影响扫描发现新批次，
+        # 与当前批次重跑无关——只改 watch_dir 时跳过重跑并说明。
+        if {"upstream_root", "downstream_file_path"} & paths.keys():
+            from app.api import service  # 延迟 import 避免环
+            result["rerun"] = service.rerun_with_paths(
+                thread_id,
+                upstream_root=paths.get("upstream_root"),
+                downstream_file_path=paths.get("downstream_file_path"),
+            )
+        else:
+            result["rerun"] = {"skipped": True,
+                               "reason": "监控目录变更不影响已建批次，未触发重跑"}
     return result
 
 
@@ -422,11 +431,11 @@ def handle_message(message: str, env_path: Path | None = None,
 
     if action != "set_paths":
         text = reply or ("未识别为路径修改指令，未执行任何操作。"
-                         "支持的指令：修改 工厂文件夹 / 下游表 / GT 文件 的路径（需绝对路径）。")
+                         "支持的指令：修改 工厂文件夹 / 下游表 / GT 文件 / 监控目录 的路径（需绝对路径）。")
         # 有待归类路径时主动提醒，引导操作员一句话补类别
         if session.unclassified:
             text += (f"\n（我记得你给过路径：{'、'.join(session.unclassified)}"
-                     f"，告诉我它属于哪一类即可——工厂文件夹 / 下游装箱表 / GT 基准文件）")
+                     f"，告诉我它属于哪一类即可——工厂文件夹 / 下游装箱表 / GT 基准文件 / 监控目录）")
         _record_turn(session, message, text)
         result = {"status": "rejected", "action": action, "message": text}
         if session_id:
@@ -445,7 +454,8 @@ def handle_message(message: str, env_path: Path | None = None,
 
     warnings = cross_platform_warnings(paths)
     text = ("以上变更确认后，我将写入 .env 持久生效"
-            "（携带 thread_id 时当前批次立即用新路径重跑）。")
+            "（携带 thread_id 且改了上游/下游路径时，当前批次立即用新路径重跑；"
+            "监控目录变更只影响扫描新批次，不重跑）。")
     if warnings:
         text += "注意：存在异平台路径，本机无法验证其存在性，请核实目标机上路径有效后再确认。"
     _record_turn(session, message, reply or text)
