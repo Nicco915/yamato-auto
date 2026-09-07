@@ -290,6 +290,53 @@ def test_fastpath_start_not_hit():
     assert fastpath.try_fastpath("把 XD430 标记为已完成") is None
 
 
+# ---------------------------------------------------------------------------
+# 6. 监控目录 env 键名回归（2026-09-07 事故：写入 YAMATO_WATCH_DIR 死配置，
+#    Settings 无 env_prefix 只认 WATCH_DIR，set_paths 确认后扫描仍报未配置）
+# ---------------------------------------------------------------------------
+
+def test_allowed_paths_env_names_match_settings():
+    """ALLOWED_PATHS 的 env 键名必须与 Settings 字段名一致（无 env_prefix，
+    pydantic-settings 按字段名大小写不敏感匹配）。"""
+    from app import agent_chat
+    from app.config import Settings
+    fields = set(Settings.model_fields)
+    for key, (env_name, _kind, _label) in agent_chat.ALLOWED_PATHS.items():
+        if key not in fields:
+            continue  # gt_source 由 validation/ground_truth.py 直接读 env，不走 Settings
+        assert env_name.lower() == key, \
+            f"{key} 的 env 键 {env_name} 与 Settings 字段名不一致（读不到）"
+
+
+def test_apply_watch_dir_effective_and_cleans_legacy(tmp_path):
+    """apply_paths 改监控目录后：get_settings().watch_dir 立即生效；
+    .env 里残留的 YAMATO_WATCH_DIR 死配置被清除。"""
+    import os as _os
+    from app import agent_chat
+    from app.config import get_settings as _gs
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("SILICONFLOW_API_KEY=sk-x\n"
+                        "YAMATO_WATCH_DIR=D:/legacy/dead\n", encoding="utf-8")
+    old_env = _os.environ.get("WATCH_DIR")
+    try:
+        r = agent_chat.apply_paths({"watch_dir": str(_WATCH)}, env_path=env_file)
+        assert r["applied"] == {"WATCH_DIR": str(_WATCH)}
+        # 运行时立即生效
+        assert _gs().watch_dir == str(_WATCH)
+        # .env 持久化 + 旧键清除
+        text = env_file.read_text(encoding="utf-8")
+        assert f"WATCH_DIR={_WATCH}" in text
+        assert "YAMATO_WATCH_DIR" not in text
+        assert "SILICONFLOW_API_KEY=sk-x" in text  # 无关行不动
+    finally:
+        if old_env is None:
+            _os.environ.pop("WATCH_DIR", None)
+        else:
+            _os.environ["WATCH_DIR"] = old_env
+        _gs.cache_clear()
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

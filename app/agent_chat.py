@@ -46,12 +46,18 @@ from dotenv import dotenv_values
 from app.config import PROJECT_ROOT, get_settings
 
 # 白名单：内部 key → (.env 变量名, 期望类型, 中文名)
+# 注意：env 变量名必须与 config.Settings 字段名一致（Settings 未配
+# env_prefix，pydantic-settings 按字段名大小写不敏感匹配）——watch_dir
+# 曾误用 YAMATO_WATCH_DIR，写入后 Settings 永远读不到（2026-09-07 事故）
 ALLOWED_PATHS: dict[str, tuple[str, str, str]] = {
     "upstream_root": ("UPSTREAM_ROOT", "dir", "上游工厂文件夹根目录"),
     "downstream_file_path": ("DOWNSTREAM_FILE_PATH", "file", "下游装箱表"),
     "gt_source": ("GT_SOURCE", "file", "GT 基准文件"),
-    "watch_dir": ("YAMATO_WATCH_DIR", "dir", "监控目录"),
+    "watch_dir": ("WATCH_DIR", "dir", "监控目录"),
 }
+
+# 已废弃的旧 env 键 → 现用键（_upsert_env 写新键时顺手清除旧键死配置）
+_DEPRECATED_ENV_KEYS: dict[str, str] = {"YAMATO_WATCH_DIR": "WATCH_DIR"}
 
 DEFAULT_ENV_PATH = PROJECT_ROOT / ".env"
 
@@ -348,26 +354,36 @@ def _upsert_env(env_path: Path, updates: dict[str, str]) -> None:
     """行级 upsert .env：已存在的 key 原地替换，不存在的追加到文件尾。
 
     其他行（注释/API key/空行）一字不动；写入前备份 .env.bak。
+    写新键时顺手清除 _DEPRECATED_ENV_KEYS 登记的死配置旧键
+    （如 YAMATO_WATCH_DIR——Settings 读不到的误命名残留）。
     """
     if env_path.exists():
         shutil.copy2(env_path, env_path.parent / f"{env_path.name}.bak")
         lines = env_path.read_text(encoding="utf-8").splitlines()
     else:
         lines = []
+    # 待清除的废弃键：仅当其对应的新键在本次更新中才动（不影响无关行）
+    drop_keys = {old for old, new in _DEPRECATED_ENV_KEYS.items()
+                 if new in updates}
     remaining = dict(updates)
-    for i, line in enumerate(lines):
+    kept: list[str] = []
+    for line in lines:
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
+            kept.append(line)
             continue
         key = stripped.split("=", 1)[0].strip()
+        if key in drop_keys:
+            continue  # 废弃键整行清除
         if key in remaining:
-            lines[i] = f"{key}={remaining.pop(key)}"
+            line = f"{key}={remaining.pop(key)}"
+        kept.append(line)
     if remaining:
-        lines.append("")
-        lines.append("# ===== 业务路径（agent 对话修改）=====")
+        kept.append("")
+        kept.append("# ===== 业务路径（agent 对话修改）=====")
         for key, value in remaining.items():
-            lines.append(f"{key}={value}")
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            kept.append(f"{key}={value}")
+    env_path.write_text("\n".join(kept) + "\n", encoding="utf-8")
 
 
 def apply_paths(paths: dict, thread_id: str | None = None,
