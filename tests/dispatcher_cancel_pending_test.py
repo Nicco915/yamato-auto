@@ -133,20 +133,28 @@ def test_cancel_unblocks_new_pending():
     _plant_pending(sid)
     session = sessions.get_session(sid)
 
-    # 取消前：再存卡被拒（存卡锁正常工作）
-    outcome = lc_tools.build_pending_action(
-        "mark_batch_done", {"folder_name": "XD000-TEST"}, session)
-    assert outcome["ok"] is False
-    assert "已有一个待确认" in outcome["msg_text"]
+    # 混跑隔离：各测试文件都有自己的监控目录，用时显式指向本文件的
+    # （test_discovery.py 同款 try/finally 模式）
+    from app.config import get_settings
+    original_watch = get_settings().watch_dir
+    get_settings().watch_dir = str(_WATCH)
+    try:
+        # 取消前：再存卡被拒（存卡锁正常工作）
+        outcome = lc_tools.build_pending_action(
+            "mark_batch_done", {"folder_name": "XD000-TEST"}, session)
+        assert outcome["ok"] is False
+        assert "已有一个待确认" in outcome["msg_text"]
 
-    # 取消后立即能存新卡
-    dispatcher.cancel_pending(sid)
-    outcome = lc_tools.build_pending_action(
-        "mark_batch_done", {"folder_name": "XD000-TEST"}, session)
-    assert outcome["ok"] is True, outcome["msg_text"]
-    assert outcome["action"] is not None
-    # 善后：清掉测试存的卡
-    dispatcher.cancel_pending(sid)
+        # 取消后立即能存新卡
+        dispatcher.cancel_pending(sid)
+        outcome = lc_tools.build_pending_action(
+            "mark_batch_done", {"folder_name": "XD000-TEST"}, session)
+        assert outcome["ok"] is True, outcome["msg_text"]
+        assert outcome["action"] is not None
+    finally:
+        get_settings().watch_dir = original_watch
+        # 善后：清掉测试存的卡
+        dispatcher.cancel_pending(sid)
 
 
 def test_api_cancel_endpoint():

@@ -1157,18 +1157,22 @@ def _exec_start_scanned_batch(args: dict,
                               ) -> dict:
     """start_scanned_batch 执行：service.start_batch_from_scan 内含二次校验
     （子文件夹存在/下游表唯一性/thread_id 非空）；FileExistsError/ValueError
-    转 {"error": ...}。on_progress 形参为与 loop 透传对齐保留。"""
+    转 {"error": ...}。on_progress 包装成 exec_progress 透传（跑图节点进度，
+    与 create_batch 一致——否则确认执行全程前端只有「正在执行…」）。"""
     try:
         folder_name = (args.get("folder_name") or "").strip()
         if not folder_name:
             return {"error": "folder_name 不能为空"}
+        tid = (args.get("thread_id") or folder_name).strip()
         result = service.start_batch_from_scan(
             folder_name,
             thread_id=args.get("thread_id"),
             downstream_file_path=args.get("downstream_file_path"),
             upstream_root=args.get("upstream_root"),
+            # thread_id 可缺省（默认=folder_name），包装时用解析后的 tid
+            on_progress=_wrap_on_progress(
+                "start_scanned_batch", {**args, "thread_id": tid}, on_progress),
         )
-        tid = (args.get("thread_id") or folder_name).strip()
         if not result.get("error"):
             links = [{"label": "查看批次", "href": f"/batch/{tid}"},
                      {"label": "进入对话跟踪", "href": f"/chat?thread_id={tid}"}]

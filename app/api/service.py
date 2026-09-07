@@ -2589,12 +2589,15 @@ def start_batch_from_scan(
     thread_id: str | None = None,
     downstream_file_path: str | None = None,
     upstream_root: str | None = None,
+    on_progress: Callable[[dict], None] | None = None,
 ) -> dict[str, Any]:
     """从扫描候选中启动一个批次。
 
     - 默认用 folder_name 作为 thread_id；
     - 默认在监控目录 folder_name 下查找 downstream 文件；
-    - 默认把监控目录下的 folder_name 子文件夹作为 upstream_root。
+    - 默认把监控目录下的 folder_name 子文件夹作为 upstream_root；
+    - on_progress：节点级进度回调，透传 create_batch（对话确认门执行时
+      前端才有「正在提取工厂X」级进度，否则全程只有「正在执行…」）。
     """
     settings = get_settings()
     watch_dir = Path(settings.watch_dir).expanduser()
@@ -2632,7 +2635,7 @@ def start_batch_from_scan(
     if not tid:
         raise ValueError("thread_id 不能为空")
 
-    result = create_batch(tid, downstream, upstream)
+    result = create_batch(tid, downstream, upstream, on_progress=on_progress)
     batch_store.upsert_batch(
         tid,
         watch_dir=str(watch_dir),

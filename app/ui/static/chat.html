@@ -1552,6 +1552,15 @@ function renderApplied(data, tid) {
     });
     if (linkRow.children.length) b.appendChild(linkRow);
 
+    // 对话里启动/重跑批次成功后，服务端自动把本会话绑定到该批次
+    if (data.pinned_thread_id) {
+      const pinLine = document.createElement("div");
+      pinLine.style.cssText = "font-size:12px;color:var(--muted);margin-top:4px";
+      pinLine.textContent = "本会话已绑定到批次 " + data.pinned_thread_id
+        + "，后续「那个批次」等指代默认指向它。";
+      b.appendChild(pinLine);
+    }
+
     // 原始结果折叠（保留排错口）
     if (data.result && typeof data.result === "object" && Object.keys(data.result).length) {
       const det = document.createElement("details");

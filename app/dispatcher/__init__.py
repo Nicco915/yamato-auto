@@ -183,6 +183,43 @@ def handle_message(message: str, session_id: str | None = None, *, phase: int = 
     return result
 
 
+# 执行成功后值得自动 pin 会话的写工具（对话里启动/重跑批次后，会话应
+# 绑定到该批次——与工作台「对话」入口的 pin 行为对齐）
+_AUTO_PIN_TOOLS = frozenset({"create_batch", "start_scanned_batch", "rerun"})
+
+
+def _auto_pin_session(session_id: str, tool_name: str, args: dict,
+                      result: dict) -> str | None:
+    """写工具执行成功后，若会话尚未绑定批次则自动 pin 到该批次。
+
+    只补空位：已 pin 其他批次的会话不动（避免悄悄改绑）；thread_id 取
+    result > args（start_scanned_batch 可只给 folder_name）。任何异常
+    沉默返回 None——pin 是体验优化，绝不阻塞主流程。
+    """
+    if tool_name not in _AUTO_PIN_TOOLS or not session_id:
+        return None
+    if not isinstance(result, dict) or result.get("error"):
+        return None
+    tid = (result.get("thread_id") or args.get("thread_id")
+           or args.get("folder_name"))
+    if not tid:
+        return None
+    try:
+        from app.db.models import ChatSession as _ChatSessionOrm
+        from app.db.session import get_session as _get_db_session
+        with _get_db_session() as db:
+            row = db.get(_ChatSessionOrm, session_id)
+            if row is None or row.pinned_thread_id:
+                return None
+            row.pinned_thread_id = str(tid)
+            db.commit()
+        logger.info("会话自动绑定批次 | session=%s | thread_id=%s | 工具=%s",
+                    session_id, tid, tool_name)
+        return str(tid)
+    except Exception:  # noqa: BLE001 pin 失败不阻塞主流程
+        return None
+
+
 def confirm(session_id: str | None, action: dict | None,
             on_progress=None) -> dict:
     """确认执行入口：优先用服务端 session 留存的 pending_action。
@@ -211,6 +248,12 @@ def confirm(session_id: str | None, action: dict | None,
             mem.auto_update_after_write(tool_name, tool_args, tool_result)
         except Exception:  # noqa: BLE001 L2 记忆更新失败不阻塞主流程
             pass
+        # 对话里启动/重跑批次后自动绑定会话（仅当会话尚未 pin 批次）
+        pinned = _auto_pin_session(session_id, result.get("tool", ""),
+                                   result.get("args") or {},
+                                   result.get("result") or {})
+        if pinned:
+            result["pinned_thread_id"] = pinned
 
     return result
 

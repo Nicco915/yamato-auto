@@ -55,6 +55,22 @@ TMP = isolate_to_tmp("yamato_dispatcher_scan_tools_",
 from app.config import get_settings  # noqa: E402
 assert get_settings().watch_dir == str(_WATCH)
 
+
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _watch_dir_guard():
+    """混跑保险：settings 是全局单例，同进程后导入的测试文件（cancel/autopin
+    等）各自的 isolate_to_tmp 会覆盖 watch_dir——每个用例前钉回本文件的
+    监控目录，结束还原。"""
+    original = get_settings().watch_dir
+    get_settings().watch_dir = str(_WATCH)
+    try:
+        yield
+    finally:
+        get_settings().watch_dir = original
+
 HEADER = ["MAKER_MEI_KJ", "SHOHIN_CD", "SHOHIN_MEI_E", "SOTOBAKO_D_HACCHU_SU"]
 
 
@@ -201,7 +217,7 @@ def test_start_exec_param_passthrough(monkeypatch):
     captured = {}
 
     def fake_start(folder_name, thread_id=None, downstream_file_path=None,
-                   upstream_root=None):
+                   upstream_root=None, on_progress=None):
         captured.update(folder_name=folder_name, thread_id=thread_id,
                         downstream_file_path=downstream_file_path,
                         upstream_root=upstream_root)
