@@ -722,7 +722,8 @@ function renderSessionHeader(thread_id, data) {
   $("bsb-actions").innerHTML = actions;
 
   /* ---- 输出按钮组 ---- */
-  let outputs = "";
+  let outputs = '<a class="btn btn-sm" target="_blank" rel="noopener" href="/batch/'
+              + encodeURIComponent(thread_id) + '">批次详情</a>';
   if (finalOutput) {
     outputs += '<button class="btn btn-sm" onclick="chatOpenOutputExcel(this)"'
              + (status !== "completed"
