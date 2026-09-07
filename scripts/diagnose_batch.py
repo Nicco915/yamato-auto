@@ -11,6 +11,12 @@ LangGraph 快照的 next/tasks/interrupts 与业务字段，与批次详情页
 import sys
 from pathlib import Path
 
+# Windows 控制台默认 GBK，中文工厂名直接 print 会乱码/报错；强制 UTF-8 输出
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:  # noqa: BLE001 老 Python/重定向场景防御
+    pass
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.api.service import _config  # noqa: E402
