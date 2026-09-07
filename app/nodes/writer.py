@@ -194,6 +194,41 @@ def _write_excel(state: AgentState, out_path: Path) -> int:
     return written
 
 
+def clear_sku_rows(state: AgentState, out_path: Path, skus: list[str]) -> int:
+    """清空指定 SKU 在下游表中的 中文品名/净重/毛重 三列单元格，返回清除的行数。
+
+    用于 reopen 模式下人工删除条目：该 SKU 此前已写入输出 Excel，删除后
+    需把已写值清空（三列本就是本系统追加的，清空即回到写前状态）。
+    主库历史单重记录不动（其他批次仍可能引用，删除主库记录不在此语义内）。
+    """
+    if not skus:
+        return 0
+    settings = get_settings()
+    cur = state.get("current_factory_data") or {}
+    factory = cur.get("factory_name")
+    row_map = (state.get("downstream_row_map") or {}).get(factory) or {}
+
+    wb = load_workbook(out_path)
+    ws = wb[wb.sheetnames[0]]
+    header = [c.value for c in ws[1]]
+    cols = [header.index(settings.col_name_cn) + 1,
+            header.index(settings.col_net) + 1,
+            header.index(settings.col_gross) + 1]
+
+    cleared = 0
+    for sku in skus:
+        for excel_row in row_map.get(str(sku), []):
+            for col in cols:
+                ws.cell(row=excel_row, column=col).value = None
+            cleared += 1
+    if cleared:
+        _probe_writable(out_path)
+        wb.save(out_path)
+        logger.info("[Node6] reopen 删除条目：工厂「%s」清空 %d 行（SKU：%s）",
+                    factory, cleared, "、".join(str(s) for s in skus))
+    return cleared
+
+
 def _write_short_name_audit(
     state: AgentState, factory_name: str, short_name: str, match_method: str,
 ) -> None:
@@ -309,8 +344,10 @@ def _upsert_db(state: AgentState) -> tuple[int, int]:
                 session.add(record)
                 inserted += 1
                 new_sku_items.append(item)  # 挂接字段以 item 为准（人工补录值）
-            elif item.get("is_human_edited"):
-                # 老 SKU 且人工微调过：UPDATE 刷新重量与合规字段
+            elif item.get("is_human_edited") or item.get("update_history_weight"):
+                # 老 SKU：人工微调过 → UPDATE 刷新重量与合规字段；
+                # 或提交时勾选了「更新历史单重」（单重波动人工确认沉淀为新基准，
+                # 即使数值未编辑也刷新重量；合规字段提交值=主库现值，写回无副作用）
                 if unit_net is not None:
                     record.unit_net_weight = unit_net
                 if unit_gross is not None:

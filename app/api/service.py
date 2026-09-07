@@ -1711,7 +1711,12 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
         raise ValueError(f"批次 {thread_id} 缺少 downstream_file_path，无法 reopen")
 
     # 构造临时 state（最小字段集供 _write_excel / _upsert_db 使用）
-    items = (resume_data or {}).get("items") or []
+    raw_items = (resume_data or {}).get("items") or []
+    # 人工删除的条目（审核页「删除条目」）：不进 calculated_items（不落库），
+    # 但需记住 sku——此前已写入输出 Excel 的三列要清空（见下方 clear_sku_rows）
+    items = [i for i in raw_items if not i.get("deleted")]
+    deleted_skus = [str(i.get("orig_sku") or i.get("sku") or "")
+                    for i in raw_items if i.get("deleted")]
 
     # 取原始 items 做 diff：当前工厂直接取；已审核工厂从快照/旧格式列表/Excel 重建
     if cur.get("factory_name") == factory_name:
@@ -1736,6 +1741,8 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
         out_path = writer_mod._ensure_output_copy(fake_state)
         written = writer_mod._write_excel(fake_state, out_path)
         inserted, updated = writer_mod._upsert_db(fake_state)
+        # reopen 删除：清空已写入的三列单元格（主库历史单重不动）
+        cleared = writer_mod.clear_sku_rows(fake_state, out_path, deleted_skus)
 
     # 回写 factory_outputs 快照：否则 reopen 的修改只落在 Excel/DB，
     # 下次重开读到的仍是旧快照（reopen 数据源优先级 快照 > Excel 兜底）。
@@ -1783,8 +1790,11 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
             "edited_count": sum(
                 1 for i in items
                 if i.get("is_human_edited") or i.get("is_new_sku")
-            ),
-            "changes": _prepare_audit_changes_from_items(items, original_items),
+            ) + len(deleted_skus),
+            "changes": ([{"sku": s, "field": "条目",
+                          "old": "识别条目", "new": "人工删除"}
+                         for s in deleted_skus]
+                        + _prepare_audit_changes_from_items(items, original_items)),
             "new_skus": _prepare_audit_new_skus(items),
         }
         _write_audit(prepared, "reopen")
@@ -1792,14 +1802,15 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
         logger.warning("⚠️ reopen 审计落库失败: %s: %s", type(e).__name__, e)
 
     logger.info(
-        "[reopen] thread=%s factory=%s written=%d insert=%d update=%d",
-        thread_id, factory_name, written, inserted, updated,
+        "[reopen] thread=%s factory=%s written=%d insert=%d update=%d cleared=%d",
+        thread_id, factory_name, written, inserted, updated, cleared,
     )
     return {
         "status": "success",
         "message": (
             f"工厂「{factory_name}」重新提交完成："
             f"写入 {written} 行 Excel / INSERT {inserted} / UPDATE {updated}"
+            + (f" / 删除 {cleared} 行" if cleared else "")
         ),
         "thread_id": thread_id,
         "factory_name": factory_name,
@@ -1937,6 +1948,14 @@ def _prepare_audit_changes_from_items(new_items: list[dict],
             if new_v is not None and new_v != old_ext.get(f):
                 changes.append({"sku": sku, "field": f,
                                 "old": old_ext.get(f), "new": new_v})
+        # 提交时勾选「更新历史单重」：扁平结构留痕（ reopen 路径同口径）
+        if item.get("update_history_weight"):
+            changes.append({
+                "sku": sku, "field": "历史单重",
+                "old": ((old.get("db_record") or {}).get("unit_net_weight")),
+                "new": ((item.get("calculation") or {})
+                        .get("calculated_unit_net")),
+            })
     return changes
 
 
@@ -2762,6 +2781,14 @@ def _prepare_audit(thread_id: str, resume_data: dict) -> dict[str, Any] | None:
 
     for item in (resume_data or {}).get("items") or []:
         sku = item.get("sku")
+
+        # 人工删除条目（审核页「删除条目」）：扁平结构留痕，与其他 change 同构
+        if item.get("deleted"):
+            changes.append({"sku": item.get("orig_sku") or sku,
+                            "field": "条目", "old": "识别条目", "new": "人工删除"})
+            edited_count += 1
+            continue
+
         orig = orig_items.get(sku) or {}
         orig_ext = orig.get("extracted_data") or {}
         new_ext = item.get("extracted_data") or {}
@@ -2775,6 +2802,18 @@ def _prepare_audit(thread_id: str, resume_data: dict) -> dict[str, Any] | None:
                 changes.append({"sku": sku, "field": f, "old": orig_ext.get(f), "new": new_v})
         if sku_changed:
             edited_count += 1
+
+        # 提交时勾选「更新历史单重」：扁平结构留痕（即使数值未人工改动也记，
+        # 便于事后追查历史基准何时被谁刷新）
+        if item.get("update_history_weight"):
+            changes.append({
+                "sku": sku, "field": "历史单重",
+                "old": ((orig.get("db_record") or {}).get("unit_net_weight")),
+                "new": ((item.get("calculation") or {})
+                        .get("calculated_unit_net")),
+            })
+            if not sku_changed:
+                edited_count += 1
 
         if orig.get("is_new_sku"):
             new_skus.append({

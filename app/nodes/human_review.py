@@ -135,11 +135,21 @@ def _merge_human_items(human_items: list[dict], original_items: list[dict],
     original_by_sku = {i.get("sku"): i for i in original_items or []}
     merged_items = []
     claimed_skus: set = set()  # 本批 h_item 已占用的 sku（重复守卫用）
+    deleted_skus: list[str] = []  # 人工删除的条目（审计/日志用）
 
     for h_item in human_items:
         sku = h_item.get("sku")
         orig_sku = h_item.get("orig_sku")
         raw_base = original_by_sku.pop(orig_sku or sku, _MISSING)
+
+        # ---- 人工删除（审核页「删除条目」，识别错误的垃圾卡）----
+        # 显式 deleted 标志才剔除——「未返回原样保留」语义不变（防前端
+        # 漏传误删）；被删条目不进 merged_items：Node6 只遍历 merged，
+        # 不写 Excel、不落主库，天然隔离。
+        if h_item.get("deleted"):
+            deleted_skus.append(str(orig_sku or sku or ""))
+            continue
+
         is_fresh_card = raw_base is _MISSING  # D3 空卡新增：original 里不存在
         base = {} if is_fresh_card else dict(raw_base)
         orig_extracted = (base.get("extracted_data") or {}).copy()
@@ -229,6 +239,12 @@ def _merge_human_items(human_items: list[dict], original_items: list[dict],
         if bv is not None:
             base["inspection_required"] = bv
 
+        # 提交时人工勾选「更新历史单重」（单重波动 SKU 的逐个/批量选择）：
+        # 透传给 Node6——即使数值未经人工编辑也刷新主库历史单重基准；
+        # 不勾选则保持旧基准（防误识别污染历史数据）
+        if h_item.get("update_history_weight"):
+            base["update_history_weight"] = True
+
         if sku:
             claimed_skus.add(sku)
         merged_items.append(base)
@@ -239,6 +255,9 @@ def _merge_human_items(human_items: list[dict], original_items: list[dict],
     for key, base in original_by_sku.items():
         if key not in returned_keys:
             merged_items.append(base)
+    if deleted_skus:
+        logger.info("[Node5] 人工删除 %d 个条目：%s",
+                    len(deleted_skus), "、".join(deleted_skus))
     return merged_items
 
 

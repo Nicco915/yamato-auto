@@ -700,10 +700,12 @@ function renderSessionHeader(thread_id, data) {
   }
   $("bsb-left").innerHTML = left;
 
-  /* ---- 待办操作按钮（规则与批次详情页一致） ---- */
+  /* ---- 待办操作按钮（规则与批次详情页一致） ----
+     对话页内所有跳转链接一律 target=_blank 新标签页打开（2026-09 用户反馈：
+     同页覆盖会打断对话现场，审核/分票完回来对话上下文丢失） */
   let actions = "";
   if (status === "pending_review") {
-    actions += '<a class="btn btn-primary btn-sm" href="/review?thread_id='
+    actions += '<a class="btn btn-primary btn-sm" target="_blank" rel="noopener" href="/review?thread_id='
              + encodeURIComponent(thread_id) + '">去审核</a>';
   }
   if (status === "completed" || status === "pending_review") {
@@ -712,7 +714,7 @@ function renderSessionHeader(thread_id, data) {
     actions += '<button class="btn btn-sm" disabled title="批次正在运行，待挂起审核或完成后再补充">补充工厂</button>';
   }
   if (split && split.split_thread_id) {
-    actions += '<a class="btn btn-primary btn-sm" href="/split/'
+    actions += '<a class="btn btn-primary btn-sm" target="_blank" rel="noopener" href="/split/'
              + encodeURIComponent(split.split_thread_id) + '">查看分票</a>';
   } else if (status === "completed") {
     actions += '<button class="btn btn-primary btn-sm" id="bsb-start-split" onclick="chatStartSplit()">开始分票</button>';
@@ -768,7 +770,7 @@ function renderPipelineSteps(stages) {
       const label = s.link || "去处理";
       const safeHref = escHtml(s.link_href).replace(/"/g, '&quot;');
       html += '<span class="pipeline-step-action">'
-            + '<a class="btn btn-primary btn-sm" href="' + safeHref + '">'
+            + '<a class="btn btn-primary btn-sm" target="_blank" rel="noopener" href="' + safeHref + '">'
             + escHtml(label) + '</a></span>';
     }
     html += '</div>';
@@ -818,7 +820,9 @@ async function chatStartSplit() {
       || (lastPipelineData && lastPipelineData.batch && lastPipelineData.batch.final_output_path);
     if (finalOutput) body.source_file_path = finalOutput;
     const data = await api("/api/v1/split/start", { method: "POST", body: body });
-    location.href = "/split/" + encodeURIComponent(data.split_thread_id);
+    // 新标签页打开分票页，不覆盖对话现场
+    window.open("/split/" + encodeURIComponent(data.split_thread_id), "_blank", "noopener");
+    if (btn) { btn.disabled = false; btn.textContent = "开始分票"; }
   } catch (e) {
     toast("启动分票失败：" + (e && e.message ? e.message : e));
     if (btn) { btn.disabled = false; btn.textContent = "开始分票"; }
@@ -1127,6 +1131,8 @@ function handleSSEEvent(event) {
       const a = document.createElement("a");
       a.className = "btn btn-primary btn-sm";
       a.href = buildNavHref(event);
+      a.target = "_blank";   // 新标签页打开，不覆盖对话现场
+      a.rel = "noopener";
       a.textContent = event.label || event.link || "前往";
       navBubble.appendChild(a);
       history.push({ role: "agent", text: navText || a.textContent });
@@ -1371,9 +1377,9 @@ function renderBatchProgress(data, active) {
     const tid = data.thread_id;
     if (tid) {
       html += '<div class="preview-actions">'
-            + '<a class="btn btn-primary btn-sm" href="/review?thread_id='
+            + '<a class="btn btn-primary btn-sm" target="_blank" rel="noopener" href="/review?thread_id='
             + encodeURIComponent(tid) + '">去审核</a>'
-            + '<a class="btn btn-sm" href="/batch/'
+            + '<a class="btn btn-sm" target="_blank" rel="noopener" href="/batch/'
             + encodeURIComponent(tid) + '">看批次</a>'
             + '</div>';
     }
@@ -1547,6 +1553,8 @@ function renderApplied(data, tid) {
       const a = document.createElement("a");
       a.className = "btn btn-primary btn-sm";
       a.href = lnk.href;
+      a.target = "_blank";   // 新标签页打开，不覆盖对话现场
+      a.rel = "noopener";
       a.textContent = lnk.label || lnk.href;
       linkRow.appendChild(a);
     });

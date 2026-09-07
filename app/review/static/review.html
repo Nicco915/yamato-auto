@@ -102,6 +102,13 @@
   .card.edited { background: #eff6ff; }
   .card.dim { opacity: .35; }
   .card-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .card-del { margin-left: auto; border: 1px solid #fca5a5; background: #fff;
+    color: #dc2626; border-radius: 4px; padding: 1px 8px; font-size: 12px; cursor: pointer; }
+  .card-del:hover { background: #fef2f2; }
+  .card-restore { margin-left: auto; border: 1px solid #86efac; background: #fff;
+    color: #15803d; border-radius: 4px; padding: 1px 8px; font-size: 12px; cursor: pointer; }
+  .card-restore:hover { background: #f0fdf4; }
+  .card.deleted { opacity: .55; background: #f1f5f9; }
   /* B：SKU 可编辑输入框（替代原只读 .sku 文本） */
   .sku-input { font-weight: 700; font-size: 14px; width: 150px; padding: 2px 6px;
                border: 1px solid #cbd5e1; border-radius: 4px; font-family: inherit; }
@@ -435,17 +442,25 @@ async function saveAlias() {
 }
 
 /* D3：缺失红条 = 每个缺失条码的可点击 chip（单个添加）+「全部添加」；
-   已在卡片中的 sku chip 置灰防重复添加；全部移除后红条消失 */
+   已在卡片中的 sku chip 置灰防重复添加；全部移除后红条消失。
+   已删除（_deleted）的卡片不算「在卡片中」——删除装箱单内 SKU 后该 SKU
+   回到红条，点击 chip 直接复活原卡（见 addMissingSku），不重复建卡 */
 function renderMissingBar() {
   const bar = $("missing-bar");
   if (!missingSkus.length) { bar.style.display = "none"; return; }
   const onCard = new Set(
-    items.map((i) => String(i.sku ?? "").trim()).filter(Boolean));
+    items.filter((i) => !i._deleted)
+         .map((i) => String(i.sku ?? "").trim()).filter(Boolean));
   const chips = missingSkus.map((sku) => {
     const s = String(sku);
     const exists = onCard.has(s);
+    const wasDeleted = !exists && items.some(
+      (i) => i._deleted && String(i.sku ?? "").trim() === s);
+    const title = exists ? "该 SKU 已在卡片中"
+      : wasDeleted ? "点击恢复已删除的卡片（保留原数值与绑定单据）"
+      : "点击补空卡";
     return `<button class="missing-chip" data-sku="${esc(s)}" ` +
-      (exists ? 'disabled title="该 SKU 已在卡片中"' : 'title="点击补空卡"') +
+      (exists ? `disabled title="${title}"` : `title="${title}"`) +
       ` onclick="addMissingSku(this.dataset.sku)">${esc(s)}</button>`;
   }).join("");
   const allOnCard = missingSkus.every((s) => onCard.has(String(s)));
@@ -456,12 +471,25 @@ function renderMissingBar() {
     `${allOnCard ? " disabled" : ""}>全部添加</button>`;
 }
 
-/* D3：为缺失条码补一张空卡（契约形状），按新 SKU 显示品名/HS/商检补录框 */
+/* D3：为缺失条码补一张空卡（契约形状），按新 SKU 显示品名/HS/商检补录框。
+   若命中已删除的卡片（装箱单内 SKU 被删后回到红条）→ 直接复活原卡，
+   保留其数值与绑定单据，不重复建卡 */
 function addMissingSku(sku) {
   sku = String(sku ?? "").trim();
   if (!sku) return;
-  if (items.some((i) => String(i.sku ?? "").trim() === sku)) {
-    toast("该 SKU 已在卡片中");
+  const existing = items.findIndex((i) => String(i.sku ?? "").trim() === sku);
+  if (existing >= 0) {
+    if (!items[existing]._deleted) {
+      toast("该 SKU 已在卡片中");
+      return;
+    }
+    delete items[existing]._deleted;  // 复活已删除卡片
+    missingSkus = missingSkus.filter((s) => String(s) !== sku);
+    renderMissingBar();
+    renderCards();
+    refreshSubmitState();
+    selectCard(existing);
+    toast("已恢复该 SKU 的卡片", 2500);
     return;
   }
   items.push({
@@ -486,7 +514,7 @@ function addMissingSku(sku) {
 
 function addAllMissingSkus() {
   const todo = missingSkus.filter((s) =>
-    !items.some((i) => String(i.sku ?? "").trim() === String(s)));
+    !items.some((i) => !i._deleted && String(i.sku ?? "").trim() === String(s)));
   todo.forEach((s) => addMissingSku(s));
   if (todo.length) toast(`已补 ${todo.length} 张空卡，请逐项填数值与合规字段`, 3500);
 }
@@ -520,9 +548,26 @@ function renderCards() {
     const card = document.createElement("div");
     card.className = `card st-${item.status || "Normal"}` +
       (item.is_new_sku ? " new-sku" : "") + (idx === selectedIdx ? " selected" : "") +
-      (item._modified ? " edited" : "");
+      (item._modified ? " edited" : "") + (item._deleted ? " deleted" : "");
     card.id = "card-" + idx;
-    card.onclick = (e) => { if (e.target.tagName !== "INPUT" && e.target.tagName !== "SELECT") selectCard(idx); };
+    card.onclick = (e) => {
+      if (!["INPUT", "SELECT", "BUTTON"].includes(e.target.tagName)) selectCard(idx);
+    };
+
+    // 已删除卡片（识别错误的垃圾条目）：灰显 + 仅提供「恢复」，不参与
+    // 校验与提交数值；提交时带 deleted 标志由后端整条剔除并留审计
+    if (item._deleted) {
+      card.innerHTML = `
+        <div class="card-head">
+          <span class="sku-input" style="border-color:transparent;background:transparent">${esc(item.sku ?? "") || "（无 SKU）"}</span>
+          <span class="tag">已删除</span>
+          <span class="src" title="${esc(sourceFileOf(item))}">${esc(baseName(sourceFileOf(item)))}</span>
+          <button class="card-restore" onclick="event.stopPropagation();restoreCard(${idx})"
+                  title="撤销删除，恢复该条目">恢复</button>
+        </div>`;
+      box.appendChild(card);
+      return;
+    }
 
     // 三字段编辑区：所有 SKU 都可编辑；老 SKU 预填主库值（留空回退主库值），
     // 留空弱警告仅对新 SKU 显示（新 SKU 无主库值可回退）
@@ -552,6 +597,8 @@ function renderCards() {
         ${item._reextract ? '<span class="tag reextract">重提</span>' : ""}
         ${item._modified ? '<span class="tag modified">已修改</span>' : ""}
         <span class="src" title="${esc(sourceFileOf(item))}">${esc(baseName(sourceFileOf(item)))}</span>
+        <button class="card-del" onclick="event.stopPropagation();deleteCard(${idx})"
+                title="删除该条目（识别错误的卡片；提交后整条剔除：不写 Excel、不落主库，留审计记录）">删除</button>
       </div>
       <div class="grid">
         <label>总件数
@@ -569,6 +616,50 @@ function renderCards() {
     box.appendChild(card);
     renderCalc(idx);
   });
+  refreshSubmitState();
+}
+
+/* 删除/恢复条目（识别错误的垃圾卡，如 AI 把非 SKU 文本读成条码）：
+   删除只打 _deleted 标记并灰显（可恢复），提交时才带 deleted 标志由后端
+   整条剔除——不写 Excel、不落主库，审计留痕。
+   装箱单内 SKU（2026-09 用户定）：允许删除但加重警告，删除后 SKU 回到
+   顶部缺失红条提醒「该行未填写」；提交后想找回走 reopen + 重新识别。 */
+function isInPackingList(it) {
+  if (it._from_missing) return true;  // 缺失列表补录/重提命中缺失 → 装箱单内有行
+  return !it.unexpected_sku;          // 正常卡：非「装箱单外」即在装箱单内
+}
+
+function deleteCard(idx) {
+  const it = items[idx];
+  if (!it) return;
+  const label = (it.sku && String(it.sku).trim()) || "（无 SKU 条目）";
+  const inList = isInPackingList(it);
+  const warn = inList
+    ? `\n⚠️ 该 SKU 在装箱单中有对应行：删除后该行三列不会被填写` +
+      (isReopen ? `（本工厂已批准，已写入的值会被清空）` : ``) +
+      `，删除后它会回到顶部缺失红条提醒。`
+    : ``;
+  if (!confirm(`删除条目 ${label}？\n提交后该条目将从本工厂结果中剔除` +
+               `（不写 Excel、不落主库），并留审计记录。` + warn)) return;
+  it._deleted = true;
+  if (inList && it.sku && !missingSkus.some((s) => String(s) === String(it.sku))) {
+    missingSkus.push(String(it.sku));  // 回到缺失红条：提醒该行未填写
+    renderMissingBar();
+  }
+  renderCards();
+  refreshSubmitState();
+}
+
+function restoreCard(idx) {
+  const it = items[idx];
+  if (!it) return;
+  delete it._deleted;
+  if (isInPackingList(it) && it.sku) {
+    // 恢复 = 该行有卡可填，从缺失红条移除
+    missingSkus = missingSkus.filter((s) => String(s) !== String(it.sku));
+    renderMissingBar();
+  }
+  renderCards();
   refreshSubmitState();
 }
 
@@ -590,6 +681,30 @@ function renderCalc(idx) {
 function warnRatio() {
   const r = payload && payload.weight_diff_warn_ratio;
   return (typeof r === "number" && r > 0) ? r : 0.05;
+}
+
+/* 单重波动候选（提交时「是否更新历史单重」的选择清单）：
+   当前单件净重 vs 主库历史单重差异超阈值（与 Node4 Warning 同口径）。
+   新 SKU / 无历史基准 / 已删除卡片不进清单 */
+function weightDriftCandidates() {
+  const ratio = warnRatio();
+  const out = [];
+  items.forEach((it, idx) => {
+    if (it._deleted) return;
+    const hist = parseFloat((it.db_record || {}).unit_net_weight);
+    if (isNaN(hist) || !(hist > 0)) return;
+    const ed = it.extracted_data || {};
+    const q = parseFloat(ed.total_quantity), net = parseFloat(ed.total_net_weight);
+    if (isNaN(net) || isNaN(q) || !(q > 0)) return;
+    const cur = net / q;
+    const diff = Math.abs(cur - hist) / hist;
+    if (diff > ratio) {
+      const r4 = (v) => Math.round(v * 10000) / 10000;
+      out.push({ idx, sku: it.sku, hist: r4(hist), cur: r4(cur),
+                 pct: (diff * 100).toFixed(1) });
+    }
+  });
+  return out;
 }
 
 /* 单重对照行：历史单件净重/毛重 vs 当前编辑值实时单重，超阈值高亮 */
@@ -755,11 +870,13 @@ function onSkuEdit(input) {
 function validateSkuInputs() {
   const counts = {};
   items.forEach((it) => {
+    if (it._deleted) return;   // 已删除条目不参与校验（垃圾卡不挡提交）
     const v = String(it.sku ?? "").trim();
     if (v) counts[v] = (counts[v] || 0) + 1;
   });
   let errs = 0;
   items.forEach((it, idx) => {
+    if (it._deleted) return;
     const card = $("card-" + idx);
     const inp = card ? card.querySelector(".sku-input") : null;
     const hint = $("hint-sku-" + idx);
@@ -793,6 +910,7 @@ function ensureMetaHintSpans(idx) {
    SKU 校验错误（非 13 位/重复）则禁用提交按钮（前端守卫，后端仍有硬守卫兜底） */
 function refreshSubmitState() {
   items.forEach((it, idx) => {
+    if (it._deleted) return;   // 已删除条目不显示合规弱警告
     const showHints = it.is_new_sku || it._sku_renamed;
     if (showHints) ensureMetaHintSpans(idx);
     const hintName = $("hint-name_cn-" + idx);
@@ -907,7 +1025,10 @@ function _rxSame(ced, ned) {
 }
 
 /* 收窄覆盖：仅三个数值字段（重提侧空值不盖）+ calculation；
-   品名/税号/商检不动；db_record/is_new_sku/status 属主数据回查元信息，随重提更新 */
+   品名/税号/商检不动；db_record/is_new_sku/status 属主数据回查元信息，随重提更新；
+   source_file 同步指向重提文件（2026-09 用户反馈：AI 绑错单据时，人工重提正确
+   文件后卡片仍指向旧单据——覆盖时一并把绑定单据改过来；后端 merge 对
+   extracted_data 非 None 键全收，提交即生效） */
 function _rxApplyOverwrite(cur, ni) {
   const ced = cur.extracted_data || {};
   const ned = ni.extracted_data || {};
@@ -915,6 +1036,7 @@ function _rxApplyOverwrite(cur, ni) {
   RX_NUM_FIELDS.forEach((f) => {
     if (_normNum(ned[f]) !== null) merged[f] = ned[f];
   });
+  if (ned.source_file) merged.source_file = ned.source_file;
   cur.extracted_data = merged;
   if (ni.calculation) cur.calculation = ni.calculation;
   if (ni.db_record !== undefined) cur.db_record = ni.db_record;
@@ -931,25 +1053,47 @@ function mergeReextracted(newItems) {
     toast("重新识别完成：该文件未提取到条目", 3500);
     return;
   }
-  let added = 0, same = 0;
+  let added = 0, same = 0, repointed = 0;
   _rxDiffs = [];
   newItems.forEach((ni) => {
     const sku = String(ni.sku ?? "").trim();
     const idx = sku ? items.findIndex((i) => String(i.sku ?? "").trim() === sku) : -1;
+    if (idx >= 0 && items[idx]._deleted) {
+      // 重提命中已删除卡片 = 人工想用这个文件重新识别该 SKU：自动恢复
+      delete items[idx]._deleted;
+    }
     if (idx < 0) {
       const item = JSON.parse(JSON.stringify(ni));
       item._added = true; item._reextract = true; item._modified = true; item._sku0 = sku;
+      // 后端单文件重提不感知装箱单（unexpected_sku 恒 false），前端按缺失列表
+      // 修正：装箱单 SKU 只分布在「已有卡」∪「缺失列表」，新卡 sku 命中缺失
+      // 即单内有行，否则判为单外 SKU（删除警告/红条联动依赖此标记）
+      const wasMissing = missingSkus.some((s) => String(s) === sku);
+      if (wasMissing) item._from_missing = true;
+      item.unexpected_sku = !wasMissing;
       items.push(item);
       added++;
     } else if (_rxSame(items[idx].extracted_data || {}, ni.extracted_data || {})) {
-      same++;  // 三个数值字段完全一致：静默跳过，不弹窗不改数据
+      // 数值一致也要重指向（2026-09 用户反馈）：同一 SKU 可能匹配上两个单据，
+      // 人工选定正确文件重提 = 绑定单据必须跟随，即使数值完全相同；
+      // 未匹配上的 SKU 不动（不会全部重新指向）
+      const nedSame = ni.extracted_data || {};
+      if (nedSame.source_file) {
+        const curEd = items[idx].extracted_data || (items[idx].extracted_data = {});
+        if (curEd.source_file !== nedSame.source_file) {
+          curEd.source_file = nedSame.source_file;
+          items[idx]._reextract = true;
+          repointed++;
+        }
+      }
+      same++;  // 三个数值字段完全一致：不弹窗不改数值
     } else {
       _rxDiffs.push({ idx, sku, ni });
     }
     // 重提命中缺失列表 → 从 missing 前端状态移除（红条联动）
     if (sku) missingSkus = missingSkus.filter((s) => String(s) !== sku);
   });
-  _rxStats = { added, same, overwritten: 0, kept: 0 };
+  _rxStats = { added, same, overwritten: 0, kept: 0, repointed };
   if (!_rxDiffs.length) { _rxFinish(); return; }
   _rxShowModal();
 }
@@ -1016,7 +1160,8 @@ function _rxFinish() {
   renderCards();
   const s = _rxStats;
   toast(`重新识别完成：新增 ${s.added} 项，覆盖 ${s.overwritten} 项，` +
-        `一致跳过 ${s.same} 项，保留 ${s.kept} 项`, 4000);
+        `一致跳过 ${s.same} 项，保留 ${s.kept} 项` +
+        (s.repointed ? `，重指向绑定单据 ${s.repointed} 项` : ""), 4000);
   _rxDiffs = [];
   _rxStats = null;
 }
@@ -1331,7 +1476,10 @@ function buildDiffSummary() {
   const newSkus = [];
   const addedMissing = [];    // D3：人工补录缺失 SKU 空卡
   const reextractAdded = [];  // D2：重提新增卡片
+  const deleted = [];         // 人工删除的条目
   items.forEach((it, idx) => {
+    // 已删除条目：进删除专区（灰显卡仍在原下标，origItems 对照不受影响）
+    if (it._deleted) { deleted.push(it); return; }
     // 新增卡（D3 空卡 / D2 重提新卡）无 origItems 对照基线，走下方专区展示
     if (it._added && it._from_missing) { addedMissing.push(it); return; }
     if (it._added && it._reextract) { reextractAdded.push(it); return; }
@@ -1368,8 +1516,13 @@ function buildDiffSummary() {
       }
     }
   });
-  const unseen = Math.max(0, items.length - seenIdx.size);
-  return { changes, newSkus, addedMissing, reextractAdded, unseen, total: items.length };
+  // 过目统计只数未删除的条目（已删除的不需要过目）
+  const activeTotal = items.filter((it) => !it._deleted).length;
+  const activeUnseen = items.filter((it, idx) => !it._deleted && !seenIdx.has(idx)).length;
+  // 单重波动候选：提交时让工人选择是否更新历史单重（即使无其他改动也要弹窗）
+  const weightDrift = weightDriftCandidates();
+  return { changes, newSkus, addedMissing, reextractAdded, deleted, weightDrift,
+           unseen: activeUnseen, total: activeTotal };
 }
 
 /* D3 空卡 / D2 重提新卡的 diff 专区表格（无 origItems 基线，全量列出当前值） */
@@ -1417,12 +1570,53 @@ function renderDiffModal(s) {
     html += `<h4 style="margin-top:12px">重新识别新增 SKU（${s.reextractAdded.length} 项）</h4>` +
       addedSkuTable(s.reextractAdded);
   }
+  if (s.deleted && s.deleted.length) {
+    html += `<h4 style="margin-top:12px;color:#dc2626">删除条目（${s.deleted.length} 项）</h4>` +
+      `<table class="diff-table"><tr><th>SKU</th><th>来源单据</th><th>影响</th></tr>`;
+    s.deleted.forEach((it) => {
+      const inList = isInPackingList(it);
+      html += `<tr><td>${esc(it.sku ?? "") || "（无 SKU）"}</td>` +
+        `<td>${esc(baseName(sourceFileOf(it)))}</td>` +
+        (inList
+          ? `<td style="color:#dc2626">装箱单内有行，该行三列将留空</td>`
+          : `<td style="color:#6b7280">装箱单外条目，无下游影响</td>`) +
+        `</tr>`;
+    });
+    html += `</table><p style="color:#dc2626;font-size:12px;margin:6px 0 0">` +
+      `以上条目提交后将从本工厂结果中剔除（不写 Excel、不落主库），并留审计记录。` +
+      `装箱单内 SKU 删除后可通过重新识别找回。</p>`;
+  }
+  if (s.weightDrift && s.weightDrift.length) {
+    html += `<h4 style="margin-top:12px;color:#92400e">单重波动（${s.weightDrift.length} 项）— 是否更新历史单重？</h4>` +
+      `<table class="diff-table"><tr>` +
+      `<th style="width:30px"><input type="checkbox" id="wu-all" title="全选/全不选"></th>` +
+      `<th>SKU</th><th>历史单件净重</th><th>本次单件净重</th><th>差异</th></tr>`;
+    s.weightDrift.forEach((w) => {
+      html += `<tr><td><input type="checkbox" class="wu-check" data-idx="${w.idx}"></td>` +
+        `<td>${esc(w.sku ?? "")}</td><td>${w.hist}</td>` +
+        `<td><b>${w.cur}</b></td>` +
+        `<td style="color:#d97706">${w.pct}%</td></tr>`;
+    });
+    html += `</table><p style="color:#92400e;font-size:12px;margin:6px 0 0">` +
+      `勾选的 SKU 将用本次单重更新主库历史基准（下次同 SKU 不再提示波动）；` +
+      `不勾选则只写本次装箱单，历史基准保持不变。` +
+      `波动可能是换包材等长期变化（建议勾选），也可能是识别误差（勿勾）。</p>`;
+  }
   if (s.unseen > 0) {
     html += `<p class="unseen-note">⚠ 尚有 ${s.unseen} / ${s.total} 项未逐条过目，请确认是否仍要提交。</p>`;
   } else {
     html += `<p style="color:#15803d;font-size:12px;margin:10px 0 0">已逐条过目全部 ${s.total} 项。</p>`;
   }
   $("diff-body").innerHTML = html;
+  // 单重波动专区：表头全选联动
+  const wuAll = $("wu-all");
+  if (wuAll) {
+    wuAll.addEventListener("change", () => {
+      document.querySelectorAll(".wu-check").forEach((c) => {
+        c.checked = wuAll.checked;
+      });
+    });
+  }
 }
 
 function closeDiffModal() { $("diff-modal").style.display = "none"; }
@@ -1432,7 +1626,9 @@ function confirmSubmit() { closeDiffModal(); doSubmit(); }
 function submitReview() {
   const s = buildDiffSummary();
   if (!s.changes.length && !s.newSkus.length &&
-      !s.addedMissing.length && !s.reextractAdded.length) { doSubmit(); return; }
+      !s.addedMissing.length && !s.reextractAdded.length &&
+      !(s.deleted && s.deleted.length) &&
+      !(s.weightDrift && s.weightDrift.length)) { doSubmit(); return; }
   renderDiffModal(s);
   $("diff-modal").style.display = "flex";
 }
@@ -1465,13 +1661,22 @@ async function doSubmit() {
   const btn = $("btn-submit");
   btn.disabled = true; btn.textContent = isReopen ? "重新提交中…" : "提交中…";
   // 清理前端临时标记；有改动的项显式带上 is_human_edited（后端比对之外的冗余保险）
-  const submitItems = items.map((it) => {
+  // 「更新历史单重」勾选集：差异弹窗里勾选框的卡片下标（无弹窗时为空集）
+  const wuChecked = new Set(
+    Array.from(document.querySelectorAll(".wu-check:checked"))
+         .map((c) => parseInt(c.dataset.idx, 10)));
+  const submitItems = items.map((it, idx) => {
     const c = { ...it };
     if (c._modified) c.is_human_edited = true;
+    // 人工删除：显式 deleted 标志，后端整条剔除（区别于"未返回原样保留"）
+    if (c._deleted) c.deleted = true;
+    // 提交时勾选「更新历史单重」：即使数值未编辑也刷新主库历史基准（Node6 消费）
+    if (wuChecked.has(idx)) c.update_history_weight = true;
     // B 改名契约：携带 orig_sku（改名前的值），后端按 orig_sku or sku pop 找 base
     if (c._sku_renamed && !c._added && c._sku0) c.orig_sku = c._sku0;
     delete c._modified;
     delete c._added;
+    delete c._deleted;
     delete c._sku_renamed;
     delete c._reextract;
     delete c._from_missing;
