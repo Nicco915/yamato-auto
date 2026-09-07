@@ -2724,6 +2724,27 @@ def _exec_upsert_product_mapping(
 # create_factory_alias / add_factories / query_master_data
 # ---------------------------------------------------------------------------
 
+def _effective_upstream_root(args: dict) -> str:
+    """folder 校验用的上游根：批次 checkpoint 里的 upstream_root 优先，
+    全局缺省兜底。
+
+    扫描建批时批次的 upstream_root 是批次文件夹内嵌套的「工厂」目录
+    （start_batch_from_scan 经 pick_upstream_root 收敛），与全局
+    settings.upstream_root 通常不是一个目录——用全局根校验 folder 会把
+    合法对照误判为「不是一级子目录」（2026-09-07 test-94 生产反馈）。
+    """
+    thread_id = (args.get("thread_id") or "").strip()
+    if thread_id:
+        try:
+            state = service.get_order_state(thread_id)
+            root = (state.get("values") or {}).get("upstream_root")
+            if root:
+                return root
+        except Exception:  # noqa: BLE001 查询失败退回全局缺省
+            pass
+    return get_settings().upstream_root
+
+
 def _preview_create_factory_alias(args: dict, session_id: str | None = None) -> dict:
     """create_factory_alias 预览：展示对照内容；folder 校验失败提前进 warnings。"""
     factory = (args.get("factory") or "").strip()
@@ -2732,7 +2753,7 @@ def _preview_create_factory_alias(args: dict, session_id: str | None = None) -> 
     warnings: list[str] = []
     try:
         from app.factory_match import validate_subfolder
-        validate_subfolder(get_settings().upstream_root, folder)
+        validate_subfolder(_effective_upstream_root(args), folder)
     except ValueError as e:
         warnings.append(str(e))
     return _preview(
@@ -2757,7 +2778,7 @@ def _exec_create_factory_alias(args: dict,
     if not factory:
         return {"error": "工厂名不能为空"}
     try:
-        validate_subfolder(get_settings().upstream_root, folder)
+        validate_subfolder(_effective_upstream_root(args), folder)
     except ValueError as e:
         return {"error": str(e)}
     try:
@@ -3029,7 +3050,7 @@ def _preview_process_skipped_factory(args: dict, session_id: str | None = None) 
     warnings: list[str] = []
     try:
         from app.factory_match import validate_subfolder
-        validate_subfolder(get_settings().upstream_root, folder)
+        validate_subfolder(_effective_upstream_root(args), folder)
     except ValueError as e:
         warnings.append(str(e))
     try:

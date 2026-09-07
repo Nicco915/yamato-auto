@@ -132,6 +132,37 @@ def test_create_factory_alias_preview_warns_on_bad_folder():
     assert p2["warnings"] == []
 
 
+def test_create_factory_alias_uses_batch_upstream_root():
+    """folder 校验以批次 checkpoint 里的 upstream_root 为准（2026-09-07
+    test-94 生产反馈）：扫描建批的批次根是批次文件夹内嵌套的「工厂」目录，
+    与全局 settings.upstream_root 不同——folder 在批次根下存在、
+    全局根下不存在时，带 thread_id 应通过，不带则仍拒绝。"""
+    from app.graph import NODE2, get_graph
+
+    batch_root = TMP / "batch_scope" / "94" / "工厂"
+    (batch_root / "苏克").mkdir(parents=True)
+    tid = "TID-ALIAS-SCOPE"
+    graph = get_graph()
+    graph.update_state({"configurable": {"thread_id": tid}},
+                       {"upstream_root": str(batch_root)}, as_node=NODE2)
+
+    r = dispatcher_tools._exec_create_factory_alias(
+        {"factory": "青島蘇克工芸品有限公司", "folder": "苏克",
+         "thread_id": tid})
+    assert r.get("ok"), f"应按批次 upstream_root 校验通过: {r}"
+
+    # 不带 thread_id：退回全局缺省根，「苏克」不在其下 → 仍拒绝
+    r2 = dispatcher_tools._exec_create_factory_alias(
+        {"factory": "另一工厂", "folder": "苏克"})
+    assert "error" in r2
+
+    # process_skipped_factory 预览同口径：批次根下存在 → 无 folder 警告
+    p = dispatcher_tools._preview_process_skipped_factory(
+        {"factory": "青島蘇克工芸品有限公司", "folder": "苏克",
+         "thread_id": tid})
+    assert not any("一级子目录" in w for w in p["warnings"]), p["warnings"]
+
+
 # ---------------------------------------------------------------------------
 # add_factories（mock service 层）
 # ---------------------------------------------------------------------------
