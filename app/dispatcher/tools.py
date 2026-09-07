@@ -1196,6 +1196,67 @@ def _exec_mark_batch_done(args: dict,
     except Exception as e:  # noqa: BLE001
         return _err(e)
 
+
+def _preview_unmark_batch_done(args: dict,
+                               session_id: str | None = None) -> dict:
+    """unmark_batch_done 预览：mark_batch_done 的逆操作——删掉「已完成」
+    标记记录，让文件夹重新出现在扫描候选里。
+
+    只允许取消纯标记记录（无 checkpoint）：该文件夹若真实跑过批次
+    （有 checkpoint），blocked 拒绝——不能只删元数据制造孤儿批次。"""
+    try:
+        folder_name = (args.get("folder_name") or "").strip()
+        if not folder_name:
+            return _preview("参数缺失", [], ["folder_name 不能为空"],
+                            blocked=True)
+        existing = batch_store.get_batch(folder_name)
+        if existing is None:
+            return _preview(
+                "无需取消",
+                [f"文件夹 {folder_name} 没有批次记录，扫描本就会列出它"
+                 "（若文件夹在监控目录内）"],
+                [], blocked=True)
+        if service.get_order_state(folder_name).get("exists"):
+            return _preview(
+                "这是真实跑过的批次",
+                [f"文件夹 {folder_name} 有真实的批次数据（checkpoint），"
+                 "不是单纯的完成标记"],
+                ["不能仅删除记录让扫描重新发现它；如需重跑请用 rerun"],
+                blocked=True)
+        lines = [
+            f"文件夹: {folder_name}",
+            f"将删除「已完成」标记记录（当前状态: {existing.get('status')}）",
+            "效果：之后扫描新批次时该文件夹会重新出现",
+            "不改动文件夹内任何文件",
+        ]
+        return _preview(f"将取消 {folder_name} 的已完成标记", lines, [])
+    except Exception as e:  # noqa: BLE001
+        return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
+
+
+def _exec_unmark_batch_done(args: dict,
+                            on_progress: Callable[[dict], None] | None = None
+                            ) -> dict:
+    """unmark_batch_done 执行：二次校验（记录存在 + 无 checkpoint）后删除
+    batches 表记录。只删元数据，不动文件、不动 checkpoint。"""
+    try:
+        folder_name = (args.get("folder_name") or "").strip()
+        if not folder_name:
+            return {"error": "folder_name 不能为空"}
+        if batch_store.get_batch(folder_name) is None:
+            return {"error": f"文件夹 {folder_name} 没有批次记录，无需取消"}
+        if service.get_order_state(folder_name).get("exists"):
+            return {"error": f"文件夹 {folder_name} 是真实跑过的批次，"
+                             "不能仅删除记录（如需重跑请用 rerun）"}
+        ok = batch_store.delete_batch(folder_name)
+        if not ok:
+            return {"error": "删除批次记录失败（详见服务端日志）"}
+        return {"folder_name": folder_name, "status": "unmarked",
+                "message": f"已取消 {folder_name} 的已完成标记，"
+                           "之后扫描会重新列出它"}
+    except Exception as e:  # noqa: BLE001
+        return _err(e)
+
 # ---------------------------------------------------------------------------
 # curate_kb 写工具（RAG 策展：队列排查 → 去重聚类 → 人工确认 → LLM 起草 → 入库）
 # ---------------------------------------------------------------------------
@@ -3549,6 +3610,30 @@ TOOLS: dict[str, Tool] = {
         risk="write",
         preview=_preview_mark_batch_done,
         execute=_exec_mark_batch_done,
+    ),
+    "unmark_batch_done": Tool(
+        name="unmark_batch_done",
+        description="取消某个文件夹的「已完成」标记（mark_batch_done 的逆操作），"
+                    "让监控目录下的该文件夹重新出现在扫描候选里。"
+                    "操作员说「取消 XX 的完成标记」「XX 标错了恢复一下」"
+                    "「让 XX 重新能被扫描到」时使用。"
+                    "只允许取消纯标记记录；该文件夹若真实跑过批次会拒绝"
+                    "（那种情况如需重跑应使用 rerun）。"
+                    "只删除批次元数据记录，不改动文件夹内任何文件。"
+                    "写操作：preview 展示将删除的记录与效果说明，确认后才执行。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "folder_name": {
+                    "type": "string",
+                    "description": "监控目录下要取消完成标记的子文件夹名",
+                },
+            },
+            "required": ["folder_name"],
+        },
+        risk="write",
+        preview=_preview_unmark_batch_done,
+        execute=_exec_unmark_batch_done,
     ),
     "rerun": Tool(
         name="rerun",

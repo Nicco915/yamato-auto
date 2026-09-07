@@ -498,6 +498,7 @@ _TOOL_CN = {
     "split_and_generate": "一键分票并生成报关单",
     "start_scanned_batch": "启动扫描到的批次",
     "mark_batch_done": "标记批次已完成",
+    "unmark_batch_done": "取消批次已完成标记",
 }
 
 

@@ -271,7 +271,53 @@ def test_mark_done_exec_and_scan_skip():
 
 
 # ---------------------------------------------------------------------------
-# 5. 快路径
+# 5. unmark_batch_done（mark_batch_done 逆操作）
+# ---------------------------------------------------------------------------
+
+def test_unmark_roundtrip():
+    """标记 → 取消标记：记录删除，扫描重新列出该文件夹。"""
+    _new_folder("UNMARK1")
+    dispatcher_tools._exec_mark_batch_done({"folder_name": "UNMARK1"})
+    assert batch_store.get_batch("UNMARK1") is not None
+
+    p = dispatcher_tools._preview_unmark_batch_done({"folder_name": "UNMARK1"})
+    assert not p.get("blocked"), f"不应 blocked: {p}"
+    assert "UNMARK1" in p["summary"]
+
+    r = dispatcher_tools._exec_unmark_batch_done({"folder_name": "UNMARK1"})
+    assert "error" not in r, f"执行失败: {r}"
+    assert batch_store.get_batch("UNMARK1") is None
+    names = {c["folder_name"]
+             for c in dispatcher_tools._fn_scan_new_batches({})["candidates"]}
+    assert "UNMARK1" in names
+
+
+def test_unmark_no_record():
+    """无记录 → preview blocked / execute error。"""
+    _new_folder("UNMARK_NONE")
+    p = dispatcher_tools._preview_unmark_batch_done(
+        {"folder_name": "UNMARK_NONE"})
+    assert p.get("blocked") is True
+    r = dispatcher_tools._exec_unmark_batch_done({"folder_name": "UNMARK_NONE"})
+    assert "error" in r
+
+
+def test_unmark_real_batch_refused():
+    """真实跑过的批次（有 checkpoint，见 test_start_exec_real_run 的
+    START_REAL1）→ 拒绝取消，提示用 rerun。"""
+    assert batch_store.get_batch("START_REAL1") is not None
+    p = dispatcher_tools._preview_unmark_batch_done(
+        {"folder_name": "START_REAL1"})
+    assert p.get("blocked") is True
+    assert "真实跑过的批次" in p["summary"]
+    r = dispatcher_tools._exec_unmark_batch_done(
+        {"folder_name": "START_REAL1"})
+    assert "error" in r and "rerun" in r["error"]
+    assert batch_store.get_batch("START_REAL1") is not None  # 记录未被误删
+
+
+# ---------------------------------------------------------------------------
+# 6. 快路径
 # ---------------------------------------------------------------------------
 
 def test_fastpath_scan_hit():
@@ -291,7 +337,7 @@ def test_fastpath_start_not_hit():
 
 
 # ---------------------------------------------------------------------------
-# 6. 监控目录 env 键名回归（2026-09-07 事故：写入 YAMATO_WATCH_DIR 死配置，
+# 7. 监控目录 env 键名回归（2026-09-07 事故：写入 YAMATO_WATCH_DIR 死配置，
 #    Settings 无 env_prefix 只认 WATCH_DIR，set_paths 确认后扫描仍报未配置）
 # ---------------------------------------------------------------------------
 

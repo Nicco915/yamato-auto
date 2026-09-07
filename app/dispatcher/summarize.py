@@ -398,7 +398,7 @@ def summarize_applied(tool: str, args: dict | None, result: dict | None) -> dict
             return _sum_generate_declarations(result)
         if tool == "upsert_product_mapping":
             return _sum_upsert_product_mapping(result)
-        if tool == "mark_batch_done":
+        if tool in ("mark_batch_done", "unmark_batch_done"):
             return _sum_mark_batch_done(result)
         return _fallback(tool, result)
     except Exception:  # noqa: BLE001 铁律：摘要失败绝不阻塞执行结果返回
