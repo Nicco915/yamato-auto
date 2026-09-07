@@ -106,6 +106,76 @@ def test_split_declaration_dir_fields():
     assert result2["split"]["declarations_ready"] is True
 
 
+def test_reconcile_stale_batch_status_and_stages():
+    """人工走审核页完成的批次：batches 表 status 滞留 pending_review，
+    get_pipeline_state 应以 checkpoint 为权威源自愈回写为 completed，
+    且提取段阶段全部标 done（对话页「开始分票」按钮依赖 status == "completed"）。"""
+    from app.graph import NODE7, get_graph
+
+    thread_id = "test-reconcile-stale"
+    batch_store.upsert_batch(
+        thread_id=thread_id,
+        watch_dir=str(TMP / "watch4"),
+        folder_name="test4",
+        status="pending_review",   # 建批时写入后无人再更新（事故现场）
+    )
+    # 提取图已跑完：as_node=终端节点 → next 为空 → phase 推导为 export_done
+    graph = get_graph()
+    cfg = {"configurable": {"thread_id": thread_id}}
+    graph.update_state(cfg, {"final_output_path": "/tmp/out.xlsx"}, as_node=NODE7)
+
+    result = pipeline_state.get_pipeline_state(thread_id)
+    assert result["current_phase"] == "export_done"
+    # 返回体与持久层都被校正为 completed（自愈回写）
+    assert result["batch"]["status"] == "completed"
+    assert batch_store.get_batch(thread_id)["status"] == "completed"
+
+    by_name = {s["name"]: s for s in result["stages"]}
+    for name in ("parse_downstream", "folder_router", "extraction",
+                 "compute_align", "human_review", "writer", "export"):
+        assert by_name[name]["status"] == "done", name
+    assert by_name["split_review"]["status"] == "pending"
+    assert by_name["completed"]["status"] == "pending"
+    assert not any(s["status"] == "active" for s in result["stages"])
+
+
+def test_reconcile_synthesizes_batch_when_row_missing():
+    """batches 表无行但 checkpoint 存在：合成最小 batch 信息，状态栏按钮仍可用。"""
+    from app.graph import NODE7, get_graph
+
+    thread_id = "test-reconcile-norow"
+    graph = get_graph()
+    cfg = {"configurable": {"thread_id": thread_id}}
+    graph.update_state(cfg, {"final_output_path": "/tmp/out.xlsx"}, as_node=NODE7)
+
+    result = pipeline_state.get_pipeline_state(thread_id)
+    assert result["exists"] is True
+    assert result["batch"]["status"] == "completed"
+
+
+def test_split_done_all_stages_done():
+    """分票完成（split_done）：全部阶段标 done，batch status 校正为 completed。"""
+    from app.split.graph import NODE5_SPLIT, get_split_graph
+
+    thread_id = "test-split-done-stages"
+    batch_store.upsert_batch(
+        thread_id=thread_id,
+        watch_dir=str(TMP / "watch5"),
+        folder_name="test5",
+        status="running",
+    )
+    graph = get_split_graph()
+    cfg = {"configurable": {"thread_id": f"split-{thread_id}"}}
+    graph.update_state(cfg, {"status": "completed", "proposal": {"tickets": []}},
+                       as_node=NODE5_SPLIT)
+
+    result = pipeline_state.get_pipeline_state(thread_id)
+    assert result["current_phase"] == "split_done"
+    assert result["batch"]["status"] == "completed"
+    assert batch_store.get_batch(thread_id)["status"] == "completed"
+    assert all(s["status"] == "done" for s in result["stages"])
+
+
 if __name__ == "__main__":
     import pytest
 

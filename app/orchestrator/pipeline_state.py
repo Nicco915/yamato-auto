@@ -55,6 +55,28 @@ _STAGES = [
     {"name": "completed", "label": "完成", "needs_action": False},
 ]
 
+# current_phase → batches 表应然状态。
+# batches.status 只在建批与 controller 推进时写入：人工走审核页一路完成的批次
+# （甚至无人工中断直跑完成的批次，建批写的是 "running"）status 永远滞留旧值，
+# 导致对话页状态栏徽章错误、「开始分票」按钮（要求 status == "completed"）不出现。
+# 因此 get_pipeline_state 读时以 checkpoint 推导为权威源自愈回写。
+_PHASE_TO_BATCH_STATUS = {
+    "parse_downstream": "running",
+    "folder_router": "running",
+    "extraction": "running",
+    "compute_align": "running",
+    "human_review": "pending_review",
+    "writer": "running",
+    "export": "running",
+    "export_done": "completed",
+    "split_loading": "running",
+    "split_proposing": "running",
+    "split_review": "split_review",
+    "split_persisting": "running",
+    "split_generating": "running",
+    "split_done": "completed",
+}
+
 
 def _extract_phase(thread_id: str) -> dict[str, Any] | None:
     """读取提取图 checkpoint，返回阶段信息；无 checkpoint 返回 None。"""
@@ -166,12 +188,37 @@ def get_pipeline_state(thread_id: str) -> dict[str, Any]:
     if current_phase == "export_done" and split:
         current_phase = split["phase"] if split["phase"] != "split_done" else "split_generating"
 
+    # ---- batches 表状态自愈：以 checkpoint 推导的阶段为权威源校正滞留的 status ----
+    desired_status = _PHASE_TO_BATCH_STATUS.get(current_phase)
+    if desired_status:
+        if batch is None:
+            # 无 batches 行（旧批次/手动建批）也合成最小信息，让状态栏按钮可用
+            batch = {"thread_id": thread_id, "folder_name": None, "status": desired_status}
+        elif batch.get("status") != desired_status:
+            if batch_store.update_status(thread_id, desired_status):
+                logger.info(
+                    "batch %s 状态自愈: %s -> %s", thread_id, batch.get("status"), desired_status
+                )
+                batch["status"] = desired_status
+
+    # export_done / split_done 不在 _STAGES 里，折算成顺序比较用的位置：
+    # export_done → 提取段全部完成、分票段未开始；split_done → 全部完成
+    if current_phase == "split_done":
+        order_phase = None  # None 表示全部阶段 done
+    elif current_phase == "export_done":
+        order_phase = "split_review"
+    else:
+        order_phase = current_phase
+
     stages = []
     for s in _STAGES:
         stage = dict(s)
-        stage["status"] = "done" if _is_stage_done(stage["name"], current_phase) else (
-            "active" if stage["name"] == current_phase else "pending"
-        )
+        if order_phase is None:
+            stage["status"] = "done"
+        else:
+            stage["status"] = "done" if _is_stage_done(stage["name"], order_phase) else (
+                "active" if stage["name"] == current_phase else "pending"
+            )
         if stage["status"] == "active" and stage.get("needs_action"):
             stage["link_href"] = f"{stage['link']}?thread_id={thread_id}"
         stages.append(stage)
