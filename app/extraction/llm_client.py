@@ -26,7 +26,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
-from openai import APIError, APITimeoutError, OpenAI, RateLimitError
+from openai import (
+    APIConnectionError,
+    APIError,
+    APITimeoutError,
+    OpenAI,
+    RateLimitError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +56,7 @@ DEFAULT_VISION_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
 DEFAULT_TEXT_MODEL = "Qwen/Qwen2.5-72B-Instruct"
 
 REQUEST_TIMEOUT = 300  # 秒
-MAX_API_RETRIES = 3  # 429/5xx 时最多重试 3 次
+MAX_API_RETRIES = 3  # 429/5xx/连接错误时最多重试 3 次
 
 DEBUG_TRUNC_LIMIT = 500  # 请求/响应原文 DEBUG 日志的截断长度
 
@@ -236,8 +242,8 @@ def _get_client() -> OpenAI:
 
 
 def _is_retryable(exc: Exception) -> bool:
-    """429 或 5xx 才重试。"""
-    if isinstance(exc, (RateLimitError, APITimeoutError)):
+    """429、5xx 或连接层错误（代理中断/网络抖动）才重试。"""
+    if isinstance(exc, (RateLimitError, APITimeoutError, APIConnectionError)):
         return True
     if isinstance(exc, APIError):
         status = getattr(exc, "status_code", None)
