@@ -61,6 +61,31 @@ def test_discover_downstream_files():
     assert "ContentsOfTheContainer" in found[0].name
 
 
+def test_discover_downstream_nested():
+    """嵌套结构：批次文件夹/中间层（如 84）/装箱单 → 向下钻一层命中；
+    更深层（第三层）不钻。"""
+    sub = TMP / "batchNested"
+    mid = sub / "84"
+    mid.mkdir(parents=True)
+    _make_xlsx(mid / "ContentsOfTheContainer_002.xlsx")
+    found = discover_downstream_files(sub)
+    assert len(found) == 1
+    assert found[0].parent == mid
+
+    deep = TMP / "batchDeep"
+    (deep / "a" / "b").mkdir(parents=True)
+    _make_xlsx(deep / "a" / "b" / "ContentsOfTheContainer_003.xlsx")
+    assert discover_downstream_files(deep) == []
+
+    # 本层有命中时不钻取（本层优先）
+    flat = TMP / "batchFlat"
+    (flat / "84").mkdir(parents=True)
+    _make_xlsx(flat / "ContentsOfTheContainer_flat.xlsx")
+    _make_xlsx(flat / "84" / "ContentsOfTheContainer_nested.xlsx")
+    found = discover_downstream_files(flat)
+    assert len(found) == 1 and found[0].parent == flat
+
+
 def test_discover_mx2_files():
     sub = TMP / "batchB"
     sub.mkdir()

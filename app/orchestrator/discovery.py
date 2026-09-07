@@ -49,34 +49,62 @@ def _is_downstream_candidate(path: Path) -> bool:
     return any(p.search(name) for p in _DOWNSTREAM_NAME_PATTERNS)
 
 
+def _collect_matching(folder: Path, predicate) -> list[Path]:
+    """枚举 folder 一层（不递归），返回命中 predicate 的文件，按文件名排序。"""
+    hits: list[Path] = []
+    try:
+        for child in folder.iterdir():
+            if predicate(child):
+                hits.append(child)
+    except OSError as exc:
+        logger.warning("枚举子文件夹 %s 失败: %s", folder, exc)
+    return sorted(hits, key=lambda p: p.name)
+
+
 def discover_downstream_files(subfolder: Path) -> list[Path]:
     """在子文件夹内查找候选下游装箱单文件。
 
-    - 只搜索子文件夹本身这一层，不递归；
-    - 返回所有命中特征的文件路径；
+    - 先搜子文件夹本身这一层；
+    - 无命中时向下钻一层：枚举其一级子目录各搜一层
+      （覆盖「批次文件夹/中间层（如 84）/装箱单+工厂文件夹」结构，
+      2026-09-07 生产实测：14 个批次全部是这种嵌套）；
+    - 更深层级不钻（避免误吸无关文件）；
     - 若一个都没有返回空列表。
     """
-    candidates: list[Path] = []
+    candidates = _collect_matching(subfolder, _is_downstream_candidate)
+    if candidates:
+        return candidates
+    drilled: list[Path] = []
     try:
-        for child in subfolder.iterdir():
-            if _is_downstream_candidate(child):
-                candidates.append(child)
+        subdirs = [c for c in subfolder.iterdir() if c.is_dir()]
     except OSError as exc:
         logger.warning("枚举子文件夹 %s 失败: %s", subfolder, exc)
-    return sorted(candidates, key=lambda p: p.name)
+        return []
+    for child in sorted(subdirs, key=lambda p: p.name):
+        drilled.extend(_collect_matching(child, _is_downstream_candidate))
+    return sorted(drilled, key=lambda p: p.name)
 
 
 def discover_mx2_files(subfolder: Path) -> list[Path]:
-    """在子文件夹内查找 MX2 入荷予定リスト文件（仅检测，不写入）。"""
-    candidates: list[Path] = []
+    """在子文件夹内查找 MX2 入荷予定リスト文件（仅检测，不写入）。
+
+    与 discover_downstream_files 同样的两层探测（本层无命中再钻一层）。"""
+    def _is_mx2(p: Path) -> bool:
+        return (p.is_file() and bool(_MX2_NAME_PATTERN.search(p.name))
+                and p.suffix.lower() in (".xlsx", ".xls"))
+
+    candidates = _collect_matching(subfolder, _is_mx2)
+    if candidates:
+        return candidates
+    drilled: list[Path] = []
     try:
-        for child in subfolder.iterdir():
-            if child.is_file() and _MX2_NAME_PATTERN.search(child.name) \
-                    and child.suffix.lower() in (".xlsx", ".xls"):
-                candidates.append(child)
+        subdirs = [c for c in subfolder.iterdir() if c.is_dir()]
     except OSError as exc:
         logger.warning("枚举子文件夹 %s 失败: %s", subfolder, exc)
-    return sorted(candidates, key=lambda p: p.name)
+        return []
+    for child in sorted(subdirs, key=lambda p: p.name):
+        drilled.extend(_collect_matching(child, _is_mx2))
+    return sorted(drilled, key=lambda p: p.name)
 
 
 def scan_new_batches(

@@ -131,7 +131,22 @@ def test_start_preview_ok():
     text = "\n".join(p["lines"])
     assert "START_OK1" in text
     assert "自动匹配" in text           # 唯一下游表自动命中
-    assert "默认=子文件夹本身" in text    # 上游默认
+    assert "默认=装箱单所在目录" in text  # 平铺结构：装箱单父目录=子文件夹本身
+
+
+def test_start_preview_nested():
+    """嵌套结构（批次文件夹/中间层/装箱单）：向下一层钻取命中，
+    上游默认=中间层目录（与工厂文件夹同层）。"""
+    sub = _WATCH / "START_NEST1"
+    mid = sub / "84"
+    mid.mkdir(parents=True)
+    _make_xlsx(mid / "ContentsOfTheContainer.xlsx")
+    p = dispatcher_tools._preview_start_scanned_batch(
+        {"folder_name": "START_NEST1"})
+    assert not p.get("blocked"), f"不应 blocked: {p}"
+    text = "\n".join(p["lines"])
+    assert "自动匹配" in text
+    assert f"上游工厂文件夹: {mid}" in text  # 默认=装箱单所在目录（84 层）
 
 
 def test_start_preview_missing_folder():
@@ -205,13 +220,13 @@ def test_start_exec_value_error(monkeypatch):
 
 
 def test_start_exec_real_run(monkeypatch):
-    """真实路径走通：监控目录子文件夹（含最小装箱单 + 工厂子目录）→
-    mock 提取跑图到挂起，批次记录落库，再扫描该文件夹消失。"""
+    """真实路径走通（嵌套结构）：监控目录/批次文件夹/84/装箱单+工厂A →
+    mock 提取跑图到挂起，批次记录落库（upstream=84 层），扫描跳过。"""
     _force_mock_extraction(monkeypatch)
     sub = _WATCH / "START_REAL1"
-    sub.mkdir(parents=True, exist_ok=True)
-    (sub / "工厂A").mkdir()   # 上游=子文件夹本身，工厂目录在其中
-    _make_xlsx(sub / "ContentsOfTheContainer.xlsx",
+    mid = sub / "84"
+    (mid / "工厂A").mkdir(parents=True)
+    _make_xlsx(mid / "ContentsOfTheContainer.xlsx",
                [("工厂A", "SKU-A1", "测试品A", 10)])
 
     r = dispatcher_tools._exec_start_scanned_batch({"folder_name": "START_REAL1"})
@@ -222,6 +237,7 @@ def test_start_exec_real_run(monkeypatch):
     rec = batch_store.get_batch("START_REAL1")
     assert rec is not None and rec["folder_name"] == "START_REAL1"
     assert rec["watch_dir"] == str(_WATCH)
+    assert rec["upstream_root"] == str(mid)  # 上游根=装箱单所在目录（嵌套层）
 
     names = {c["folder_name"]
              for c in dispatcher_tools._fn_scan_new_batches({})["candidates"]}
@@ -236,7 +252,8 @@ def test_mark_done_preview_ok():
     _new_folder("MARK_OK1")
     p = dispatcher_tools._preview_mark_batch_done({"folder_name": "MARK_OK1"})
     assert not p.get("blocked"), f"不应 blocked: {p}"
-    assert "MARK_OK1" in p["summary"]
+    assert "1 个" in p["summary"]
+    assert any("MARK_OK1" in l for l in p["lines"])
 
 
 def test_mark_done_preview_missing_folder():
@@ -254,20 +271,87 @@ def test_mark_done_exec_and_scan_skip():
     r = dispatcher_tools._exec_mark_batch_done({"folder_name": "MARK_EXEC1"})
     assert "error" not in r, f"执行失败: {r}"
     assert r["status"] == "completed"
+    assert r["marked"] == ["MARK_EXEC1"]
 
     rec = batch_store.get_batch("MARK_EXEC1")
     assert rec is not None
     assert rec["status"] == "completed"
     assert rec["completed_at"] is not None
 
-    # 标记后扫描跳过；重复标记 → preview blocked / execute error
+    # 标记后扫描跳过；重复标记 → preview blocked / execute 幂等跳过
     names = {c["folder_name"]
              for c in dispatcher_tools._fn_scan_new_batches({})["candidates"]}
     assert "MARK_EXEC1" not in names
     p = dispatcher_tools._preview_mark_batch_done({"folder_name": "MARK_EXEC1"})
     assert p.get("blocked") is True
     r2 = dispatcher_tools._exec_mark_batch_done({"folder_name": "MARK_EXEC1"})
-    assert "error" in r2
+    assert "error" not in r2 and r2["skipped"] == ["MARK_EXEC1"]
+
+
+def test_mark_done_batch():
+    """批量标记：folder_names 一次多个；已有记录的自动跳过；
+    不存在的文件夹 preview blocked。"""
+    _new_folder("BATCH_M1")
+    _new_folder("BATCH_M2")
+    _new_folder("BATCH_M3")
+    batch_store.upsert_batch("BATCH_M3", watch_dir=str(_WATCH),
+                             folder_name="BATCH_M3", status="completed")
+
+    p = dispatcher_tools._preview_mark_batch_done(
+        {"folder_names": ["BATCH_M1", "BATCH_M2", "BATCH_M3"]})
+    assert not p.get("blocked"), f"不应 blocked: {p}"
+    assert "2 个" in p["summary"]           # M3 已有记录被跳过
+    assert any("BATCH_M3" in l and "跳过" in l for l in p["lines"])
+
+    r = dispatcher_tools._exec_mark_batch_done(
+        {"folder_names": ["BATCH_M1", "BATCH_M2", "BATCH_M3"]})
+    assert "error" not in r, f"执行失败: {r}"
+    assert sorted(r["marked"]) == ["BATCH_M1", "BATCH_M2"]
+    assert r["skipped"] == ["BATCH_M3"]
+    for n in ("BATCH_M1", "BATCH_M2"):
+        rec = batch_store.get_batch(n)
+        assert rec is not None and rec["status"] == "completed"
+
+    # 单个与批量合并传参 + 去重
+    r2 = dispatcher_tools._exec_mark_batch_done(
+        {"folder_name": "BATCH_M1", "folder_names": ["BATCH_M1", "BATCH_M2"]})
+    assert r2["marked"] == [] and sorted(r2["skipped"]) == ["BATCH_M1", "BATCH_M2"]
+
+
+def test_mark_done_batch_missing_blocked():
+    """批量里有不存在的文件夹 → 整批 blocked 不出确认卡。"""
+    _new_folder("BATCH_X1")
+    p = dispatcher_tools._preview_mark_batch_done(
+        {"folder_names": ["BATCH_X1", "BATCH_NOPE"]})
+    assert p.get("blocked") is True
+    assert "BATCH_NOPE" in p["lines"][0]
+
+
+# ---------------------------------------------------------------------------
+# 4b. watch_overview（监控目录总览三档）
+# ---------------------------------------------------------------------------
+
+def test_watch_overview():
+    _new_folder("OV_NEW1")
+    _new_folder("OV_DONE1")
+    _new_folder("OV_PROG1")
+    batch_store.upsert_batch("OV_DONE1", watch_dir=str(_WATCH),
+                             folder_name="OV_DONE1", status="completed")
+    batch_store.upsert_batch("OV_PROG1", watch_dir=str(_WATCH),
+                             folder_name="OV_PROG1", status="running")
+
+    r = dispatcher_tools._fn_watch_overview({})
+    assert "error" not in r
+    done_names = {d["folder_name"] for d in r["done"]}
+    prog_names = {d["folder_name"] for d in r["in_progress"]}
+    cand_names = {c["folder_name"] for c in r["candidates"]}
+    assert "OV_DONE1" in done_names
+    assert "OV_PROG1" in prog_names
+    assert "OV_NEW1" in cand_names
+    assert "OV_DONE1" not in cand_names
+    # 候选档附装箱单探测
+    cand = next(c for c in r["candidates"] if c["folder_name"] == "OV_NEW1")
+    assert cand["has_content"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +418,15 @@ def test_fastpath_start_not_hit():
     """「启动新批次」是写意图，不落快路径，交给 LLM 走确认门。"""
     assert fastpath.try_fastpath("启动新批次") is None
     assert fastpath.try_fastpath("把 XD430 标记为已完成") is None
+
+
+def test_fastpath_watch_overview():
+    r = fastpath.try_fastpath("监控目录下全部批次情况")
+    assert r is not None and r["tool"] == "watch_overview"
+    assert "已完成" in r["message"] and "未执行" in r["message"]
+    # 监控目录语境外的「全部批次」仍走批次列表（checkpoint 视角）
+    r2 = fastpath.try_fastpath("看看全部批次")
+    assert r2 is None or r2["tool"] == "list_batches"
 
 
 # ---------------------------------------------------------------------------

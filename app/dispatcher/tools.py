@@ -400,6 +400,50 @@ def _fn_scan_new_batches(args: dict) -> dict:
         return _err(e)
 
 
+def _fn_watch_overview(args: dict) -> dict:
+    """监控目录总览：全部子文件夹 × batches 表合并分三档。
+
+    - done：已有批次记录且 status=completed（真实跑完或人工标记完成）；
+    - in_progress：有批次记录但未完成（running/pending_review/error 等）；
+    - candidates：无记录（未执行），附装箱单探测结果（含向下一层钻取）。
+    """
+    try:
+        settings = get_settings()
+        if not settings.watch_dir:
+            return {"watch_dir": None,
+                    "message": "监控目录未配置，请先设置监控目录"}
+        watch_path = Path(settings.watch_dir).expanduser()
+        if not watch_path.is_dir():
+            return {"watch_dir": settings.watch_dir,
+                    "message": f"监控目录不存在: {settings.watch_dir}"}
+        records = {b["thread_id"]: b for b in batch_store.list_batches()}
+        done: list[dict] = []
+        in_progress: list[dict] = []
+        candidates: list[dict] = []
+        for child in sorted(watch_path.iterdir(), key=lambda p: p.name):
+            if not child.is_dir():
+                continue
+            rec = records.get(child.name)
+            if rec is not None and rec.get("status") == "completed":
+                done.append({"folder_name": child.name,
+                             "completed_at": rec.get("completed_at")})
+            elif rec is not None:
+                in_progress.append({"folder_name": child.name,
+                                    "status": rec.get("status")})
+            else:
+                candidates.append({
+                    "folder_name": child.name,
+                    "has_content": bool(
+                        discovery.discover_downstream_files(child)),
+                })
+        return {"watch_dir": settings.watch_dir,
+                "total": len(done) + len(in_progress) + len(candidates),
+                "done": done, "in_progress": in_progress,
+                "candidates": candidates}
+    except Exception as e:  # noqa: BLE001 工具层绝不抛出
+        return _err(e)
+
+
 def _ask_guide_wrapper(args: dict) -> dict:
     """操作指导问答（延迟 import guide.py，guide.py 可能尚未实现）。"""
     try:
@@ -1057,8 +1101,10 @@ def _preview_start_scanned_batch(args: dict,
             warnings.append(f"thread_id 已有 checkpoint，确认后执行会报重名错误: {tid}")
         warnings = _merge_pinned_warning(args, session_id, warnings)
 
-        # 下游装箱单：显式指定 > 自动匹配（唯一命中才放行）
+        # 下游装箱单：显式指定 > 自动匹配（唯一命中才放行；探测含向下一层
+        # 钻取，覆盖「批次文件夹/中间层/装箱单」嵌套结构）
         downstream = (args.get("downstream_file_path") or "").strip()
+        auto_downstream: Path | None = None
         if downstream:
             if not Path(downstream).expanduser().is_file():
                 warnings.append(f"指定的下游装箱单不存在或不是文件: {downstream}")
@@ -1066,6 +1112,7 @@ def _preview_start_scanned_batch(args: dict,
         else:
             candidates = discovery.discover_downstream_files(subfolder)
             if len(candidates) == 1:
+                auto_downstream = candidates[0]
                 lines.append(f"下游装箱单: {candidates[0].name}（自动匹配）")
             elif len(candidates) > 1:
                 return _preview(
@@ -1076,7 +1123,8 @@ def _preview_start_scanned_batch(args: dict,
             else:
                 return _preview(
                     "未找到下游装箱单",
-                    [f"文件夹 {folder_name} 内没有 ContentsOfTheContainer 类文件"],
+                    [f"文件夹 {folder_name} 内（含下一层子目录）"
+                     "没有 ContentsOfTheContainer 类文件"],
                     ["请确认文件已放入该文件夹，或用 downstream_file_path 显式指定"],
                     blocked=True)
 
@@ -1085,6 +1133,11 @@ def _preview_start_scanned_batch(args: dict,
             if not Path(upstream).expanduser().is_dir():
                 warnings.append(f"指定的上游工厂文件夹不存在或不是目录: {upstream}")
             lines.append(f"上游工厂文件夹: {upstream}（指定）")
+        elif auto_downstream is not None:
+            # 自动匹配命中：装箱单与工厂文件夹同层，父目录即上游根
+            # （平铺结构=子文件夹本身；嵌套结构=中间层目录）
+            lines.append(f"上游工厂文件夹: {auto_downstream.parent}"
+                         "（默认=装箱单所在目录）")
         else:
             lines.append(f"上游工厂文件夹: {subfolder}（默认=子文件夹本身）")
 
@@ -1124,43 +1177,69 @@ def _exec_start_scanned_batch(args: dict,
         return _err(e)
 
 
+def _resolve_folder_names(args: dict) -> tuple[list[str], str | None]:
+    """folder_name / folder_names 合并去重（保序）。返回 (名单, 错误|None)。"""
+    names: list[str] = []
+    single = (args.get("folder_name") or "").strip()
+    if single:
+        names.append(single)
+    for n in args.get("folder_names") or []:
+        if isinstance(n, str) and n.strip() and n.strip() not in names:
+            names.append(n.strip())
+    if not names:
+        return [], "folder_name / folder_names 至少给一个"
+    return names, None
+
+
 def _preview_mark_batch_done(args: dict,
                              session_id: str | None = None) -> dict:
-    """mark_batch_done 预览：校验文件夹在监控目录下存在且尚无批次记录。
+    """mark_batch_done 预览：校验文件夹在监控目录下存在且尚无批次记录，
+    支持 folder_names 批量（一张确认卡确认全部，一次一确认铁律不破）。
 
     用于把「监控流程之外已完成」的历史文件夹标记为已完成，使扫描跳过。
     批次号必须等于文件夹名原文（扫描去重是文件夹名直接比对 thread_id）。"""
     try:
-        folder_name = (args.get("folder_name") or "").strip()
-        if not folder_name:
-            return _preview("参数缺失", [], ["folder_name 不能为空"],
-                            blocked=True)
+        names, err = _resolve_folder_names(args)
+        if err:
+            return _preview("参数缺失", [], [err], blocked=True)
         settings = get_settings()
         if not settings.watch_dir:
             return _preview("监控目录未配置", [],
                             ["请先用 set_paths 设置监控目录（watch_dir）"],
                             blocked=True)
-        subfolder = Path(settings.watch_dir).expanduser() / folder_name
-        if not subfolder.is_dir():
+        watch_path = Path(settings.watch_dir).expanduser()
+
+        to_mark: list[str] = []
+        missing: list[str] = []
+        skipped: list[str] = []
+        for name in names:
+            if not (watch_path / name).is_dir():
+                missing.append(name)
+            elif batch_store.get_batch(name) is not None:
+                skipped.append(name)
+            else:
+                to_mark.append(name)
+
+        if missing:
             return _preview(
-                "子文件夹不存在",
-                [f"监控目录下没有找到文件夹: {folder_name}"],
-                ["标记对象必须是监控目录下现存的文件夹"],
+                "部分文件夹不存在",
+                [f"监控目录下没有找到: {'、'.join(missing)}"],
+                ["请核对文件夹名（可先 scan_new_batches / watch_overview 查看）"],
                 blocked=True)
-        existing = batch_store.get_batch(folder_name)
-        if existing is not None:
+        if not to_mark:
             return _preview(
                 "无需标记",
-                [f"文件夹 {folder_name} 已有批次记录"
-                 f"（状态: {existing.get('status')}），扫描本就会跳过它"],
+                [f"以下文件夹已有批次记录，扫描本就会跳过: {'、'.join(skipped)}"],
                 [], blocked=True)
-        lines = [
-            f"文件夹: {folder_name}",
-            "将写入一条「已完成」批次记录（批次号 = 文件夹名）",
-            "效果：之后扫描新批次时该文件夹不再出现",
-            "不改动文件夹内任何文件，也不影响其他批次",
-        ]
-        return _preview(f"将历史文件夹 {folder_name} 标记为已完成", lines, [])
+
+        lines = ["将写入「已完成」批次记录（批次号 = 文件夹名）:"]
+        lines += [f"  {n}" for n in to_mark]
+        if skipped:
+            lines.append(f"已有记录自动跳过: {'、'.join(skipped)}")
+        lines.append("效果：之后扫描新批次时这些文件夹不再出现")
+        lines.append("不改动文件夹内任何文件，也不影响其他批次")
+        return _preview(
+            f"将 {len(to_mark)} 个历史文件夹标记为已完成", lines, [])
     except Exception as e:  # noqa: BLE001
         return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
 
@@ -1168,31 +1247,48 @@ def _preview_mark_batch_done(args: dict,
 def _exec_mark_batch_done(args: dict,
                           on_progress: Callable[[dict], None] | None = None
                           ) -> dict:
-    """mark_batch_done 执行：二次校验后写入 status=completed 的批次记录。
+    """mark_batch_done 执行：二次校验后逐个写入 status=completed 批次记录。
 
     thread_id 取 folder_name 原文（与扫描去重口径一致）；upsert 后补
-    update_status 以填充 completed_at。只写 batches 表元数据，不动文件。"""
+    update_status 以填充 completed_at。只写 batches 表元数据，不动文件。
+    批量容错：文件夹在确认后被移走 → 记入 failed 不阻断其余。"""
     try:
-        folder_name = (args.get("folder_name") or "").strip()
-        if not folder_name:
-            return {"error": "folder_name 不能为空"}
-        if batch_store.get_batch(folder_name) is not None:
-            return {"error": f"文件夹 {folder_name} 已存在批次记录，无需标记"}
+        names, err = _resolve_folder_names(args)
+        if err:
+            return {"error": err}
         settings = get_settings()
         watch = (str(Path(settings.watch_dir).expanduser())
                  if settings.watch_dir else None)
-        ok = batch_store.upsert_batch(
-            folder_name,
-            watch_dir=watch,
-            folder_name=folder_name,
-            status="completed",
-        )
-        if not ok:
-            return {"error": "写入批次记录失败（详见服务端日志）"}
-        batch_store.update_status(folder_name, "completed")  # 填充 completed_at
-        return {"thread_id": folder_name, "folder_name": folder_name,
-                "status": "completed",
-                "message": f"已将 {folder_name} 标记为已完成，之后扫描会自动跳过"}
+        watch_path = Path(watch) if watch else None
+
+        marked: list[str] = []
+        skipped: list[str] = []
+        failed: list[str] = []
+        for name in names:
+            if watch_path is not None and not (watch_path / name).is_dir():
+                failed.append(name)
+                continue
+            if batch_store.get_batch(name) is not None:
+                skipped.append(name)
+                continue
+            ok = batch_store.upsert_batch(
+                name, watch_dir=watch, folder_name=name, status="completed")
+            if not ok:
+                failed.append(name)
+                continue
+            batch_store.update_status(name, "completed")  # 填充 completed_at
+            marked.append(name)
+
+        if not marked and failed:
+            return {"error": f"全部标记失败（文件夹不存在或写入失败）: "
+                             f"{'、'.join(failed)}"}
+        parts = [f"已将 {len(marked)} 个文件夹标记为已完成，之后扫描会自动跳过"]
+        if skipped:
+            parts.append(f"{len(skipped)} 个已有记录被跳过")
+        if failed:
+            parts.append(f"{len(failed)} 个失败: {'、'.join(failed)}")
+        return {"marked": marked, "skipped": skipped, "failed": failed,
+                "status": "completed", "message": "；".join(parts)}
     except Exception as e:  # noqa: BLE001
         return _err(e)
 
@@ -3409,6 +3505,18 @@ TOOLS: dict[str, Tool] = {
         risk="read",
         func=_fn_scan_new_batches,
     ),
+    "watch_overview": Tool(
+        name="watch_overview",
+        description="监控目录总览：全部子文件夹按「已完成 / 进行中 / 未执行候选」"
+                    "三档列出，未执行档附装箱单探测结果。"
+                    "操作员问「监控目录下全部批次情况」「监控目录总览」"
+                    "「哪些做完了哪些没做」时使用。"
+                    "与 scan_new_batches 的分工：scan 只列未执行候选；"
+                    "本工具给全量三档视图。",
+        parameters={"type": "object", "properties": {}},
+        risk="read",
+        func=_fn_watch_overview,
+    ),
 
     # ---- UI 交互工具（risk="ui"，由前端渲染交互组件）----
     "request_file_selection": Tool(
@@ -3591,21 +3699,29 @@ TOOLS: dict[str, Tool] = {
     ),
     "mark_batch_done": Tool(
         name="mark_batch_done",
-        description="把监控目录下一个「监控流程之外已完成」的历史文件夹标记为已完成，"
-                    "使之后扫描新批次时不再列出它。"
+        description="把监控目录下「监控流程之外已完成」的历史文件夹标记为已完成，"
+                    "使之后扫描新批次时不再列出它们。"
                     "操作员说「把 XX 标记为已完成」「XX 已经做完了别让扫描再看到」时使用。"
-                    "只写入一条批次元数据记录（批次号=文件夹名，状态=已完成），"
+                    "支持批量：操作员一次给多个文件夹（或「除了…以外全部」这类排除式"
+                    "指令——先 scan_new_batches 拿候选全集，扣掉排除项后一次性传入"
+                    "folder_names），一张确认卡确认全部，不要分多次调用。"
+                    "只写入批次元数据记录（批次号=文件夹名，状态=已完成），"
                     "不改动文件夹内任何文件。"
-                    "写操作：preview 展示将写入的记录与效果说明，确认后才执行。",
+                    "写操作：preview 展示将标记的文件夹清单，确认后才执行。",
         parameters={
             "type": "object",
             "properties": {
                 "folder_name": {
                     "type": "string",
-                    "description": "监控目录下要标记为已完成的子文件夹名",
+                    "description": "单个：监控目录下要标记为已完成的子文件夹名",
+                },
+                "folder_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "批量：多个子文件夹名（与 folder_name 二选一或合并，"
+                                   "批量场景优先用这个一次传全）",
                 },
             },
-            "required": ["folder_name"],
         },
         risk="write",
         preview=_preview_mark_batch_done,

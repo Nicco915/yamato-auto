@@ -87,6 +87,15 @@ _SCAN_RE = re.compile(
     r"|^(?:有没有|有)新批次(?:吗)?$"
     r"|^监控目录(?:里|里面)?(?:有什么|有什么新批次|有没有新批次)$"
 )
+
+# ---- 监控目录总览句式（已完成/进行中/未执行 三档全量）----
+# 必须带「监控目录」字样——「全部批次情况」走 _BATCH_LIST_RE（checkpoint 视角）
+_WATCH_OVERVIEW_RE = re.compile(
+    r"^(?:看看|查看|查询|查)(?:一下)?监控目录(?:下|里|里面)?的?"
+    r"(?:全部|所有)?批次(?:的)?(?:情况|总览|概况)?$"
+    r"|^监控目录(?:下|里|里面)?的?(?:全部|所有)批次(?:的)?(?:情况|总览|概况)$"
+    r"|^监控目录(?:的)?(?:总览|概况|整体情况)$"
+)
 # 批次号提取的排除词（别把句式里的关键词当批次号）
 _NOT_BATCH_ID = {"批次", "批号", "所有", "全部", "当前", "目前", "状态",
                  "进度", "情况"}
@@ -235,6 +244,41 @@ def _fmt_scan(result: dict) -> str:
     return "\n".join(lines)
 
 
+def _fmt_watch_overview(result: dict) -> str:
+    """监控目录总览 → 自然语言三档清单（纯文字，不含内部路径）。"""
+    if result.get("message"):
+        return str(result["message"])
+    done = result.get("done") or []
+    in_progress = result.get("in_progress") or []
+    candidates = result.get("candidates") or []
+    total = result.get("total", len(done) + len(in_progress) + len(candidates))
+    if not total:
+        return "监控目录下没有任何文件夹。"
+
+    def _names(items, key="folder_name", limit=30):
+        names = [str(i[key]) for i in items]
+        if len(names) > limit:
+            return "、".join(names[:limit]) + f"……等共 {len(names)} 个"
+        return "、".join(names)
+
+    lines = [f"监控目录共 {total} 个文件夹："]
+    if done:
+        lines.append(f"已完成 {len(done)} 个：{_names(done)}")
+    if in_progress:
+        lines.append(
+            f"进行中 {len(in_progress)} 个："
+            + "、".join(f"{i['folder_name']}（{_STATUS_CN.get(i.get('status'), i.get('status') or '未知')}）"
+                        for i in in_progress))
+    if candidates:
+        no_content = [c["folder_name"] for c in candidates
+                      if not c.get("has_content")]
+        lines.append(f"未执行 {len(candidates)} 个：{_names(candidates)}")
+        if no_content:
+            lines.append(f"其中 {len(no_content)} 个未找到装箱单："
+                         + "、".join(str(n) for n in no_content[:30]))
+    return "\n".join(lines)
+
+
 def try_fastpath(message: str) -> dict | None:
     """命中快路径意图 → {"tool", "args", "message"}；否则 None。
 
@@ -270,6 +314,14 @@ def try_fastpath(message: str) -> dict | None:
             return None
         return {"tool": "scan_new_batches", "args": {},
                 "message": _fmt_scan(result)}
+
+    if _WATCH_OVERVIEW_RE.match(norm):
+        result = TOOLS["watch_overview"].func({})
+        if result.get("error"):
+            logger.warning("[快路径] watch_overview 执行失败：%s", result["error"])
+            return None
+        return {"tool": "watch_overview", "args": {},
+                "message": _fmt_watch_overview(result)}
 
     health_id = _extract_health_batch_id(norm)
     if health_id:

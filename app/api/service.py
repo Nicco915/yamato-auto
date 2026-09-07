@@ -2618,8 +2618,14 @@ def start_batch_from_scan(
         else:
             raise ValueError(f"子文件夹 {folder_name} 中未找到 ContentsOfTheContainer 文件")
 
-    # 上游根：用户显式指定 > 用子文件夹本身
-    upstream = upstream_root or str(subfolder)
+    # 上游根：用户显式指定 > 自动匹配装箱单所在目录（嵌套结构 XD…/84/ 下
+    # 装箱单与工厂文件夹同层，父目录即上游根）> 显式装箱单时退回子文件夹
+    if upstream_root:
+        upstream = upstream_root
+    elif not downstream_file_path:
+        upstream = str(Path(downstream).parent)
+    else:
+        upstream = str(subfolder)
 
     tid = (thread_id or folder_name).strip()
     if not tid:
