@@ -52,7 +52,7 @@ from typing import Annotated, Callable, Literal, Optional
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool, InjectedToolCallId, StructuredTool
 from langgraph.types import Command
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field, create_model, model_validator
 
 from app.dispatcher import debug_log, sessions
 from app.dispatcher.sessions import DispatcherSession
@@ -146,6 +146,34 @@ def _schema_to_fields(schema: dict) -> dict:
     return fields
 
 
+def _make_json_string_coercer(schema: dict):
+    """生成 before-validator：LLM 把 array/object 参数序列化成 JSON 字符串
+    传来时（qwen 系常见，如 folder_names='["A","B"]'），先 json.loads 还原
+    再进字段校验；还原失败/非字符串原样放行（交给正常校验报错）。"""
+    props = (schema or {}).get("properties") or {}
+    complex_keys = frozenset(
+        k for k, p in props.items()
+        if isinstance(p, dict) and p.get("type") in ("array", "object"))
+
+    def _coerce(cls, data):  # noqa: ANN001, ANN202 pydantic before-validator
+        if not complex_keys or not isinstance(data, dict):
+            return data
+        data = dict(data)
+        for key in complex_keys:
+            value = data.get(key)
+            if not isinstance(value, str):
+                continue
+            try:
+                parsed = json.loads(value)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(parsed, (list, dict)):
+                data[key] = parsed
+        return data
+
+    return model_validator(mode="before")(_coerce)
+
+
 def _json_schema_to_model(tool_name: str, schema: dict,
                           extra_fields: dict | None = None) -> type[BaseModel]:
     """用 pydantic create_model 把注册表 parameters 动态转成 args_schema。
@@ -157,7 +185,10 @@ def _json_schema_to_model(tool_name: str, schema: dict,
     fields = _schema_to_fields(schema)
     if extra_fields:
         fields.update(extra_fields)
-    return create_model(f"dispatcher_{tool_name}_args", **fields)
+    return create_model(
+        f"dispatcher_{tool_name}_args",
+        __validators__={"_coerce_json_strings": _make_json_string_coercer(schema)},
+        **fields)
 
 
 # ---------------------------------------------------------------------------

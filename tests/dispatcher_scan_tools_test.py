@@ -429,6 +429,27 @@ def test_fastpath_watch_overview():
     assert r2 is None or r2["tool"] == "list_batches"
 
 
+def test_folder_names_json_string_coerced():
+    """LLM 把数组序列化成 JSON 字符串传参（qwen 系生产实测）→
+    args_schema 层自动还原为 list，不再校验报错。"""
+    from app.dispatcher.lc_tools import _json_schema_to_model
+    model = _json_schema_to_model(
+        "mark_batch_done",
+        dispatcher_tools.TOOLS["mark_batch_done"].parameters)
+    m = model.model_validate(
+        {"folder_names": '["XD427-ETD0117", "XD428-ETD0207"]'})
+    assert m.folder_names == ["XD427-ETD0117", "XD428-ETD0207"]
+    # 真数组不受影响；非法字符串仍按原样报错
+    m2 = model.model_validate({"folder_names": ["A"]})
+    assert m2.folder_names == ["A"]
+    import pydantic
+    try:
+        model.model_validate({"folder_names": "不是JSON"})
+        raise AssertionError("非法字符串应校验失败")
+    except pydantic.ValidationError:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # 7. 监控目录 env 键名回归（2026-09-07 事故：写入 YAMATO_WATCH_DIR 死配置，
 #    Settings 无 env_prefix 只认 WATCH_DIR，set_paths 确认后扫描仍报未配置）
