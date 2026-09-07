@@ -196,8 +196,11 @@
     <div id="doc-toolbar">
       <span>单据:</span>
       <select id="doc-select" onchange="onDocSelect(this.value)"></select>
+      <button id="btn-pick-doc" onclick="openDocPicker()" title="从工厂文件夹（或其他目录）手动选择一份单据：左侧预览后点「重新识别」直接提取它，跳过自动匹配">选择单据…</button>
       <button id="btn-open-local" onclick="openLocalDoc()" title="用本机默认程序打开当前单据" disabled>打开</button>
       <button id="btn-reextract" onclick="reextractDoc()" title="强制重新识别当前单据，结果合并到右侧卡片" disabled>重新识别</button>
+      <span id="doc-manual-tag" style="display:none;font-size:12px;color:#b45309;background:#fef3c7;border-radius:4px;padding:2px 8px"
+            title="当前预览是手动选择的文件，右侧数据尚未来自它；确认内容后点「重新识别」提取">手动单据 · 未识别</span>
       <span class="pager" id="pager" style="display:none">
         <button onclick="gotoPage(curPage-1)">◀</button>
         <span id="page-info">1 / 1</span>
@@ -255,6 +258,26 @@
   </div>
 </div>
 
+<!-- 手动选择单据弹窗：起始位置为工厂所在目录，选中后左屏预览 + 重提直提 -->
+<div id="docpick-modal" class="modal-mask" style="display:none"
+     onclick="if(event.target===this)closeDocPicker()">
+  <div class="modal-card" style="width:620px;max-height:82vh;display:flex;flex-direction:column">
+    <h3>选择要识别的单据</h3>
+    <div style="font-size:12px;color:#6b7280;margin-bottom:6px">
+      仅列出可识别的单据类型（Excel / PDF / Word / 图片）；选中后左侧预览，点「重新识别」直接提取该文件
+    </div>
+    <div style="font-size:13px;border-bottom:1px solid #e5e7eb;padding-bottom:6px">
+      <span id="docpick-path" class="mono" style="word-break:break-all"></span>
+      <button id="docpick-up" onclick="docPickUp()" style="margin-left:8px;padding:2px 8px;font-size:12px">⬆ 上级</button>
+    </div>
+    <div id="docpick-drives" style="display:none;padding:6px 0;border-bottom:1px solid #e5e7eb"></div>
+    <div id="docpick-entries" style="flex:1;overflow-y:auto;min-height:220px"></div>
+    <div class="modal-btns">
+      <button onclick="closeDocPicker()">取消</button>
+    </div>
+  </div>
+</div>
+
 <script>
 "use strict";
 /* ================= 全局状态 ================= */
@@ -268,6 +291,7 @@ let seenIdx = new Set();   // selectCard 记录过的卡片下标（"逐条过�
 let searchMatches = [];    // 当前搜索命中的卡片下标
 let selectedIdx = 0;
 let curDoc = null;         // 当前左屏文件路径
+let manualDocs = [];       // 手动选择加入的单据（未转正前不在 payload.source_documents）
 let curPage = 1, pageCount = 1;
 let factoryList = [];      // 当前批次所有工厂 [{factory, role}]
 let currentFactoryIndex = -1;  // 当前工厂在 factoryList 中的索引
@@ -932,18 +956,116 @@ function refreshSubmitState() {
 /* ================= 左屏查看器 ================= */
 function renderDocSelect() {
   const sel = $("doc-select");
+  const prev = sel.value;
   sel.innerHTML = "";
   (payload.source_documents || []).forEach((p) => {
     const opt = document.createElement("option");
     opt.value = p; opt.textContent = baseName(p);
     sel.appendChild(opt);
   });
+  // 手动选择加入的单据（尚未重提转正）追加在列表尾部，标「手动」
+  manualDocs.filter((p) => !(payload.source_documents || []).includes(p))
+    .forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p; opt.textContent = baseName(p) + "（手动）";
+      sel.appendChild(opt);
+    });
+  if (prev) sel.value = prev;
 }
 
 function onDocSelect(path) {
   // 手动切换单据：带上当前选中 SKU 尝试高亮（未选中/不可搜索则普通浏览）
   const sku = (items[selectedIdx] && items[selectedIdx].sku) || "";
   applySkuHit(path, sku);
+}
+
+/* ================= 手动选择单据（特殊解决办法：跳过文件夹匹配/找箱单） =================
+   起始位置为当前工厂所在目录（payload.folder_path），选中后左屏预览 +
+   「打开」可用，点「重新识别」直接提取该文件（复用既有 reextract 端点，
+   后端只做白名单校验，不过文件夹匹配）。 */
+const DOC_PICK_EXTS = "xlsx,xlsm,xls,csv,pdf,doc,docx,jpg,jpeg,png";
+let _docPickPath = null;
+
+function openDocPicker() {
+  $("docpick-modal").style.display = "flex";
+  const start = (payload && payload.folder_path) || null;
+  docPickLoad(start);
+}
+function closeDocPicker() { $("docpick-modal").style.display = "none"; }
+
+async function docPickLoad(path) {
+  const params = new URLSearchParams({ type: "file", extensions: DOC_PICK_EXTS });
+  if (path) params.set("path", path);
+  try {
+    const r = await fetch("/api/v1/files/browse?" + params);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
+    _docPickPath = data.current_path;
+    $("docpick-path").textContent = data.current_path || "请选择盘符";
+    $("docpick-up").disabled = !data.parent_path;
+
+    const drivesDiv = $("docpick-drives");
+    if (data.drives && data.drives.length) {
+      drivesDiv.style.display = "block";
+      drivesDiv.innerHTML = data.drives.map((d) => {
+        const safe = d.replace(/\\/g, "\\\\");
+        return '<button onclick="docPickLoad(\'' + safe + '\')"'
+             + ' style="margin:2px;padding:4px 10px">' + esc(d) + "</button>";
+      }).join("");
+    } else {
+      drivesDiv.style.display = "none";
+    }
+
+    const box = $("docpick-entries");
+    if (!data.entries || !data.entries.length) {
+      box.innerHTML = '<p style="color:#9ca3af;text-align:center;padding:20px">'
+                    + "空目录（或无支持的单据文件）</p>";
+    } else {
+      box.innerHTML = data.entries.map((e) => {
+        const safe = e.path.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+        const icon = e.is_dir ? "📁" : "📄";
+        const onclick = e.is_dir ? "docPickLoad('" + safe + "')"
+                                 : "docPickSelect('" + safe + "')";
+        const style = "padding:6px 8px;border-bottom:1px solid #f0f1f3;cursor:pointer;"
+                    + (e.is_dir ? "" : "background:#f0f9ff;");
+        const size = (!e.is_dir && e.size)
+          ? '<span style="float:right;color:#9ca3af;font-size:12px">'
+            + (e.size / 1024).toFixed(1) + " KB</span>"
+          : "";
+        return '<div onclick="' + onclick + '" style="' + style + '">'
+             + '<span style="margin-right:8px">' + icon + "</span>"
+             + esc(e.name) + size + "</div>";
+      }).join("");
+    }
+  } catch (e) {
+    // 起始目录不存在等场景：退回 home/盘符列表再试一次
+    if (path) { docPickLoad(null); return; }
+    toast("目录加载失败：" + e.message, 4000);
+  }
+}
+
+function docPickUp() {
+  if (!_docPickPath) return;
+  // 跨平台：同时处理 / 和 \ 分隔符
+  const isAbsoluteUnix = _docPickPath.startsWith("/");
+  const parts = _docPickPath.split(/[\\/]/).filter(Boolean);
+  parts.pop();
+  let parent = parts.join("/");
+  if (parent && parent.match(/^[A-Za-z]:$/)) parent += "/";
+  if (isAbsoluteUnix && parent) parent = "/" + parent;
+  if (!parent) parent = isAbsoluteUnix ? "/" : "";
+  docPickLoad(parent || null);
+}
+
+function docPickSelect(path) {
+  closeDocPicker();
+  if (!(payload.source_documents || []).includes(path)
+      && !manualDocs.includes(path)) {
+    manualDocs.push(path);
+    renderDocSelect();
+  }
+  loadDocument(path, 1);   // 左屏预览 + 「打开」「重新识别」自动指向它
+  toast("已切换到手动选择的单据，确认内容后点「重新识别」提取此文件", 5000);
 }
 
 /* 「打开本地文件」按钮：把当前 curDoc 交给后端 → 后端启动系统默认程序。
@@ -957,6 +1079,17 @@ function updateOpenLocalBtn() {
     btn.title = ok ? "用本机默认程序打开当前单据" : "当前单据不是真实文件，无法在本地打开";
   }
   updateReextractBtn();
+  updateDocManualTag();
+}
+
+/* 「手动单据 · 未识别」标记：当前预览不在本工厂单据列表里时提示——
+   右侧数据尚未来自该文件，点「重新识别」后才一致（防误以为已是数据来源） */
+function updateDocManualTag() {
+  const tag = $("doc-manual-tag");
+  if (!tag) return;
+  const isManual = !!(curDoc && payload
+    && !(payload.source_documents || []).includes(curDoc));
+  tag.style.display = isManual ? "" : "none";
 }
 
 /* D2「重新识别」按钮：与「打开本地文件」同口径，占位符路径禁用；
@@ -992,6 +1125,14 @@ async function reextractDoc() {
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || ("HTTP " + r.status));
     mergeReextracted(data.items || []);
+    // 手动选择的单据重提成功后转正：进单据列表、摘掉「手动/未识别」标记
+    if (payload && curDoc && !(payload.source_documents || []).includes(curDoc)) {
+      (payload.source_documents = payload.source_documents || []).push(curDoc);
+      manualDocs = manualDocs.filter((d) => d !== curDoc);
+      renderDocSelect();
+      $("doc-select").value = curDoc;
+      updateDocManualTag();
+    }
   } catch (e) {
     toast("重新识别失败：" + e.message, 5000);
   } finally {
