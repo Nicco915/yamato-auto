@@ -68,7 +68,7 @@ def _sum_batch_like(tool: str, result: dict) -> dict:
     tid = result.get("thread_id")
     status = result.get("status")
     lines: list[str] = []
-    verb = "已创建" if tool == "create_batch" else "已重跑"
+    verb = "已重跑" if tool == "rerun" else "已创建"
 
     if status == "pending_human_review":
         review_data = result.get("review_data") or {}
@@ -337,6 +337,12 @@ def _sum_upsert_product_mapping(result: dict) -> dict:
             "links": [{"label": "主数据维护页", "href": "/mappings"}]}
 
 
+def _sum_mark_batch_done(result: dict) -> dict:
+    """mark_batch_done：历史文件夹已标记为已完成。"""
+    message = result.get("message") or "已标记为已完成。"
+    return {"message": str(message), "summary_lines": [], "links": []}
+
+
 def _fallback(tool: str, result: dict) -> dict:
     """未知工具/异常兜底：一句"已执行" + result 前 5 个标量 key。"""
     try:
@@ -370,7 +376,7 @@ def summarize_applied(tool: str, args: dict | None, result: dict | None) -> dict
             return {"message": f"执行失败：{error}",
                     "summary_lines": [], "links": []}
 
-        if tool in ("create_batch", "rerun"):
+        if tool in ("create_batch", "rerun", "start_scanned_batch"):
             return _sum_batch_like(tool, result)
         if tool == "retry_factory":
             return _sum_retry_factory(args, result)
@@ -392,6 +398,8 @@ def summarize_applied(tool: str, args: dict | None, result: dict | None) -> dict
             return _sum_generate_declarations(result)
         if tool == "upsert_product_mapping":
             return _sum_upsert_product_mapping(result)
+        if tool == "mark_batch_done":
+            return _sum_mark_batch_done(result)
         return _fallback(tool, result)
     except Exception:  # noqa: BLE001 铁律：摘要失败绝不阻塞执行结果返回
         return _fallback(str(tool or ""), result if isinstance(result, dict) else {})

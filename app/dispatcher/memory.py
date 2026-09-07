@@ -174,10 +174,12 @@ class OperationMemory:
             updates: dict = {}
 
             # ---- 更新 last_thread_id ----
-            if tool in ("create_batch", "rerun", "submit_review"):
+            if tool in ("create_batch", "rerun", "submit_review",
+                        "start_scanned_batch"):
                 thread_id = (
                     result.get("thread_id")
                     or args.get("thread_id")
+                    or args.get("folder_name")
                 )
                 if thread_id:
                     updates["last_thread_id"] = thread_id

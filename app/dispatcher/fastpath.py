@@ -76,6 +76,17 @@ _BATCH_HEALTH_RES = [
     re.compile(
         r"^体检\s*(?:批次|批号)?\s*([A-Za-z0-9][\w\-]{1,30})$"),
 ]
+
+# ---- 扫描新批次句式（监控目录候选）----
+# 注意避开动作词哨兵：带 发起/启动/新建/标记 等措辞的句子在 _guarded
+# 已被放行给 LLM，这里的句式只匹配纯查询语气
+_SCAN_RE = re.compile(
+    r"^扫描(?:一下)?(?:监控目录|新批次)$"
+    r"|^扫一下(?:监控目录|新批次)$"
+    r"|^(?:看看|查看|查询|查|检查)(?:一下)?(?:监控目录|有没有新批次)$"
+    r"|^(?:有没有|有)新批次(?:吗)?$"
+    r"|^监控目录(?:里|里面)?(?:有什么|有什么新批次|有没有新批次)$"
+)
 # 批次号提取的排除词（别把句式里的关键词当批次号）
 _NOT_BATCH_ID = {"批次", "批号", "所有", "全部", "当前", "目前", "状态",
                  "进度", "情况"}
@@ -207,6 +218,23 @@ def _fmt_batch_health(thread_id: str, result: dict) -> str:
     return "\n".join(lines)
 
 
+def _fmt_scan(result: dict) -> str:
+    """扫描新批次结果 → 自然语言（纯文字，不含内部路径/参数名）。"""
+    if not result.get("watch_dir"):
+        return "监控目录还没有配置，告诉我目录路径即可设置。"
+    candidates = result.get("candidates") or []
+    if not candidates:
+        return "监控目录下没有新批次候选（已建过批次的文件夹会自动跳过）。"
+    lines = [f"发现 {len(candidates)} 个新批次候选："]
+    for c in candidates[:20]:
+        mark = "已找到装箱单" if c.get("has_content") else "未找到装箱单"
+        lines.append(f"- {c.get('folder_name')}（{mark}）")
+    if len(candidates) > 20:
+        lines.append(f"……等共 {len(candidates)} 个")
+    lines.append("要启动哪一个，告诉我文件夹名即可。")
+    return "\n".join(lines)
+
+
 def try_fastpath(message: str) -> dict | None:
     """命中快路径意图 → {"tool", "args", "message"}；否则 None。
 
@@ -234,6 +262,14 @@ def try_fastpath(message: str) -> dict | None:
             return None
         return {"tool": "get_usage", "args": {},
                 "message": _fmt_usage(result)}
+
+    if _SCAN_RE.match(norm):
+        result = TOOLS["scan_new_batches"].func({})
+        if result.get("error"):
+            logger.warning("[快路径] scan_new_batches 执行失败：%s", result["error"])
+            return None
+        return {"tool": "scan_new_batches", "args": {},
+                "message": _fmt_scan(result)}
 
     health_id = _extract_health_batch_id(norm)
     if health_id:

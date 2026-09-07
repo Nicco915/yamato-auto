@@ -496,6 +496,8 @@ _TOOL_CN = {
     "add_factories": "补充工厂",
     "process_skipped_factory": "处理被跳过的工厂",
     "split_and_generate": "一键分票并生成报关单",
+    "start_scanned_batch": "启动扫描到的批次",
+    "mark_batch_done": "标记批次已完成",
 }
 
 

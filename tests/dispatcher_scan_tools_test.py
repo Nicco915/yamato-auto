@@ -1,0 +1,295 @@
+# -*- coding: utf-8 -*-
+"""调度 Agent 监控目录扫描建批工具测试：
+scan_new_batches / start_scanned_batch / mark_batch_done + 快路径句式。
+
+覆盖：
+1. scan：空监控目录提示；候选列出（folder_name/has_content/下游文件名）；
+   已建批文件夹被跳过；
+2. start preview：正常候选出预览；文件夹不存在/已占用/多下游表 → blocked；
+3. start execute：monkeypatch service 断言参数透传 + ValueError 转 error；
+   真实路径走通（mock 提取跑图到挂起，批次记录落库，links 齐备）；
+4. mark_done preview/execute：标记后 batches 表 status=completed 且
+   completed_at 非空，扫描不再列出；重复标记 → blocked/error；
+5. 快路径：「扫描新批次」命中；「启动新批次」不落快路径（交给 LLM）。
+
+运行方式：
+    cd app && PYTHONPATH=. python3 -m pytest tests/dispatcher_scan_tools_test.py -v
+
+隔离：validation/_test_isolation.isolate_to_tmp（血泪红线，绝不碰真实库）；
+监控目录经 extra_env={"WATCH_DIR": ...} 随隔离一并设置。
+"""
+from __future__ import annotations
+
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+APP_ROOT = Path(__file__).resolve().parent.parent
+if str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
+sys.path.insert(0, str(APP_ROOT / "validation"))
+
+os.environ["EXTRACTION_MOCK"] = "1"
+os.environ["DISPATCHER_MOCK"] = "1"
+
+from openpyxl import Workbook  # noqa: E402
+
+from app.api import service  # noqa: E402
+from app.db import batch_store  # noqa: E402
+from app.dispatcher import fastpath  # noqa: E402
+# 血泪红线：dispatcher.tools 的 import 链（service→…→llm_client）会执行
+# load_dotenv(override=True)，必须在 isolate_to_tmp 之前完成全部 app 模块
+# import，否则隔离 env 会被打回真实路径
+from app.dispatcher import tools as dispatcher_tools  # noqa: E402
+from app.nodes import extraction_node as en  # noqa: E402
+
+from _test_isolation import isolate_to_tmp  # noqa: E402
+
+# 监控目录先建好（隔离只设环境变量，不管建目录）
+_WATCH = Path(tempfile.mkdtemp(prefix="yamato_scan_tools_watch_"))
+
+TMP = isolate_to_tmp("yamato_dispatcher_scan_tools_",
+                     extra_env={"WATCH_DIR": str(_WATCH)})
+
+from app.config import get_settings  # noqa: E402
+assert get_settings().watch_dir == str(_WATCH)
+
+HEADER = ["MAKER_MEI_KJ", "SHOHIN_CD", "SHOHIN_MEI_E", "SOTOBAKO_D_HACCHU_SU"]
+
+
+def _make_xlsx(path: Path, rows: list[tuple[str, str, str, int]] | None = None):
+    """写 xlsx：rows 为 None 时空表（仅供文件名探测）；否则带表头的最小装箱单。"""
+    wb = Workbook()
+    ws = wb.active
+    if rows is not None:
+        ws.append(HEADER)
+        for factory, sku, name, qty in rows:
+            ws.append([factory, sku, name, qty])
+    wb.save(path)
+
+
+def _new_folder(name: str, *, downstream: bool = True,
+                downstream_count: int = 1) -> Path:
+    """在监控目录下建一个候选子文件夹，可选放 1~N 份下游装箱单。"""
+    sub = _WATCH / name
+    sub.mkdir(parents=True, exist_ok=True)
+    for i in range(downstream_count):
+        if downstream:
+            suffix = f"_{i}" if i else ""
+            _make_xlsx(sub / f"ContentsOfTheContainer{suffix}.xlsx")
+    return sub
+
+
+def _force_mock_extraction(monkeypatch) -> None:
+    """全量 pytest 下 extraction_node 可能已被绑定真实提取线，强制回 mock
+    （与 add_factories_test 同模式）。"""
+    monkeypatch.setattr(en, "_session_mod", None)
+    monkeypatch.setattr(en, "_session_import_error", "EXTRACTION_MOCK=1（测试强制）")
+
+
+# ---------------------------------------------------------------------------
+# 1. scan_new_batches
+# ---------------------------------------------------------------------------
+
+def test_scan_empty_watch_dir():
+    """空监控目录 → 空候选 + 明确提示（本用例必须先于任何建文件夹的用例）。"""
+    r = dispatcher_tools._fn_scan_new_batches({})
+    assert r["count"] == 0 and r["candidates"] == []
+    assert "没有新批次候选" in r["message"]
+
+
+def test_scan_lists_candidate():
+    sub = _new_folder("SCAN_NEW1")
+    r = dispatcher_tools._fn_scan_new_batches({})
+    names = {c["folder_name"] for c in r["candidates"]}
+    assert "SCAN_NEW1" in names
+    cand = next(c for c in r["candidates"] if c["folder_name"] == "SCAN_NEW1")
+    assert cand["has_content"] is True
+    assert any("ContentsOfTheContainer" in n for n in cand["downstream_candidates"])
+    assert sub.name == "SCAN_NEW1"
+
+
+def test_scan_skips_existing_batch():
+    _new_folder("SCAN_DONE1")
+    batch_store.upsert_batch("SCAN_DONE1", watch_dir=str(_WATCH),
+                             folder_name="SCAN_DONE1", status="completed")
+    r = dispatcher_tools._fn_scan_new_batches({})
+    names = {c["folder_name"] for c in r["candidates"]}
+    assert "SCAN_DONE1" not in names
+    assert "SCAN_NEW1" in names  # 上一个用例的候选仍在
+
+
+# ---------------------------------------------------------------------------
+# 2. start_scanned_batch preview
+# ---------------------------------------------------------------------------
+
+def test_start_preview_ok():
+    _new_folder("START_OK1")
+    p = dispatcher_tools._preview_start_scanned_batch({"folder_name": "START_OK1"})
+    assert not p.get("blocked"), f"不应 blocked: {p}"
+    text = "\n".join(p["lines"])
+    assert "START_OK1" in text
+    assert "自动匹配" in text           # 唯一下游表自动命中
+    assert "默认=子文件夹本身" in text    # 上游默认
+
+
+def test_start_preview_missing_folder():
+    p = dispatcher_tools._preview_start_scanned_batch(
+        {"folder_name": "NO_SUCH_FOLDER"})
+    assert p.get("blocked") is True
+
+
+def test_start_preview_occupied():
+    _new_folder("START_BUSY1")
+    batch_store.upsert_batch("START_BUSY1", watch_dir=str(_WATCH),
+                             folder_name="START_BUSY1", status="running")
+    p = dispatcher_tools._preview_start_scanned_batch({"folder_name": "START_BUSY1"})
+    assert p.get("blocked") is True
+    assert "已建过批次" in p["summary"]
+
+
+def test_start_preview_multiple_downstream():
+    _new_folder("START_MULTI1", downstream_count=2)
+    p = dispatcher_tools._preview_start_scanned_batch(
+        {"folder_name": "START_MULTI1"})
+    assert p.get("blocked") is True
+    assert "多个下游装箱单" in p["summary"]
+
+
+def test_start_preview_no_downstream():
+    _new_folder("START_EMPTY1", downstream=False)
+    p = dispatcher_tools._preview_start_scanned_batch(
+        {"folder_name": "START_EMPTY1"})
+    assert p.get("blocked") is True
+    assert "未找到下游装箱单" in p["summary"]
+
+
+# ---------------------------------------------------------------------------
+# 3. start_scanned_batch execute
+# ---------------------------------------------------------------------------
+
+def test_start_exec_param_passthrough(monkeypatch):
+    """参数原样透传 service.start_batch_from_scan。"""
+    _new_folder("START_MOCK1")
+    captured = {}
+
+    def fake_start(folder_name, thread_id=None, downstream_file_path=None,
+                   upstream_root=None):
+        captured.update(folder_name=folder_name, thread_id=thread_id,
+                        downstream_file_path=downstream_file_path,
+                        upstream_root=upstream_root)
+        return {"status": "pending_human_review", "thread_id": thread_id or folder_name}
+
+    monkeypatch.setattr(service, "start_batch_from_scan", fake_start)
+    r = dispatcher_tools._exec_start_scanned_batch(
+        {"folder_name": "START_MOCK1", "thread_id": "TID-X",
+         "downstream_file_path": "/tmp/d.xlsx", "upstream_root": "/tmp/u"})
+    assert captured == {"folder_name": "START_MOCK1", "thread_id": "TID-X",
+                        "downstream_file_path": "/tmp/d.xlsx",
+                        "upstream_root": "/tmp/u"}
+    assert r["thread_id"] == "TID-X"
+    hrefs = [l["href"] for l in r["links"]]
+    assert "/review?thread_id=TID-X" in hrefs   # 待审核 → 去审核链接
+    assert "/batch/TID-X" in hrefs
+
+
+def test_start_exec_value_error(monkeypatch):
+    """service 抛 ValueError → {"error": ...}，绝不抛出。"""
+    def fake_start(folder_name, **kwargs):
+        raise ValueError("子文件夹不存在: xxx")
+
+    monkeypatch.setattr(service, "start_batch_from_scan", fake_start)
+    r = dispatcher_tools._exec_start_scanned_batch({"folder_name": "WHATEVER"})
+    assert "error" in r and "子文件夹不存在" in r["error"]
+
+
+def test_start_exec_real_run(monkeypatch):
+    """真实路径走通：监控目录子文件夹（含最小装箱单 + 工厂子目录）→
+    mock 提取跑图到挂起，批次记录落库，再扫描该文件夹消失。"""
+    _force_mock_extraction(monkeypatch)
+    sub = _WATCH / "START_REAL1"
+    sub.mkdir(parents=True, exist_ok=True)
+    (sub / "工厂A").mkdir()   # 上游=子文件夹本身，工厂目录在其中
+    _make_xlsx(sub / "ContentsOfTheContainer.xlsx",
+               [("工厂A", "SKU-A1", "测试品A", 10)])
+
+    r = dispatcher_tools._exec_start_scanned_batch({"folder_name": "START_REAL1"})
+    assert "error" not in r, f"执行失败: {r}"
+    assert r["status"] == "pending_human_review"
+    assert r["thread_id"] == "START_REAL1"
+
+    rec = batch_store.get_batch("START_REAL1")
+    assert rec is not None and rec["folder_name"] == "START_REAL1"
+    assert rec["watch_dir"] == str(_WATCH)
+
+    names = {c["folder_name"]
+             for c in dispatcher_tools._fn_scan_new_batches({})["candidates"]}
+    assert "START_REAL1" not in names  # 已建批，扫描跳过
+
+
+# ---------------------------------------------------------------------------
+# 4. mark_batch_done
+# ---------------------------------------------------------------------------
+
+def test_mark_done_preview_ok():
+    _new_folder("MARK_OK1")
+    p = dispatcher_tools._preview_mark_batch_done({"folder_name": "MARK_OK1"})
+    assert not p.get("blocked"), f"不应 blocked: {p}"
+    assert "MARK_OK1" in p["summary"]
+
+
+def test_mark_done_preview_missing_folder():
+    p = dispatcher_tools._preview_mark_batch_done({"folder_name": "NO_SUCH"})
+    assert p.get("blocked") is True
+
+
+def test_mark_done_exec_and_scan_skip():
+    _new_folder("MARK_EXEC1")
+    # 标记前扫描可见
+    names = {c["folder_name"]
+             for c in dispatcher_tools._fn_scan_new_batches({})["candidates"]}
+    assert "MARK_EXEC1" in names
+
+    r = dispatcher_tools._exec_mark_batch_done({"folder_name": "MARK_EXEC1"})
+    assert "error" not in r, f"执行失败: {r}"
+    assert r["status"] == "completed"
+
+    rec = batch_store.get_batch("MARK_EXEC1")
+    assert rec is not None
+    assert rec["status"] == "completed"
+    assert rec["completed_at"] is not None
+
+    # 标记后扫描跳过；重复标记 → preview blocked / execute error
+    names = {c["folder_name"]
+             for c in dispatcher_tools._fn_scan_new_batches({})["candidates"]}
+    assert "MARK_EXEC1" not in names
+    p = dispatcher_tools._preview_mark_batch_done({"folder_name": "MARK_EXEC1"})
+    assert p.get("blocked") is True
+    r2 = dispatcher_tools._exec_mark_batch_done({"folder_name": "MARK_EXEC1"})
+    assert "error" in r2
+
+
+# ---------------------------------------------------------------------------
+# 5. 快路径
+# ---------------------------------------------------------------------------
+
+def test_fastpath_scan_hit():
+    _new_folder("FAST_NEW1")
+    r = fastpath.try_fastpath("扫描新批次")
+    assert r is not None and r["tool"] == "scan_new_batches"
+    assert "FAST_NEW1" in r["message"]
+
+    r2 = fastpath.try_fastpath("有没有新批次")
+    assert r2 is not None and r2["tool"] == "scan_new_batches"
+
+
+def test_fastpath_start_not_hit():
+    """「启动新批次」是写意图，不落快路径，交给 LLM 走确认门。"""
+    assert fastpath.try_fastpath("启动新批次") is None
+    assert fastpath.try_fastpath("把 XD430 标记为已完成") is None
+
+
+if __name__ == "__main__":
+    import pytest
+    pytest.main([__file__, "-v"])
