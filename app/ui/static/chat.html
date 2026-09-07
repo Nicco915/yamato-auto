@@ -1568,6 +1568,14 @@ function renderApplied(data, tid) {
       pinLine.textContent = "本会话已绑定到批次 " + data.pinned_thread_id
         + "，后续「那个批次」等指代默认指向它。";
       b.appendChild(pinLine);
+
+      /* 同步前端绑定状态：此前只展示提示文案，sessionPinnedThreadId 不更新，
+         导致状态栏（getChatThreadId 为空）整页不出现、流水线也不轮询。
+         立刻接管绑定 + 启动 10s 轮询，状态栏本页即出现（2026-09 生产反馈）。
+         批次进度气泡由 confirmApply 的 startBatchPoll 负责，这里不重复渲染 */
+      sessionPinnedThreadId = data.pinned_thread_id;
+      startPipelinePoll(data.pinned_thread_id);
+      loadSessionList($("session-search") ? $("session-search").value : "");
     }
 
     // 原始结果折叠（保留排错口）
