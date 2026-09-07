@@ -406,6 +406,11 @@ def _fn_watch_overview(args: dict) -> dict:
     - done：已有批次记录且 status=completed（真实跑完或人工标记完成）；
     - in_progress：有批次记录但未完成（running/pending_review/error 等）；
     - candidates：无记录（未执行），附装箱单探测结果（含向下一层钻取）。
+
+    文件夹与批次的配对用 discovery.match_watch_folders（thread_id /
+    folder_name / 路径归属三重匹配）——手动建批 thread_id 与文件夹名
+    无关时单靠名字配对会把已完成批次误判为「未执行」。
+    未完成批次顺带借 pipeline_state 的 checkpoint 自愈校正滞留状态。
     """
     try:
         settings = get_settings()
@@ -416,14 +421,26 @@ def _fn_watch_overview(args: dict) -> dict:
         if not watch_path.is_dir():
             return {"watch_dir": settings.watch_dir,
                     "message": f"监控目录不存在: {settings.watch_dir}"}
-        records = {b["thread_id"]: b for b in batch_store.list_batches()}
+        matched = discovery.match_watch_folders(watch_path)
+        # 自愈：已配对但 status 滞留非 completed 的，以 checkpoint 为权威源校正
+        for name, rec in matched.items():
+            if rec.get("status") != "completed":
+                try:
+                    from app.orchestrator.pipeline_state import get_pipeline_state
+                    fresh = get_pipeline_state(rec["thread_id"]).get("batch") or {}
+                    if fresh.get("status") and fresh["status"] != rec.get("status"):
+                        # 回读整行拿校正后的 completed_at 等字段
+                        rec = batch_store.get_batch(rec["thread_id"]) or fresh
+                        matched[name] = rec
+                except Exception:  # noqa: BLE001 自愈失败不阻塞总览
+                    pass
         done: list[dict] = []
         in_progress: list[dict] = []
         candidates: list[dict] = []
         for child in sorted(watch_path.iterdir(), key=lambda p: p.name):
             if not child.is_dir():
                 continue
-            rec = records.get(child.name)
+            rec = matched.get(child.name)
             if rec is not None and rec.get("status") == "completed":
                 done.append({"folder_name": child.name,
                              "completed_at": rec.get("completed_at")})

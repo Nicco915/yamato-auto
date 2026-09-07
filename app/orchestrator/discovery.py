@@ -107,6 +107,59 @@ def discover_mx2_files(subfolder: Path) -> list[Path]:
     return sorted(drilled, key=lambda p: p.name)
 
 
+def _match_by_path(child: Path, records: list[dict]) -> dict | None:
+    """按路径归属匹配：batch 的 upstream_root / downstream_file_path 落在
+    该文件夹内（含相等）即视为该文件夹的批次。"""
+    try:
+        child_res = child.resolve()
+    except OSError:
+        child_res = child
+    for b in records:
+        for key in ("upstream_root", "downstream_file_path"):
+            raw = b.get(key)
+            if not raw:
+                continue
+            try:
+                p = Path(raw).expanduser().resolve()
+            except OSError:
+                continue
+            if p == child_res or child_res in p.parents:
+                return b
+    return None
+
+
+def match_watch_folders(watch_path: Path) -> dict[str, dict]:
+    """把监控目录下的子文件夹与 batches 表记录配对。
+
+    返回 {文件夹名: batch 记录}。匹配键（任一命中即视为已建批次）：
+    1. thread_id == 文件夹名（扫描建批默认约定）；
+    2. folder_name == 文件夹名（thread_id 被改名或消毒过的兜底）；
+    3. upstream_root / downstream_file_path 落在文件夹内
+       （手动建批时 thread_id 与文件夹名无关，路径是唯一纽带）。
+    """
+    try:
+        records = batch_store.list_batches()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("读取已有 batch 失败: %s", exc)
+        records = []
+    by_thread = {b["thread_id"]: b for b in records}
+    by_folder = {b["folder_name"]: b for b in records if b.get("folder_name")}
+    matched: dict[str, dict] = {}
+    try:
+        children = [c for c in sorted(watch_path.iterdir(), key=lambda p: p.name)
+                    if c.is_dir()]
+    except OSError as exc:
+        logger.warning("枚举监控目录失败: %s", watch_path, exc)
+        return matched
+    for child in children:
+        rec = by_thread.get(child.name) or by_folder.get(child.name)
+        if rec is None:
+            rec = _match_by_path(child, records)
+        if rec is not None:
+            matched[child.name] = rec
+    return matched
+
+
 def scan_new_batches(
     watch_dir: str | None = None,
     *,
@@ -136,12 +189,7 @@ def scan_new_batches(
         logger.warning("监控目录不存在或不是目录: %s", watch)
         return []
 
-    existing_thread_ids: set[str] = set()
-    if skip_existing:
-        try:
-            existing_thread_ids = {b["thread_id"] for b in batch_store.list_batches()}
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("读取已有 batch 失败: %s", exc)
+    matched = match_watch_folders(watch_path) if skip_existing else {}
 
     results: list[dict[str, Any]] = []
     try:
@@ -149,8 +197,7 @@ def scan_new_batches(
             if not child.is_dir():
                 continue
             folder_name = child.name
-            # 用文件夹名作为默认 thread_id；允许后续用户修改
-            if skip_existing and folder_name in existing_thread_ids:
+            if skip_existing and folder_name in matched:
                 continue
 
             downstream_candidates = discover_downstream_files(child)

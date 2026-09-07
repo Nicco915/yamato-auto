@@ -149,6 +149,82 @@ def test_api_scan_batches():
         get_settings().watch_dir = original
 
 
+def test_match_watch_folders_by_folder_name():
+    """thread_id 被消毒/改名（≠文件夹名）时按 folder_name 兜底配对。"""
+    watch = TMP / "watch_fn"
+    watch.mkdir()
+    (watch / "批次 93（加急）").mkdir()
+
+    # 模拟扫描建批：thread_id 是消毒后的名字，folder_name 保留原文
+    batch_store.upsert_batch("批次_93_加急", watch_dir=str(watch),
+                             folder_name="批次 93（加急）", status="completed")
+
+    matched = discovery.match_watch_folders(watch)
+    assert "批次 93（加急）" in matched
+    assert matched["批次 93（加急）"]["thread_id"] == "批次_93_加急"
+
+
+def test_match_watch_folders_by_path():
+    """手动建批（thread_id 与文件夹名无关、folder_name 为空）：
+    按 upstream_root / downstream_file_path 路径归属配对。"""
+    watch = TMP / "watch_path"
+    watch.mkdir()
+    folder = watch / "XD440-ETD0720"
+    (folder / "工厂").mkdir(parents=True)
+    _make_xlsx(folder / "ContentsOfTheContainer_x.xlsx")
+
+    # upstream_root 指向文件夹内的「工厂」子目录
+    batch_store.upsert_batch("manual-440", watch_dir=str(watch),
+                             upstream_root=str(folder / "工厂"), status="running")
+    # downstream_file_path 落在文件夹内（嵌套中间层）
+    batch_store.upsert_batch("manual-441", watch_dir=str(watch),
+                             downstream_file_path=str(
+                                 folder / "84" / "ContentsOfTheContainer_y.xlsx"),
+                             status="running")
+
+    matched = discovery.match_watch_folders(watch)
+    assert "XD440-ETD0720" in matched
+
+    # 扫描去重同样按路径归属跳过
+    original = get_settings().watch_dir
+    get_settings().watch_dir = str(watch)
+    try:
+        names = {r["folder_name"] for r in scan_new_batches()}
+        assert "XD440-ETD0720" not in names
+    finally:
+        get_settings().watch_dir = original
+
+
+def test_watch_overview_completed_not_candidate():
+    """监控目录总览：手动建批且已完成的文件夹归入 done，不再显示为未执行候选。"""
+    from app.dispatcher import tools as dispatcher_tools
+    from app.graph import NODE7, get_graph
+
+    watch = TMP / "watch_overview"
+    watch.mkdir()
+    folder = watch / "XD441-ETD0721"
+    (folder / "工厂").mkdir(parents=True)
+
+    # 手动建批：thread_id 与文件夹名无关；状态滞留 running（人工审核页完成无人回写）
+    batch_store.upsert_batch("manual-test-93", watch_dir=str(watch),
+                             upstream_root=str(folder), status="running")
+    # 提取图已跑完 → checkpoint 权威源导出 completed
+    graph = get_graph()
+    graph.update_state({"configurable": {"thread_id": "manual-test-93"}},
+                       {"final_output_path": "/tmp/out.xlsx"}, as_node=NODE7)
+
+    original = get_settings().watch_dir
+    get_settings().watch_dir = str(watch)
+    try:
+        result = dispatcher_tools._fn_watch_overview({})
+        assert [d["folder_name"] for d in result["done"]] == ["XD441-ETD0721"]
+        assert result["candidates"] == []
+        # 自愈已回写 batches 表
+        assert batch_store.get_batch("manual-test-93")["status"] == "completed"
+    finally:
+        get_settings().watch_dir = original
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])
