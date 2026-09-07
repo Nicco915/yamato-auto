@@ -1264,7 +1264,17 @@ function renderConfirmation(data, srcBubble) {
   const lock = () => { btnOk.disabled = true; btnNo.disabled = true; };
 
   btnOk.onclick = () => { lock(); confirmApply(data.action || data, b); };
-  btnNo.onclick = () => { lock(); addAgentText("已取消，未执行任何操作。"); };
+  btnNo.onclick = () => {
+    lock();
+    addAgentText("已取消，未执行任何操作。");
+    // 通知服务端释放 pending_action——只动本地 UI 的话服务端留存残留，
+    // 后续写操作会被「已有一个待确认的操作」拒绝（2026-09 生产事故）
+    fetch("/api/v1/dispatcher/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cancel: true, session_id: sessionId }),
+    }).catch(() => {});  // 网络失败不阻塞 UI；服务端 TTL 兜底自清
+  };
 
   history.push({ role: "agent", text: reply.textContent });
   scrollBottom();

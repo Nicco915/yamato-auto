@@ -15,8 +15,13 @@ react 为唯一引擎；确认门执行器独立为 executor.py（与引擎无�
 """
 from __future__ import annotations
 
+import json
+import logging
+
 from app.dispatcher import sessions as _sessions
 from app.dispatcher.executor import execute_confirmed
+
+logger = logging.getLogger(__name__)
 
 # 软挂起一轮窗口的确认/否定判定：strip + 小写后全串精确匹配（确定性
 # 模式匹配，不用 LLM——只覆盖最常见的短答，复杂表达落入"其他消息"
@@ -210,4 +215,37 @@ def confirm(session_id: str | None, action: dict | None,
     return result
 
 
-__all__ = ["handle_message", "confirm"]
+def cancel_pending(session_id: str | None) -> dict:
+    """取消待确认的写操作（前端确认卡「取消」按钮的服务端通道）。
+
+    此前取消只动前端 UI，服务端 pending_action（内存 + chat_sessions
+    写穿）残留，后续写工具一律被「已有一个待确认的操作」拒绝——此入口
+    补上缺口：清内存 + DB 写穿 NULL + 审计留痕（confirmed=False）。
+    无 session（临时会话）或本无待确认操作时幂等返回 ok。
+    """
+    if not session_id:
+        return {"status": "ok", "message": "已取消，未执行任何操作。"}
+    session = _sessions.get_session(session_id)
+    if not session.pending_action:
+        return {"status": "ok", "message": "当前没有待确认的操作。"}
+
+    action = session.pending_action
+    tool_name = str(action.get("tool") or "")
+    _sessions.record_tool(session, tool=tool_name,
+                          args_summary=json.dumps(action.get("args") or {},
+                                                  ensure_ascii=False,
+                                                  default=str)[:300],
+                          result_summary="用户取消，未执行", confirmed=False)
+    _sessions.clear_pending(session)        # 内存 + DB 写穿 NULL
+    _sessions.clear_soft_pending(session)   # 顺带清黄灯软挂起，防下一轮误消费
+    _sessions.record_turn(session, "[取消操作]",
+                          f"已取消待确认操作（{tool_name}），未执行任何变更。")
+
+    from app.dispatcher import debug_log as _debug_log
+    _debug_log.log_event("confirm_cancelled", session_id=session_id,
+                         tool=tool_name)
+    logger.info("确认门用户取消 | 工具=%s | session=%s", tool_name, session_id)
+    return {"status": "cancelled", "message": "已取消，未执行任何操作。"}
+
+
+__all__ = ["handle_message", "confirm", "cancel_pending"]

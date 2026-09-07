@@ -177,6 +177,7 @@ class DispatcherChatRequest(BaseModel):
     session_id: Optional[str] = None            # 会话标识（服务端留存 pending action）
     message: Optional[str] = None               # 自然语言指令（确认前）
     confirm: bool = False
+    cancel: bool = False                        # 取消待确认操作（前端确认卡「取消」）
     action: Optional[Dict[str, Any]] = None     # 无 session 时的降级回传
     file_selection: Optional[str] = None        # 用户通过文件浏览器选择的路径
 
@@ -364,6 +365,13 @@ async def dispatcher_chat(request: DispatcherChatRequest):
     """
     from app import dispatcher
 
+    if request.cancel:
+        # 前端确认卡「取消」：释放服务端 pending_action（内存 + DB 写穿），
+        # 否则后续写操作会被「已有一个待确认的操作」拒绝
+        return await asyncio.to_thread(
+            dispatcher.cancel_pending, request.session_id
+        )
+
     if request.confirm:
         result = await asyncio.to_thread(
             dispatcher.confirm, request.session_id, request.action
@@ -392,6 +400,12 @@ async def dispatcher_chat_stream(request: DispatcherChatRequest):
     用法：前端用 fetch + ReadableStream 消费 SSE 事件流，每个事件一行 JSON。
     """
     from app import dispatcher
+
+    if request.cancel:
+        # 取消不需要流式：直接复用非流式语义，兜底前端误发到本端点
+        return await asyncio.to_thread(
+            dispatcher.cancel_pending, request.session_id
+        )
 
     if request.confirm:
         # 确认执行流式化（W4a）：与非 confirm 分支同构——后台线程跑
