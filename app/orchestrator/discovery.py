@@ -168,6 +168,18 @@ def scan_new_batches(
     return results
 
 
+# 工厂文件夹统一收容目录名（生产结构约定：
+# 批次文件夹/中间层（如 93）/ContentsOfTheContainer.xlsx + 工厂/{各工厂文件夹}）
+_FACTORY_DIR_NAME = "工厂"
+
+
+def pick_upstream_root(base: Path) -> Path:
+    """上游工厂根目录推断：base 下存在「工厂」子目录则取它
+    （工厂文件夹统一收在「工厂」下的结构约定），否则返回 base 本身。"""
+    factory_dir = base / _FACTORY_DIR_NAME
+    return factory_dir if factory_dir.is_dir() else base
+
+
 def pick_default_thread_id(folder_name: str) -> str:
     """从文件夹名生成默认 batch thread_id。
 

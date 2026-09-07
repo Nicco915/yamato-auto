@@ -86,6 +86,17 @@ def test_discover_downstream_nested():
     assert len(found) == 1 and found[0].parent == flat
 
 
+def test_pick_upstream_root():
+    """「工厂」子目录约定：存在则取它，否则返回 base 本身。"""
+    base = TMP / "upstreamPick"
+    (base / "工厂" / "工厂A").mkdir(parents=True)
+    assert discovery.pick_upstream_root(base) == base / "工厂"
+
+    bare = TMP / "upstreamBare"
+    bare.mkdir()
+    assert discovery.pick_upstream_root(bare) == bare
+
+
 def test_discover_mx2_files():
     sub = TMP / "batchB"
     sub.mkdir()

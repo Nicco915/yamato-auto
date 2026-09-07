@@ -136,7 +136,7 @@ def test_start_preview_ok():
 
 def test_start_preview_nested():
     """嵌套结构（批次文件夹/中间层/装箱单）：向下一层钻取命中，
-    上游默认=中间层目录（与工厂文件夹同层）。"""
+    上游默认=中间层目录；中间层下有「工厂」子目录时默认取它。"""
     sub = _WATCH / "START_NEST1"
     mid = sub / "84"
     mid.mkdir(parents=True)
@@ -146,7 +146,18 @@ def test_start_preview_nested():
     assert not p.get("blocked"), f"不应 blocked: {p}"
     text = "\n".join(p["lines"])
     assert "自动匹配" in text
-    assert f"上游工厂文件夹: {mid}" in text  # 默认=装箱单所在目录（84 层）
+    assert f"上游工厂文件夹: {mid}（默认=装箱单所在目录）" in text
+
+    # 有「工厂」子目录 → 默认取它（生产真实结构约定）
+    sub2 = _WATCH / "START_NEST2"
+    mid2 = sub2 / "93"
+    (mid2 / "工厂").mkdir(parents=True)
+    _make_xlsx(mid2 / "ContentsOfTheContainer.xlsx")
+    p2 = dispatcher_tools._preview_start_scanned_batch(
+        {"folder_name": "START_NEST2"})
+    assert not p2.get("blocked"), f"不应 blocked: {p2}"
+    assert f"上游工厂文件夹: {mid2 / '工厂'}（默认=「工厂」子目录）" \
+        in "\n".join(p2["lines"])
 
 
 def test_start_preview_missing_folder():
@@ -220,12 +231,12 @@ def test_start_exec_value_error(monkeypatch):
 
 
 def test_start_exec_real_run(monkeypatch):
-    """真实路径走通（嵌套结构）：监控目录/批次文件夹/84/装箱单+工厂A →
-    mock 提取跑图到挂起，批次记录落库（upstream=84 层），扫描跳过。"""
+    """真实路径走通（生产结构）：监控目录/批次文件夹/93/装箱单+工厂/工厂A →
+    mock 提取跑图到挂起，批次记录落库（upstream=93/工厂），扫描跳过。"""
     _force_mock_extraction(monkeypatch)
     sub = _WATCH / "START_REAL1"
-    mid = sub / "84"
-    (mid / "工厂A").mkdir(parents=True)
+    mid = sub / "93"
+    (mid / "工厂" / "工厂A").mkdir(parents=True)
     _make_xlsx(mid / "ContentsOfTheContainer.xlsx",
                [("工厂A", "SKU-A1", "测试品A", 10)])
 
@@ -237,7 +248,7 @@ def test_start_exec_real_run(monkeypatch):
     rec = batch_store.get_batch("START_REAL1")
     assert rec is not None and rec["folder_name"] == "START_REAL1"
     assert rec["watch_dir"] == str(_WATCH)
-    assert rec["upstream_root"] == str(mid)  # 上游根=装箱单所在目录（嵌套层）
+    assert rec["upstream_root"] == str(mid / "工厂")  # 「工厂」子目录约定
 
     names = {c["folder_name"]
              for c in dispatcher_tools._fn_scan_new_batches({})["candidates"]}
