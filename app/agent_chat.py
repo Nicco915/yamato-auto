@@ -8,7 +8,7 @@
 2026-07-28 用户授权：生产环境下操作员可与提取 Agent 对话，允许它直接修改
 路径配置。流程（LLM 只解析不做决策，决策永远属于人工）：
 
-1. parse_instruction：LLM 把自然语言解析成结构化路径参数（白名单 3 个 key）；
+1. parse_instruction：LLM 把自然语言解析成结构化路径参数（白名单 4 个 key）；
 2. validate_paths：纯 Python 校验——绝对路径 + 同平台路径必须存在，零容错；
    异平台路径（如 macOS 网关上配 Windows 生产机路径）本机无法验证存在性，
    不硬拒，由 cross_platform_warnings 产出警告，靠人工确认环节兜底；

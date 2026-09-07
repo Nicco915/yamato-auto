@@ -144,9 +144,12 @@ _REACT_WRITE_KNOWLEDGE = r"""
   （total_quantity / total_net_weight / total_gross_weight）；新 SKU 需
   补齐 name_cn / hs_code / inspection_required；修改后整体回传，未动的
   条目原样保留。
-- set_paths（改路径配置）：key 白名单仅限 upstream_root /
-  downstream_file_path / gt_source，值必须是绝对路径；操作员没给绝对
-  路径时先调 request_file_selection 让用户在界面选择，禁止编造。
+- set_paths（改路径配置）：key 白名单共四项——upstream_root（上游工厂
+  文件夹根目录）/ downstream_file_path（下游装箱表）/ gt_source
+  （GT 基准文件）/ watch_dir（监控目录，扫描发现新批次的目录；
+  操作员说"监控目录""扫描目录""批次目录"时用它，与 upstream_root
+  无关）。值必须是绝对路径；操作员没给绝对路径时先调
+  request_file_selection 让用户在界面选择，禁止编造。
 - curate_kb（排查待策展队列）：去重聚类后展示候选问题簇，经操作员确认
   后由 LLM 起草知识条目并写入扩展知识库。操作员说"排查待策展队列"
   "检查知识库未覆盖的问题"时使用；拿到操作员确认的簇索引后带
