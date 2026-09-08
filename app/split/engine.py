@@ -2,6 +2,11 @@
 """核心规则引擎——纯函数，零 LLM / 零 DB 依赖。
 
 按 9 条规则把柜号拆分为票（Ticket）并生成 SplitProposal。
+
+商检判定以行级 RawItem.inspection 为准（SKU 级商检维度）：
+柜内"实际含商检品（任一行 inspection==True）的工厂"≥2 家时触发拆分，
+拆出 N 张商检半票（inspection_filter=True）+ 柜内存在不商检行时
+1 张不商检合并票（inspection_filter=False）。
 """
 
 from __future__ import annotations
@@ -22,14 +27,17 @@ from app.split.schemas import (
 
 def _collect_container_info(
     items: list[RawItem],
-    sj_map: dict[str, bool],
 ) -> list[dict]:
-    """Step 3：收集每柜的工厂全集、商检工厂、港口、箱型、行数。
+    """Step 3：收集每柜的工厂全集、实际含商检品的工厂、港口、箱型、行数。
+
+    商检判定以行级 inspection 为准：某厂在本柜有任一行 inspection==True
+    即计入 sj_factories；柜内有任一行 inspection==False 则
+    has_non_inspection=True（决定拆分时是否需要不商检合并票）。
 
     Returns:
         List of container info dicts, sorted by (port, container_type, kanri_no).
         Each dict: kanri_no, port, container_type, makers, sj_factories,
-                   row_count, maker_row_counts.
+                   has_non_inspection, row_count, maker_row_counts.
     """
     raw_containers: dict[str, dict] = {}
     for item in items:
@@ -41,6 +49,7 @@ def _collect_container_info(
                 container_type=item.container_type,
                 makers=set(),
                 sj_factories=set(),
+                has_non_inspection=False,
                 row_count=0,
                 maker_row_counts=defaultdict(int),
                 m3=item.m3,          # 柜级属性，每行重复，取首行
@@ -48,8 +57,12 @@ def _collect_container_info(
             )
         c = raw_containers[k]
         c["makers"].add(item.maker)
-        if sj_map.get(item.maker, False):
+        # 行级商检判定：任一行 inspection=True → 该厂计入本柜商检工厂集；
+        # 任一行 inspection=False → 本柜存在不商检行
+        if item.inspection:
             c["sj_factories"].add(item.maker)
+        else:
+            c["has_non_inspection"] = True
         c["row_count"] += 1
         c["maker_row_counts"][item.maker] += 1
         if c["m3"] is None and item.m3 is not None:
@@ -76,7 +89,6 @@ def _collect_container_info(
 
 def _propose_tickets(
     containers: list[dict],
-    sj_map: dict[str, bool],
 ) -> list[Ticket]:
     """Steps 4-9：拆分、合票、票号。返回按港口排序的票列表。"""
     tickets: list[Ticket] = []
@@ -104,7 +116,8 @@ def _propose_tickets(
         for c in group:
             sj_set = c["sj_factories"]
 
-            # Rule 4: dual-SJ container → split into 2 partial tickets
+            # Rule 4: 柜内实际含商检品的工厂 ≥2 家 → 每家一张商检半票，
+            # 柜内存在不商检行时再追加 1 张不商检合并票
             if len(sj_set) >= 2:
                 # Flush pending whole containers first
                 if pending_whole:
@@ -116,9 +129,8 @@ def _propose_tickets(
                     pending_whole = []
                     pending_sj = set()
 
-                # Create 2 partial tickets, ordered by SJ factory name
+                # 每家含商检品的工厂一张商检半票，按厂名排序
                 sj_list = sorted(sj_set)
-                maker_counts = c["maker_row_counts"]
 
                 for sj_factory in sj_list:
                     tickets.append(
@@ -127,32 +139,40 @@ def _propose_tickets(
                             port=port,
                             container_type=ctype,
                             factory_filter=sj_factory,
+                            inspection_filter=True,
                             ticket_no="",  # to be numbered later
                         )
                     )
 
-                # 柜内还混装非商检工厂时，追加一张「非商检剩余票」——
+                # 柜内存在任何不商检行（非商检厂的行，或商检厂的
+                # inspection=False 行）时，追加一张「不商检合并票」——
                 # 否则这些行不进任何票，报关单静默丢失
-                non_sj = sorted(c["makers"] - sj_set)
-                if non_sj:
+                if c["has_non_inspection"]:
                     remainder = _build_remainder_ticket(
                         kanri_no=c["kanri_no"],
                         port=port,
                         container_type=ctype,
                         factory_exclude=sj_list,
+                        inspection_filter=False,
                         ticket_no="",  # to be numbered later
+                    )
+                    non_sj = sorted(c["makers"] - sj_set)
+                    detail = (
+                        f"混装非商检工厂（{'、'.join(non_sj)}）"
+                        if non_sj
+                        else "商检工厂含不商检品"
                     )
                     remainder.warnings.append(Warning(
                         rule="non_sj_remainder",
                         message=(
-                            f"柜 {c['kanri_no']} 混装非商检工厂"
-                            f"（{'、'.join(non_sj)}），非商检行单独成票"
+                            f"柜 {c['kanri_no']} {detail}，"
+                            "不商检行（含商检厂的不商检品）合并单独成票"
                         ),
                     ))
                     tickets.append(remainder)
                 continue
 
-            # Non-dual-SJ container → whole container, check merge compatibility
+            # 0 或 1 家含商检品工厂的柜 → 整柜，检查合票兼容性
             container_sj = sj_set  # 0 or 1 element
 
             # SJ conflict check: both have SJ AND they differ
@@ -210,8 +230,9 @@ def _propose_tickets(
         # should never fire. We skip this warning — it's structurally impossible.
 
     # ---- Rule 9: single-container port → 1 ticket (already handled by algorithm) ----
-    # The algorithm naturally produces exactly 1 ticket for a port with 1 non-dual-SJ
-    # container, and exactly 2 partial tickets for a port with only 1 dual-SJ container.
+    # The algorithm naturally produces exactly 1 ticket for a port with 1 container
+    # having <2 SJ factories, and N 商检半票（+1 不商检合并票）for a ≥2-SJ-factory
+    # container.
 
     return tickets
 
@@ -222,7 +243,7 @@ def _build_whole_ticket(
     container_type: str,
     ticket_no: str,
 ) -> Ticket:
-    """Build a Ticket from whole (non-dual-SJ) containers."""
+    """Build a Ticket from whole containers（各柜实际含商检品的工厂 <2 家）."""
     items: list[TicketItem] = []
     sj_factories: set[str] = set()
     for c in containers:
@@ -249,8 +270,13 @@ def _build_partial_ticket(
     container_type: str,
     factory_filter: str,
     ticket_no: str,
+    inspection_filter: Optional[bool] = None,
 ) -> Ticket:
-    """Build a partial Ticket for one SJ factory from a dual-SJ container."""
+    """Build a partial Ticket for one SJ factory from a multi-SJ container.
+
+    inspection_filter=True 时为 SKU 级商检半票：仅含该厂 inspection==True
+    的行；None 为旧语义（含该厂全部行），保留向后兼容。
+    """
     return Ticket(
         ticket_no=ticket_no,
         port=port,
@@ -259,6 +285,7 @@ def _build_partial_ticket(
             kanri_no=kanri_no,
             factory_filter=factory_filter,
             is_partial=True,
+            inspection_filter=inspection_filter,
         )],
         sj_factories=[factory_filter],
         full_containers=0,
@@ -271,11 +298,14 @@ def _build_remainder_ticket(
     container_type: str,
     factory_exclude: list[str],
     ticket_no: str,
+    inspection_filter: Optional[bool] = None,
 ) -> Ticket:
     """Build a remainder Ticket for the non-SJ part of a multi-SJ container.
 
-    factory_exclude 记录被排除的商检工厂（即该柜的全部商检工厂），
-    报关展开时取柜内 maker 不在排除集内的行。sj_factories 恒为空。
+    factory_exclude 记录被排除的商检工厂（即该柜全部实际含商检品的工厂）。
+    inspection_filter=False 时为 SKU 级不商检合并票：柜内 (maker 不在排除集)
+    或 (maker 在排除集但 inspection==False) 的行，与各商检半票互补覆盖全柜；
+    None 为旧语义（仅非排除厂的行），保留向后兼容。sj_factories 恒为空。
     """
     return Ticket(
         ticket_no=ticket_no,
@@ -285,6 +315,7 @@ def _build_remainder_ticket(
             kanri_no=kanri_no,
             factory_exclude=factory_exclude,
             is_partial=True,
+            inspection_filter=inspection_filter,
         )],
         sj_factories=[],
         full_containers=0,
@@ -300,8 +331,9 @@ def propose(
     """规则引擎主函数。
 
     Args:
-        items: 归一化后的 RawItem 列表。
-        sj_map: {factory_name: is_sj}，来自 normalize.classify_sj_factories。
+        items: 归一化后的 RawItem 列表（inspection 字段由上游预标注）。
+        sj_map: {factory_name: is_sj}。保留兼容旧调用方签名；引擎内部不再
+            使用，商检判定一律以行级 RawItem.inspection 为准。
         normalize_map: 可选，若提供则对 items 原位归一化。
         fallback_sj: 可选，仅用于日志/文档目的，不参与核心逻辑。
 
@@ -310,11 +342,11 @@ def propose(
 
     Rules applied in order:
         1. 归一化（若提供 normalize_map）
-        2. 商检判定（使用 sj_map）
-        3. 收集柜的工厂全集
-        4. 拆分（双商检柜 → 2 半票）
+        2. 商检判定（行级 RawItem.inspection，上游预标注）
+        3. 收集柜的工厂全集与实际含商检品的工厂
+        4. 拆分（≥2 家实际含商检品工厂 → N 张商检半票 + 1 张不商检合并票）
         5. 按港口→箱型→柜号排序分组
-        6. 合票（至多 3 整柜，至多 1 种商检工厂）
+        6. 合票（至多 3 整柜，至多 1 种实际含商检品的工厂）
         7. 票号
         8. 软校验
         9. 单柜端口
@@ -324,12 +356,12 @@ def propose(
         for item in items:
             item.maker = normalize_maker(item.maker, normalize_map)
 
-    # Step 2: SJ classification is already in sj_map
-    # (If needed, fallback_sj could be used here, but caller pre-computes sj_map.)
+    # Step 2: 商检判定以行级 RawItem.inspection 为准（上游预标注）；
+    # sj_map 形参仅保留兼容，不再参与引擎内部逻辑。
 
     # Steps 3-9
-    containers = _collect_container_info(items, sj_map)
-    tickets = _propose_tickets(containers, sj_map)
+    containers = _collect_container_info(items)
+    tickets = _propose_tickets(containers)
 
     # Build PortGroups
     port_order: list[str] = []

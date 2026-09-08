@@ -1,11 +1,17 @@
 # -*- coding: utf-8 -*-
-"""多商检柜「非商检剩余票」回归测试（修非商检行静默丢失漏洞）。
+"""多商检柜「非商检剩余票/不商检合并票」回归测试（修非商检行静默丢失漏洞）。
 
-背景：规则 4 把含 ≥2 个商检工厂的柜拆成每个商检工厂一张半票，
-若柜内还混装非商检工厂的行，旧实现只生成商检半票，非商检行
-不进任何票（或被并入行数较多的商检方半票），报关单静默丢失。
-修复：engine 追加一张 factory_exclude=商检工厂集 的剩余票，
-aggregator 按排除集展开。
+背景：规则 4 把含 ≥2 家「实际含商检品（任一行 inspection==True）的工厂」
+的柜拆成每家一张商检半票（inspection_filter=True），若柜内还混装
+不商检行（非商检厂的行，或商检厂 inspection==False 的行），旧实现只生成
+商检半票，不商检行进不了任何票（或被并入行数较多的商检方半票），
+报关单静默丢失。修复：engine 追加一张 factory_exclude=商检工厂集、
+inspection_filter=False 的不商检合并票，aggregator 按排除集+行级
+inspection 展开。
+
+注：SKU 级商检改造后，引擎判定以行级 RawItem.inspection 为准，
+本文件的 SJ_MAP 仅用于给各行预标注 inspection（商检厂全部行=True，
+普通厂=False，即旧"工厂级商检"语义的等价表达），不再传入引擎逻辑。
 
 纯函数单测（engine.propose / aggregator.rows_for_ticket），不碰 DB。
 
@@ -49,7 +55,11 @@ SJ_MAP = {SJ_A: True, SJ_B: True, SJ_C: True, PLAIN_X: False, PLAIN_Y: False}
 
 
 def _row(kanri: str, maker: str, sku: str) -> RawItem:
-    """构造一行 RawItem（同港同箱型，重量/箱数从简）。"""
+    """构造一行 RawItem（同港同箱型，重量/箱数从简）。
+
+    inspection 按 SJ_MAP 预标注（商检厂=True / 普通厂=False），
+    即旧工厂级商检语义在 SKU 级行标志下的等价表达。
+    """
     return RawItem(
         kanri_no=kanri,
         port="東京港",
@@ -59,6 +69,7 @@ def _row(kanri: str, maker: str, sku: str) -> RawItem:
         net_weight=1.0,
         gross_weight=1.2,
         pcs=10,
+        inspection=SJ_MAP.get(maker, False),
     )
 
 
@@ -95,21 +106,31 @@ def test_dual_sj_plus_one_plain_yields_remainder_ticket():
     tickets = _tickets_of(proposal, "K1")
     assert len(tickets) == 3, f"预期 3 张票，实际 {len(tickets)}"
 
-    # 2 张商检半票：factory_filter 分别为两个商检工厂
+    # 2 张商检半票：factory_filter 分别为两个商检工厂，inspection_filter=True
     filters = sorted(
         it.factory_filter
         for t in tickets for it in t.items
         if it.factory_filter
     )
     assert filters == sorted([SJ_A, SJ_B])
+    for t in tickets:
+        for it in t.items:
+            if it.factory_filter:
+                assert it.inspection_filter is True, (
+                    f"商检半票 {t.ticket_no} 缺 inspection_filter=True"
+                )
 
-    # 1 张剩余票：factory_exclude = 全部商检工厂，无商检工厂、无整柜
+    # 1 张剩余票：factory_exclude = 全部商检工厂，inspection_filter=False，
+    # 无商检工厂、无整柜
     found = _remainder_items(proposal, "K1")
     assert found is not None, "未生成非商检剩余票"
     ticket, item = found
     assert item.is_partial is True
     assert item.factory_filter is None
     assert item.factory_exclude == sorted([SJ_A, SJ_B])
+    assert item.inspection_filter is False, (
+        "不商检合并票应为 inspection_filter=False"
+    )
     assert ticket.sj_factories == []
     assert ticket.full_containers == 0
 

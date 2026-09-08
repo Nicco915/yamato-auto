@@ -10,7 +10,8 @@ confirm 前在 router 层早失败：
   · 票结构无法解析（schema 校验失败，如 factory_filter/exclude 互斥）。
 - 软警告（force=true 才放行，与引擎规则 8 语义一致）：
   · over_3_full——票内整柜超过 3 个；
-  · mixed_sj——票内含多种商检工厂。
+  · mixed_sj——票内含多家「有 inspection=True 行」的工厂
+    （SKU 级行级口径：不商检合并票里商检工厂的 inspection=False 行不计入）。
 
 行展开复用 app.declare.aggregator.rows_for_ticket（报关生成的同一份实现），
 杜绝「校验一套口径、生成一套口径」的实现漂移。
@@ -51,7 +52,8 @@ def validate_confirmed_proposal(
     Args:
         proposal: 人工修改后的 SplitProposal dict。
         raw_items: state['raw_items']（load_filled 产物，RawItem dict 列表）。
-        sj_map: {工厂名: 是否商检}。
+        sj_map: {工厂名: 是否商检}。保留以兼容 router 调用签名；
+            mixed_sj 判定已改为行级口径（RawItem.inspection），不再使用本参数。
 
     Returns:
         (errors, warnings)：errors 非空必须拒收（400）；
@@ -126,7 +128,10 @@ def validate_confirmed_proposal(
             full_n = sum(1 for it in ticket.items if not it.is_partial)
             if full_n > 3:
                 warnings.append(f"票 {label} 内整柜超过 3 个：{full_n}")
-            sj = sorted({r.maker for r in rows if sj_map.get(r.maker, False)})
+            # mixed_sj 行级口径：只统计票内 inspection=True 行的工厂集合。
+            # 不商检合并票里「商检工厂的 inspection=False 行」不计入——
+            # 这些行本身不商检，不构成多商检工厂混票。
+            sj = sorted({r.maker for r in rows if r.inspection})
             if len(sj) > 1:
                 warnings.append(
                     f"票 {label} 内含多种商检工厂：{'、'.join(sj)}"

@@ -5,17 +5,32 @@
    依赖 ui.js 的 $ / esc / toast / api / renderTopbar / fmtTime
    ============================================================ */
 
-/* ---------- 商检工厂判定 ---------- */
-var SJ_RED = ['貝来', '贝来'];
-var SJ_ORANGE = ['正達', '正达'];
-
-function isSJRed(name) { return SJ_RED.some(function(p){ return (name||'').indexOf(p) !== -1; }); }
-function isSJOrange(name) { return SJ_ORANGE.some(function(p){ return (name||'').indexOf(p) !== -1; }); }
-function isSJFactory(name) { return isSJRed(name) || isSJOrange(name); }
-function sjBadgeClass(name) {
-  if (isSJRed(name)) return 'sj-badge-red';
-  if (isSJOrange(name)) return 'sj-badge-orange';
-  return '';
+/* ---------- 商检工厂判定（数据驱动，不再硬编码工厂名单） ----------
+   是否商检工厂由后端数据决定：票级看 ticket.sj_factories 成员资格，
+   行级看 item.inspection_filter（true=商检半票 / false=不商检合并票）。
+   sj_factories 元素兼容 dict（{factory_name, ...}）与 str 两种形态。 */
+function sjName(f) {
+    if (f && typeof f === 'object') return f.factory_name || '';
+    return f || '';
+}
+function ticketSjNames(ticket) {
+    var out = [];
+    var sjs = (ticket && ticket.sj_factories) || [];
+    for (var i = 0; i < sjs.length; i++) {
+        var n = sjName(sjs[i]);
+        if (n) out.push(n);
+    }
+    return out;
+}
+function ticketSjSet(ticket) {
+    var set = {};
+    var names = ticketSjNames(ticket);
+    for (var i = 0; i < names.length; i++) set[names[i]] = true;
+    return set;
+}
+/* 单一「检」徽标：红/橙分档已退役（CSS 类保留但不再分发） */
+function sjBadge(name) {
+    return '<span class="sj-badge" title="商检工厂: ' + esc(name) + '">检</span>';
 }
 
 /* ---------- 全局状态 ---------- */
@@ -301,23 +316,41 @@ function buildContainerMap(portData) {
             }
             map[k].ticket_refs.push(ti);
 
+            var sjSet = ticketSjSet(ticket);
+            var hasFilter = !!(item.factory_filter);
             var hasExclude = !!(item.factory_exclude && item.factory_exclude.length);
-            if (item.factory_filter === null || item.factory_filter === undefined) {
+            if (item.inspection_filter === true && hasFilter) {
+                // SKU 级商检半票：该厂的商检行单独成票
+                map[k].factories[item.factory_filter] = true;
+                map[k].sj_factories[item.factory_filter] = true;
+                map[k].partial_count++;
+            } else if (item.inspection_filter === false && hasExclude) {
+                // 不商检合并票：柜内不商检行（含商检厂的不商检品）合并成票；
+                // 被排除的工厂即该柜的商检工厂，徽标据此点亮
+                map[k].partial_count++;
+                for (var x = 0; x < item.factory_exclude.length; x++) {
+                    var xn = sjName(item.factory_exclude[x]);
+                    if (xn) map[k].sj_factories[xn] = true;
+                }
+            } else if (!hasFilter) {
                 if (hasExclude) {
-                    // 非商检剩余票：柜内商检工厂之外的行单独成票
+                    // 旧语义非商检剩余票（inspection_filter 未设置，向后兼容）
                     map[k].partial_count++;
                 } else {
                     map[k].full_assigned = true;
-                    // 全柜：工厂信息来自 ticket.sj_factories（间接推断）
-                    var sjs = ticket.sj_factories || [];
-                    for (var s = 0; s < sjs.length; s++) {
-                        map[k].factories[sjs[s]] = true;
-                        if (isSJFactory(sjs[s])) map[k].sj_factories[sjs[s]] = true;
+                    // 全柜：工厂信息来自 ticket.sj_factories（间接推断，
+                    // 名单内工厂均为商检工厂，不再按名字匹配）
+                    var names = ticketSjNames(ticket);
+                    for (var s = 0; s < names.length; s++) {
+                        map[k].factories[names[s]] = true;
+                        map[k].sj_factories[names[s]] = true;
                     }
                 }
             } else {
+                // 旧语义半票（factory_filter 非空、inspection_filter 未设置）：
+                // 商检与否按 ticket.sj_factories 成员资格判定
                 map[k].factories[item.factory_filter] = true;
-                if (isSJFactory(item.factory_filter)) {
+                if (sjSet[item.factory_filter]) {
                     map[k].sj_factories[item.factory_filter] = true;
                 }
                 if (item.is_partial) {
@@ -371,12 +404,12 @@ function renderContainers() {
             var assigned = c.full_assigned || c.partial_count > 0;
             var cls = 'container-item' + (assigned ? ' assigned' : '');
 
-            // 商检标签
+            // 商检标签（数据驱动：柜内商检工厂集来自票级 sj_factories /
+            // 不商检合并票的 factory_exclude，见 buildContainerMap）
             var sjHtml = '';
-            var sjNames = Object.keys(c.sj_factories);
+            var sjNames = Object.keys(c.sj_factories).sort();
             for (var s = 0; s < sjNames.length; s++) {
-                var bc = sjBadgeClass(sjNames[s]);
-                if (bc) sjHtml += '<span class="sj-badge ' + bc + '" title="商检: ' + esc(sjNames[s]) + '">检</span>';
+                sjHtml += sjBadge(sjNames[s]);
             }
 
             // 工厂摘要
@@ -388,12 +421,10 @@ function renderContainers() {
             // 半票标记
             var partialNote = '';
             if (c.partial_count > 0) {
-                // 列出半票涉及的工厂
-                var pf = [];
-                for (var key in c.factories) {
-                    if (c.sj_factories[key]) pf.push(key);
-                }
-                partialNote = ' <span class="warning-text">（双商检柜，已拆半票）</span>';
+                var sjCnt = sjNames.length;
+                partialNote = ' <span class="warning-text">（'
+                    + (sjCnt > 1 ? '多商检柜' : '商检柜')
+                    + '，已按商检拆分）</span>';
             }
 
             var assignMark = assigned ? '<span class="assigned-mark">已分配</span>' : '';
@@ -462,12 +493,11 @@ function renderTickets() {
             var warnings = ticket.warnings || [];
             var hasWarn = warnings.length > 0;
 
-            // 商检标签
+            // 商检标签（票级 sj_factories 成员即商检工厂，单一「检」徽标）
             var sjHtml = '';
-            var sjs = ticket.sj_factories || [];
-            for (var s = 0; s < sjs.length; s++) {
-                var bc = sjBadgeClass(sjs[s]);
-                if (bc) sjHtml += '<span class="sj-badge ' + bc + '" title="商检: ' + esc(sjs[s]) + '">检</span>';
+            var sjNames = ticketSjNames(ticket).sort();
+            for (var s = 0; s < sjNames.length; s++) {
+                sjHtml += sjBadge(sjNames[s]);
             }
 
             // 警告图标
@@ -480,10 +510,17 @@ function renderTickets() {
                 var item = items[ii];
                 var partialNote = '';
                 if (item.is_partial) {
-                    if (item.factory_filter) {
+                    if (item.inspection_filter === true && item.factory_filter) {
+                        // SKU 级商检半票：只含该厂的商检行
+                        partialNote = ' <span class="item-partial-note" title="商检半票：只含该厂的商检品">（'
+                            + esc(item.factory_filter) + '商检部分）</span>';
+                    } else if (item.inspection_filter === false) {
+                        // 不商检合并票：柜内不商检行（含商检工厂的不商检品）
+                        partialNote = ' <span class="item-partial-note" title="不商检合并票：柜内不商检行（含商检工厂的不商检品）">（不商检部分）</span>';
+                    } else if (item.factory_filter) {
                         partialNote = ' <span class="item-partial-note">（' + esc(item.factory_filter) + '部分）</span>';
                     } else if (item.factory_exclude && item.factory_exclude.length) {
-                        // 非商检剩余票：factory_filter 为空、factory_exclude 非空
+                        // 旧语义非商检剩余票：factory_filter 为空、factory_exclude 非空
                         partialNote = ' <span class="item-partial-note">（非商检部分）</span>';
                     }
                 }
@@ -652,8 +689,29 @@ function validateTicket(ticket) {
     if ((ticket.full_containers || 0) > 3) {
         w.push({ rule: 'over_3_full', message: '票内整柜超过 3 个：' + ticket.full_containers });
     }
-    if ((ticket.sj_factories || []).length > 1) {
-        w.push({ rule: 'mixed_sj', message: '票内含多种商检工厂：' + ticket.sj_factories.join('、') });
+    // mixed_sj 口径与后端对齐：商检工厂 = 票内 inspection_filter=true
+    // 半票的 factory_filter 集合；整柜/旧语义条目无行级商检数据，
+    // 前端无法展开重算，降级为并入 ticket.sj_factories 名单判定（注明）。
+    var sjSet = {};
+    var degraded = false;
+    var items = ticket.items || [];
+    for (var j = 0; j < items.length; j++) {
+        var it = items[j];
+        if (it.inspection_filter === true && it.factory_filter) {
+            sjSet[it.factory_filter] = true;
+        } else if (it.inspection_filter !== false) {
+            // 整柜（过滤字段均空）或旧语义半票：依赖票级名单
+            degraded = true;
+        }
+    }
+    if (degraded) {
+        var names = ticketSjNames(ticket);
+        for (var k = 0; k < names.length; k++) sjSet[names[k]] = true;
+    }
+    var sjList = Object.keys(sjSet).sort();
+    if (sjList.length > 1) {
+        w.push({ rule: 'mixed_sj', message: '票内含多种商检工厂：' + sjList.join('、')
+            + (degraded ? '（按票级商检工厂名单判定）' : '') });
     }
     return w;
 }
@@ -762,6 +820,8 @@ function recalcTicket(ticket) {
     var fullContainers = 0;
     var sjFactories = {};
     var items = ticket.items || [];
+    // 整柜/旧语义条目存在时，商检工厂需从旧票级名单保留（前端无行级数据）
+    var needKeepOld = false;
 
     // 票被拖空后回到「未指定箱型」状态，可再拖入任意箱型的第一个柜
     if (items.length === 0) {
@@ -771,21 +831,27 @@ function recalcTicket(ticket) {
     for (var i = 0; i < items.length; i++) {
         var item = items[i];
         if (item.is_partial) {
-            // 半票（商检半票 / 非商检剩余票）不计整柜
-            if (item.factory_filter && isSJFactory(item.factory_filter)) {
+            // 半票不计整柜。商检归属按新口径：
+            // inspection_filter=true 的半票明确归属该商检工厂；
+            // inspection_filter=false 的不商检合并票不含商检工厂；
+            // 旧语义半票（inspection_filter 空）无法判定，走旧名单保留。
+            if (item.inspection_filter === true && item.factory_filter) {
                 sjFactories[item.factory_filter] = true;
+            } else if (item.inspection_filter !== false) {
+                needKeepOld = true;
             }
         } else {
             fullContainers++;
+            // 整柜的商检工厂前端无法展开行级数据，从旧值保留
+            needKeepOld = true;
         }
     }
 
-    // 对全柜（factory_filter=null）的商检工厂，保留既有数据
-    // 这里做简化处理：只追踪可明确归因的商检工厂（半票明确，全柜从旧值保留）
-    var oldSJ = ticket.sj_factories || [];
-    for (var j = 0; j < oldSJ.length; j++) {
-        // 如果旧 SJ 工厂在某个全柜中且该柜还在，保留
-        sjFactories[oldSJ[j]] = true;
+    if (needKeepOld) {
+        var oldSJ = ticketSjNames(ticket);
+        for (var j = 0; j < oldSJ.length; j++) {
+            sjFactories[oldSJ[j]] = true;
+        }
     }
 
     ticket.full_containers = fullContainers;

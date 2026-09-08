@@ -76,7 +76,12 @@ CTYPE = "40HQ"
 
 
 def _row(kanri: str, maker: str, sku: str) -> RawItem:
-    """构造一行 RawItem（同港同箱型，重量/箱数从简）。"""
+    """构造一行 RawItem（同港同箱型，重量/箱数从简）。
+
+    inspection 按 SJ_MAP 预标注（商检厂=True / 普通厂=False）：
+    SKU 级商检改造后引擎/校验均以行级 RawItem.inspection 为准，
+    SJ_MAP 仅保留作兼容签名参数与造数依据。
+    """
     return RawItem(
         kanri_no=kanri,
         port=PORT,
@@ -86,6 +91,7 @@ def _row(kanri: str, maker: str, sku: str) -> RawItem:
         net_weight=1.0,
         gross_weight=1.2,
         pcs=10,
+        inspection=SJ_MAP.get(maker, False),
     )
 
 
@@ -198,6 +204,17 @@ def test_remainder_partial_combo_full_coverage():
         if any(it["kanri_no"] == "K3" for it in t["items"])
     ]
     assert len(k3_tickets) == 3, f"K3 应拆成 3 票，实际 {len(k3_tickets)}"
+    # SKU 级商检新票结构：2 张商检半票 inspection_filter=True，
+    # 1 张不商检合并票 inspection_filter=False
+    k3_items = [it for t in k3_tickets for it in t["items"] if it["kanri_no"] == "K3"]
+    half = [it for it in k3_items if it.get("factory_filter")]
+    rem = [it for it in k3_items if it.get("factory_exclude")]
+    assert len(half) == 2 and all(it.get("inspection_filter") is True for it in half), (
+        f"商检半票应为 inspection_filter=True: {k3_items}"
+    )
+    assert len(rem) == 1 and rem[0].get("inspection_filter") is False, (
+        f"不商检合并票应为 inspection_filter=False: {k3_items}"
+    )
     errors, warnings = _validate(proposal)
     assert errors == [], f"剩余票组合应覆盖完整: {errors}"
 

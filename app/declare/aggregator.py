@@ -6,11 +6,16 @@
 
 行归属规则（与 split/engine.py 保持一致）：
 - 普通整柜票 = 柜内全部行；
-- 半票（is_partial, factory_filter=F）= 柜内 maker==F 的行；
-- 非商检剩余票（is_partial, factory_exclude=[...]）= 柜内 maker 不在
-  排除集内的行。多商检柜拆分时由 engine 追加生成（rule non_sj_remainder），
-  与商检半票互补、无交集，合起来恰好覆盖全柜行。
-  两种过滤互斥（TicketItem 有 model_validator 断言，此处再断言一次）。
+- 旧语义半票（inspection_filter=None，向后兼容）：
+  - factory_filter=F = 柜内 maker==F 的全部行（不分商检与否）；
+  - factory_exclude=[...] = 柜内 maker 不在排除集内的全部行。
+- SKU 级商检半票（is_partial, inspection_filter=True, factory_filter=F）
+  = 柜内 maker==F 且 inspection==True 的行；
+- 不商检合并票（is_partial, inspection_filter=False, factory_exclude=[...]）
+  = 柜内 (maker 不在排除集) 或 (maker 在排除集但 inspection==False) 的行。
+  多商检柜拆分时由 engine 追加生成，与各商检半票互补、无交集，
+  合起来恰好覆盖全柜行（validate.py 覆盖完整性校验赖以通过的不变量）。
+  过滤字段的合法组合由 TicketItem 的 model_validator 断言，此处再兜底断言。
 
 金额守恒说明（set_split）：
 - 前 N-1 个组件行 amount = split_price × 套数；
@@ -21,6 +26,13 @@
   split_price × 套数。
 - 净重不按组件拆（业务决定，组件单重字段存在但不用）：cartons/net/gross
   仅首组件行有值（=源行总箱数/总净重/总毛重），其余组件行 None（留空）。
+
+报关单 I 列（inspection）口径：
+- 普通明细行 = 该品名贡献源行中任一行 inspection==True（any 语义，
+  SKU 级，上游 resolve_inspection 已含品名级回退与默认 False）；
+- 品名组组件行（set_split/box_share 的 members）= 按组件品名 lookup
+  产品映射的 inspection_required（组件品名是拆分后的虚拟品名，无源行对应）；
+- 映射 lookup 同时负责 unit_code 与「未命中产品映射」warning（原样保留）。
 """
 
 from __future__ import annotations
@@ -79,7 +91,8 @@ def rows_for_ticket(
     Args:
         ticket: 分票引擎输出的票。
         items: 归一化后的全部 RawItem。
-        sj_map: {工厂名: 是否商检}，与 propose() 使用的一致。
+        sj_map: {工厂名: 是否商检}。保留以兼容旧调用方签名；SKU 级商检
+            判定直接读 RawItem.inspection（上游预标注），新逻辑不再使用本参数。
     """
     wanted = {it.kanri_no for it in ticket.items}
     by_kanri: dict[str, list[RawItem]] = defaultdict(list)
@@ -94,10 +107,27 @@ def rows_for_ticket(
             # 普通整柜票：柜内全部行
             rows.extend(cont_rows)
             continue
-        # 半票两种过滤互斥（schema 层已有 validator，这里兜底断言）
+        # 半票过滤字段的合法组合（schema 层已有 validator，这里兜底断言）
         assert not (ti.factory_filter and ti.factory_exclude), (
             f"柜 {ti.kanri_no}：factory_filter 与 factory_exclude 互斥"
         )
+        if ti.inspection_filter is True:
+            # 商检半票：仅 maker==factory_filter 且 inspection==True 的行；
+            # 该厂不商检行由不商检合并票承载，不在此并入
+            f = ti.factory_filter
+            rows.extend(r for r in cont_rows if r.maker == f and r.inspection)
+            continue
+        if ti.inspection_filter is False:
+            # 不商检合并票：柜内 (maker 不在排除集) 或
+            # (maker 在排除集但 inspection==False) 的行。
+            # 与各商检半票互补、无交集，合起来恰好覆盖全柜行。
+            excluded = set(ti.factory_exclude or [])
+            rows.extend(
+                r for r in cont_rows
+                if r.maker not in excluded or not r.inspection
+            )
+            continue
+        # ---- 旧语义（inspection_filter=None）：完全维持改前行为 ----
         if ti.factory_exclude:
             # 非商检剩余票：柜内 maker 不在排除集（商检工厂）内的行
             excluded = set(ti.factory_exclude)
@@ -163,7 +193,7 @@ def aggregate_ticket(
     # ---- 1. 按中文品名聚合（保持首行出现顺序） ----
     class _Agg:
         __slots__ = ("name", "first_idx", "cartons", "pieces", "amount",
-                     "net", "gross", "currency")
+                     "net", "gross", "currency", "has_inspection")
 
         def __init__(self, name: str, first_idx: int, currency: str):
             self.name = name
@@ -174,6 +204,8 @@ def aggregate_ticket(
             self.net = 0.0
             self.gross = 0.0
             self.currency = currency
+            # 该品名下是否有源行 inspection==True（报关 I 列 any 口径）
+            self.has_inspection = False
 
     agg_order: list[str] = []
     agg: dict[str, _Agg] = {}
@@ -190,6 +222,8 @@ def aggregate_ticket(
         a.gross += r.gross_weight or 0.0
         if r.currency:
             a.currency = r.currency
+        if r.inspection:
+            a.has_inspection = True
 
     # ---- 2/3. 品名组拆分 + 生成明细行（组块 / 普通行分开收集） ----
     group_blocks: list[tuple[int, list[DetailRow]]] = []  # (首行出现序号, 组件行)
@@ -199,12 +233,15 @@ def aggregate_ticket(
     has_set_split = False
 
     def _enrich(row: DetailRow, src_rows_name: str) -> None:
-        """映射查询：带出 inspection / unit_code；未命中记 warning 不阻断。
+        """映射查询：带出 unit_code（并暂置 inspection）；未命中记 warning 不阻断。
 
         命中但 unit_code 为空（None/空串/纯空白）也记 warning：后续会有
         功能自动创建「品名存在但 unit_code 为空」的映射行，届时 lookup
         命中空行、「未命中产品映射」告警消失，空单位代码会静默写进
         报关单，必须单独告警兜底。
+
+        inspection 的最终口径由调用方决定：普通行随后被覆盖为源行
+        any(inspection)（SKU 级）；品名组组件行保留此处的映射 lookup 值。
         """
         m = lookup(mapping_index, sku="", name_cn=row.name_cn)
         if m is None:
@@ -223,7 +260,7 @@ def aggregate_ticket(
         a = agg[name]
         g = group_by_source.get(name)
         if g is None:
-            # 普通行：全列有值
+            # 普通行：全列有值；I 列 inspection 取源行 SKU 级 any()
             row = DetailRow(
                 name_cn=name,
                 cartons=a.cartons,
@@ -234,6 +271,7 @@ def aggregate_ticket(
                 gross=a.gross,
             )
             _enrich(row, name)
+            row.inspection = a.has_inspection
             normal_rows.append(row)
             continue
 
@@ -246,6 +284,7 @@ def aggregate_ticket(
                 currency=a.currency, amount=a.amount, net=a.net, gross=a.gross,
             )
             _enrich(row, name)
+            row.inspection = a.has_inspection
             normal_rows.append(row)
             continue
 
@@ -297,6 +336,7 @@ def aggregate_ticket(
                 currency=a.currency, amount=a.amount, net=a.net, gross=a.gross,
             )
             _enrich(row, name)
+            row.inspection = a.has_inspection
             normal_rows.append(row)
             continue
         group_blocks.append((a.first_idx, block))
