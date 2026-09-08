@@ -26,7 +26,7 @@ from app.db.models import (
 from app.db.session import get_session
 from app.declare.aggregator import aggregate_ticket, rows_for_ticket
 from app.declare.mapping import build_mapping_index
-from app.factory_match import load_excel_normalize_map, load_inspection_factories
+from app.factory_match import load_excel_normalize_map
 from app.declare.naming import (
     declaration_filename,
     format_onboard,
@@ -35,7 +35,11 @@ from app.declare.naming import (
 )
 from app.declare.template_filler import fill_declaration
 from app.split.loader import load_filled_excel
-from app.split.normalize import classify_sj_factories, normalize_maker
+from app.split.normalize import (
+    load_sku_inspection_map,
+    normalize_maker,
+    resolve_inspection,
+)
 from app.split.schemas import Ticket, TicketItem
 
 logger = logging.getLogger(__name__)
@@ -124,6 +128,9 @@ def generate_declarations(split_thread_id: str, invoice_number: str) -> dict:
             .all()
         )
 
+        # SKU 级商检索引（factory_skus 权威源），同一 session 内一次取出
+        sku_map = load_sku_inspection_map(sess)
+
         # product_groups + members → aggregator 需要的组配置 dict
         groups: list[dict] = []
         for g in sess.query(ProductGroup).all():
@@ -148,16 +155,28 @@ def generate_declarations(split_thread_id: str, invoice_number: str) -> dict:
                 ],
             })
 
-    # ---- 2. 读 filled Excel + 归一化 + 商检判定 + ETD ----
+    # ---- 2. 读 filled Excel + 归一化 + SKU 级商检标注 + ETD ----
     source_file = _source_file_from_graph(split_thread_id)
     raw_items = load_filled_excel(source_file)
     if not raw_items:
         raise ValueError(f"filled Excel 无数据行: {source_file}")
-    # 归一化映射与商检名单：DB 优先，config 兜底
+    # 归一化映射：DB 优先，config 兜底
     normalize_map = load_excel_normalize_map()
     for r in raw_items:
         r.maker = normalize_maker(r.maker, normalize_map)
-    sj_map = classify_sj_factories(raw_items, {}, load_inspection_factories())
+    # SKU 级商检标注：与分票图 load_filled 共用同一解析逻辑
+    # （factory_skus 权威源 → 品名级映射回退 → 默认不商检）；
+    # mapping_index / sku_map 复用第 1 步已加载的索引，不重复查询。
+    # rows_for_ticket 的新票结构口径依赖 RawItem.inspection，此处必须标注。
+    for r in raw_items:
+        r.inspection = resolve_inspection(
+            r.maker, r.sku, r.name_cn, sku_map, mapping_index
+        )
+    # sj_map 派生量：本批次该工厂任一行商检 → 该厂即本次商检工厂
+    sj_map: dict[str, bool] = {}
+    for r in raw_items:
+        if r.maker:
+            sj_map[r.maker] = sj_map.get(r.maker, False) or r.inspection
     onboard = format_onboard(_read_etd(source_file))
 
     # ---- 3. 输出目录：幂等——先清空旧 xlsx 再生成 ----

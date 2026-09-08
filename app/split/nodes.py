@@ -11,12 +11,17 @@ from datetime import datetime, timezone
 
 from langgraph.types import interrupt
 
-from app.db.models import Container, Declaration
+from app.db.models import Container, Declaration, ProductMapping
 from app.db.session import get_session
-from app.factory_match import load_excel_normalize_map, load_inspection_factories
+from app.declare.mapping import build_mapping_index
+from app.factory_match import load_excel_normalize_map
 from app.split.engine import propose
 from app.split.loader import load_filled_excel
-from app.split.normalize import classify_sj_factories, normalize_maker
+from app.split.normalize import (
+    load_sku_inspection_map,
+    normalize_maker,
+    resolve_inspection,
+)
 from app.split.schemas import RawItem
 
 logger = logging.getLogger(__name__)
@@ -26,10 +31,11 @@ logger = logging.getLogger(__name__)
 # 辅助：按柜号聚合成 Container 行（与 engine._collect_container_info 同逻辑但无校验）
 # ---------------------------------------------------------------------------
 
-def _build_container_rows(
-    items: list[RawItem], sj_map: dict[str, bool]
-) -> list[dict]:
-    """聚合 RawItem → 每柜一行，含工厂、商检工厂、行数、港口、箱型。"""
+def _build_container_rows(items: list[RawItem]) -> list[dict]:
+    """聚合 RawItem → 每柜一行，含工厂、商检工厂、行数、港口、箱型。
+
+    sj_factories 口径：柜内有任一行 inspection=True 的工厂
+    （与 sj_map 同为 RawItem.inspection 的派生量）。"""
     containers: dict[str, dict] = {}
     for item in items:
         k = item.kanri_no
@@ -44,7 +50,7 @@ def _build_container_rows(
             )
         c = containers[k]
         c["makers"].add(item.maker)
-        if sj_map.get(item.maker, False):
+        if item.inspection:
             c["sj_factories"].add(item.maker)
         c["row_count"] += 1
     return list(containers.values())
@@ -73,11 +79,32 @@ def load_filled(state: dict) -> dict:
     for r in raw:
         r.maker = normalize_maker(r.maker, normalize_map)
 
-    # 3) 商检判定（DB factories.is_inspection_factory 优先，config 兜底）
-    sj_map = classify_sj_factories(raw, {}, load_inspection_factories())
+    # 3) SKU 级商检标注：factory_skus 权威源 → 品名级映射回退 → 默认不商检
+    #    （与 declare.service.generate_declarations 共用同一解析逻辑）
+    with get_session() as sess:
+        from sqlalchemy.orm import selectinload
 
-    # 4) Container 落库（删除该 split_thread_id 的旧记录后重新插入）
-    container_rows = _build_container_rows(raw, sj_map)
+        sku_map = load_sku_inspection_map(sess)
+        # selectinload 预取 sku_links，避免 build_mapping_index 逐行懒加载
+        mapping_index = build_mapping_index(
+            sess.query(ProductMapping)
+            .options(selectinload(ProductMapping.sku_links))
+            .all()
+        )
+    for r in raw:
+        r.inspection = resolve_inspection(
+            r.maker, r.sku, r.name_cn, sku_map, mapping_index
+        )
+
+    # 4) sj_map 派生量：本批次该工厂任一行商检 → 该厂即本次商检工厂
+    #    （state 结构不变，下游 validate / service 仍按 {工厂名: bool} 消费）
+    sj_map: dict[str, bool] = {}
+    for r in raw:
+        if r.maker:
+            sj_map[r.maker] = sj_map.get(r.maker, False) or r.inspection
+
+    # 5) Container 落库（删除该 split_thread_id 的旧记录后重新插入）
+    container_rows = _build_container_rows(raw)
     split_tid = state["split_thread_id"]
     with get_session() as sess:
         sess.query(Container).filter(
