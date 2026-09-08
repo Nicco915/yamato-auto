@@ -6,11 +6,16 @@
 
 行归属规则（与 split/engine.py 保持一致）：
 - 普通整柜票 = 柜内全部行；
-- 半票（is_partial, factory_filter=F）= 柜内 maker==F 的行；
-- 非商检剩余票（is_partial, factory_exclude=[...]）= 柜内 maker 不在
-  排除集内的行。多商检柜拆分时由 engine 追加生成（rule non_sj_remainder），
-  与商检半票互补、无交集，合起来恰好覆盖全柜行。
-  两种过滤互斥（TicketItem 有 model_validator 断言，此处再断言一次）。
+- 旧语义半票（inspection_filter=None，向后兼容）：
+  - factory_filter=F = 柜内 maker==F 的全部行（不分商检与否）；
+  - factory_exclude=[...] = 柜内 maker 不在排除集内的全部行。
+- SKU 级商检半票（is_partial, inspection_filter=True, factory_filter=F）
+  = 柜内 maker==F 且 inspection==True 的行；
+- 不商检合并票（is_partial, inspection_filter=False, factory_exclude=[...]）
+  = 柜内 (maker 不在排除集) 或 (maker 在排除集但 inspection==False) 的行。
+  多商检柜拆分时由 engine 追加生成，与各商检半票互补、无交集，
+  合起来恰好覆盖全柜行（validate.py 覆盖完整性校验赖以通过的不变量）。
+  过滤字段的合法组合由 TicketItem 的 model_validator 断言，此处再兜底断言。
 
 金额守恒说明（set_split）：
 - 前 N-1 个组件行 amount = split_price × 套数；
@@ -79,7 +84,8 @@ def rows_for_ticket(
     Args:
         ticket: 分票引擎输出的票。
         items: 归一化后的全部 RawItem。
-        sj_map: {工厂名: 是否商检}，与 propose() 使用的一致。
+        sj_map: {工厂名: 是否商检}。保留以兼容旧调用方签名；SKU 级商检
+            判定直接读 RawItem.inspection（上游预标注），新逻辑不再使用本参数。
     """
     wanted = {it.kanri_no for it in ticket.items}
     by_kanri: dict[str, list[RawItem]] = defaultdict(list)
@@ -94,10 +100,27 @@ def rows_for_ticket(
             # 普通整柜票：柜内全部行
             rows.extend(cont_rows)
             continue
-        # 半票两种过滤互斥（schema 层已有 validator，这里兜底断言）
+        # 半票过滤字段的合法组合（schema 层已有 validator，这里兜底断言）
         assert not (ti.factory_filter and ti.factory_exclude), (
             f"柜 {ti.kanri_no}：factory_filter 与 factory_exclude 互斥"
         )
+        if ti.inspection_filter is True:
+            # 商检半票：仅 maker==factory_filter 且 inspection==True 的行；
+            # 该厂不商检行由不商检合并票承载，不在此并入
+            f = ti.factory_filter
+            rows.extend(r for r in cont_rows if r.maker == f and r.inspection)
+            continue
+        if ti.inspection_filter is False:
+            # 不商检合并票：柜内 (maker 不在排除集) 或
+            # (maker 在排除集但 inspection==False) 的行。
+            # 与各商检半票互补、无交集，合起来恰好覆盖全柜行。
+            excluded = set(ti.factory_exclude or [])
+            rows.extend(
+                r for r in cont_rows
+                if r.maker not in excluded or not r.inspection
+            )
+            continue
+        # ---- 旧语义（inspection_filter=None）：完全维持改前行为 ----
         if ti.factory_exclude:
             # 非商检剩余票：柜内 maker 不在排除集（商检工厂）内的行
             excluded = set(ti.factory_exclude)
