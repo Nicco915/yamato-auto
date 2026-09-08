@@ -146,6 +146,81 @@ def test_mark_done_missing_folder(watch):
         board.mark_done("  ")
 
 
+# ---------- mark_done 关联已有批次 ----------
+
+def test_mark_done_bind_existing_batch(watch):
+    """文件夹其实就是已完成的 test-1：绑定后详情/对话落到真批次。"""
+    (watch / "旧文件夹").mkdir()
+    batch_store.upsert_batch("bind-t1", status="completed")
+    batch_store.update_status("bind-t1", "completed")
+
+    r = board.mark_done("旧文件夹", thread_id="bind-t1")
+    assert r["ok"] is True
+    assert r["linked"] is True
+    assert r["thread_id"] == "bind-t1"
+
+    row = batch_store.get_batch("bind-t1")
+    assert row["folder_name"] == "旧文件夹"
+    assert row["watch_dir"] == str(watch)
+    assert row["status"] == "completed"  # 状态不动
+
+    # 看板配对到真批次（规则② folder_name），已完成档批次号是 bind-t1
+    state = board.board_state()
+    assert _names(state["done"]) == {"旧文件夹"}
+    assert state["done"][0]["thread_id"] == "bind-t1"
+    assert state["done"][0]["has_checkpoint"] is False  # 无 checkpoint（未跑图）
+
+    # 重复标记：幂等
+    r2 = board.mark_done("旧文件夹", thread_id="bind-t1")
+    assert r2["ok"] is True
+
+
+def test_mark_done_bind_validation(watch):
+    (watch / "文件夹A").mkdir()
+    # 批次不存在 → 404 语义
+    with pytest.raises(FileNotFoundError):
+        board.mark_done("文件夹A", thread_id="不存在批次")
+    # 批次未完成 → 422 语义
+    batch_store.upsert_batch("bind-run9", status="running")
+    with pytest.raises(ValueError):
+        board.mark_done("文件夹A", thread_id="bind-run9")
+    # 批次已绑定别的文件夹 → 409 语义
+    batch_store.upsert_batch("bind-done9", status="completed",
+                             folder_name="别的文件夹")
+    with pytest.raises(FileExistsError):
+        board.mark_done("文件夹A", thread_id="bind-done9")
+    # 校验失败不留下任何改动
+    assert batch_store.get_batch("bind-done9")["folder_name"] == "别的文件夹"
+    assert batch_store.get_batch("文件夹A") is None
+
+
+# ---------- has_checkpoint ----------
+
+def test_board_state_has_checkpoint_and_orphan(watch):
+    """有 checkpoint 的行 has_checkpoint=True；无 checkpoint 的残留行
+    has_checkpoint=False 且不被自愈误改状态。"""
+    (watch / "真完成").mkdir()
+    (watch / "残留").mkdir()
+    batch_store.upsert_batch("cp-1", watch_dir=str(watch),
+                             folder_name="真完成", status="completed")
+    # 造终态 checkpoint（隔离后 checkpoint_db_abs 指向临时库）
+    from app.graph import NODE7, get_graph
+    graph = get_graph()
+    graph.update_state({"configurable": {"thread_id": "cp-1"}},
+                       {"final_output_path": "/tmp/o.xlsx"}, as_node=NODE7)
+    batch_store.upsert_batch("orphan-1", watch_dir=str(watch),
+                             folder_name="残留", status="pending_review")
+
+    state = board.board_state()
+    done = {d["folder_name"]: d for d in state["done"]}
+    prog = {d["folder_name"]: d for d in state["in_progress"]}
+    assert done["真完成"]["has_checkpoint"] is True
+    assert prog["残留"]["has_checkpoint"] is False
+    # 残留行跳过自愈：状态不被误标 running，数据库行也不被回写
+    assert prog["残留"]["status"] == "pending_review"
+    assert batch_store.get_batch("orphan-1")["status"] == "pending_review"
+
+
 # ---------- start_from_board ----------
 
 def test_start_from_board_prewrite_and_dispatch(watch, monkeypatch):

@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 import threading
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,32 @@ from app.db import batch_store
 from app.orchestrator import discovery
 
 logger = logging.getLogger(__name__)
+
+
+def _has_checkpoint(thread_id: str) -> bool:
+    """checkpoints.db 里是否有该批次的执行态（决定详情/对话是否可看）。
+
+    DB/表不存在 → False（全新部署即无执行态）；其他异常 → 记 warning
+    返回 True（基础设施故障时宁可按钮可用，不误锁）。
+    """
+    try:
+        path = Path(get_settings().checkpoint_db_abs).resolve()
+        if not path.exists():
+            return False
+        conn = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+        try:
+            cur = conn.execute(
+                "SELECT 1 FROM checkpoints WHERE thread_id = ? LIMIT 1",
+                (thread_id,))
+            return cur.fetchone() is not None
+        except sqlite3.OperationalError:
+            return False  # 表未建 = 无任何执行态
+        finally:
+            conn.close()
+    except Exception:  # noqa: BLE001
+        logger.warning("检查 checkpoint 失败 | thread_id=%s", thread_id,
+                       exc_info=True)
+        return True
 
 
 def _watch_path() -> Path:
@@ -56,8 +83,13 @@ def board_state() -> dict[str, Any]:
         if not child.is_dir():
             continue
         rec = matched.get(child.name)
-        if rec is not None and rec.get("status") != "completed":
-            # 自愈：以 checkpoint 为权威源校正滞留状态 + 取流水线进度
+        if rec is not None:
+            rec["_has_checkpoint"] = _has_checkpoint(rec["thread_id"])
+        if (rec is not None and rec.get("status") != "completed"
+                and rec["_has_checkpoint"]):
+            # 自愈：以 checkpoint 为权威源校正滞留状态 + 取流水线进度。
+            # 无 checkpoint 的行（已删除批次的残留行）跳过——没有可推导
+            # 的执行态，自愈只会把它误标成 running
             try:
                 from app.orchestrator.pipeline_state import get_pipeline_state
                 state = get_pipeline_state(rec["thread_id"])
@@ -75,7 +107,8 @@ def board_state() -> dict[str, Any]:
         if rec is not None and rec.get("status") == "completed":
             done.append({"folder_name": child.name,
                          "thread_id": rec["thread_id"],
-                         "completed_at": rec.get("completed_at")})
+                         "completed_at": rec.get("completed_at"),
+                         "has_checkpoint": rec.get("_has_checkpoint", True)})
         elif rec is not None:
             in_progress.append({
                 "folder_name": child.name,
@@ -85,6 +118,7 @@ def board_state() -> dict[str, Any]:
                 "done_factories": rec.get("_done_factories", 0),
                 "pending_factories": rec.get("_pending_factories", 0),
                 "current_factory": rec.get("_current_factory"),
+                "has_checkpoint": rec.get("_has_checkpoint", True),
             })
         else:
             downstream = discovery.discover_downstream_files(child)
@@ -101,12 +135,20 @@ def board_state() -> dict[str, Any]:
             "done": done, "in_progress": in_progress, "candidates": candidates}
 
 
-def mark_done(folder_name: str) -> dict[str, Any]:
-    """未执行候选 → 已完成（只写 batches 表元数据，不动文件夹）。
+def mark_done(folder_name: str, thread_id: str | None = None) -> dict[str, Any]:
+    """未执行候选 → 已完成；可选关联到已有已完成批次。
 
-    thread_id 取文件夹名原文（与 mark_batch_done 工具/扫描去重同口径）。
-    查重用 match_watch_folders 三重匹配——手动建批（thread_id 与文件夹名
-    无关）的文件夹也不能被重复标记。
+    thread_id 缺省：纯标记——只写 batches 表合成行（thread_id=文件夹名
+    原文，与 mark_batch_done 工具/扫描去重同口径），不动文件夹；这类
+    记录无 checkpoint，看板「详情」按钮置灰。
+
+    thread_id 提供：绑定——把 folder_name/watch_dir 补写到该已有批次行
+    （status/completed_at 不动），之后该文件夹的详情/对话都落到这个
+    真批次上。校验：批次不存在 → FileNotFoundError；批次未完成 →
+    ValueError；批次已绑定别的文件夹 → FileExistsError。
+
+    查重统一用 match_watch_folders 三重匹配——手动建批（thread_id 与
+    文件夹名无关）的文件夹也不能被重复标记。
     """
     folder_name = (folder_name or "").strip()
     if not folder_name:
@@ -120,11 +162,32 @@ def mark_done(folder_name: str) -> dict[str, Any]:
     existing = matched.get(folder_name)
     if existing is not None:
         if existing.get("status") == "completed":
-            return {"ok": True, "message": f"「{folder_name}」已是已完成状态",
+            return {"ok": True, "linked": False,
+                    "message": f"「{folder_name}」已是已完成状态",
                     "thread_id": existing["thread_id"]}
         raise FileExistsError(
             f"「{folder_name}」已有批次记录（{existing['thread_id']}，"
             f"状态 {existing.get('status')}），不能标记为已完成")
+
+    tid = (thread_id or "").strip()
+    if tid:
+        target = batch_store.get_batch(tid)
+        if target is None:
+            raise FileNotFoundError(f"批次不存在: {tid}")
+        if target.get("status") != "completed":
+            raise ValueError(f"只能关联已完成批次（{tid} 当前状态 "
+                             f"{target.get('status')}）")
+        bound = target.get("folder_name")
+        if bound and bound != folder_name:
+            raise FileExistsError(
+                f"批次 {tid} 已关联文件夹「{bound}」，不能再绑定「{folder_name}」")
+        batch_store.upsert_batch(tid, watch_dir=str(watch),
+                                 folder_name=folder_name)
+        logger.info("看板标记完成并关联批次 | folder=%s | thread_id=%s",
+                    folder_name, tid)
+        return {"ok": True, "linked": True, "thread_id": tid,
+                "message": f"已把「{folder_name}」关联到批次 {tid}，"
+                           f"详情/对话将跳转到该批次"}
 
     batch_store.upsert_batch(
         folder_name,
@@ -134,7 +197,7 @@ def mark_done(folder_name: str) -> dict[str, Any]:
     )
     batch_store.update_status(folder_name, "completed")  # 填充 completed_at
     logger.info("看板标记完成 | folder=%s", folder_name)
-    return {"ok": True,
+    return {"ok": True, "linked": False,
             "message": f"已标记「{folder_name}」为已完成，之后扫描不再列出",
             "thread_id": folder_name}
 

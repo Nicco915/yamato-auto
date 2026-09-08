@@ -136,12 +136,31 @@ def match_watch_folders(watch_path: Path) -> dict[str, dict]:
     2. folder_name == 文件夹名（thread_id 被改名或消毒过的兜底）；
     3. upstream_root / downstream_file_path 落在文件夹内
        （手动建批时 thread_id 与文件夹名无关，路径是唯一纽带）。
+
+    watch_dir 归属过滤：行带监控目录且与当前目录不一致 → 是别的目录
+    的同名批次，不能配到本目录文件夹（跨目录同名串扰）；watch_dir
+    为空的历史行保留资格（兼容存量）。
     """
     try:
         records = batch_store.list_batches()
     except Exception as exc:  # noqa: BLE001
         logger.warning("读取已有 batch 失败: %s", exc)
         records = []
+    try:
+        watch_resolved = str(watch_path.expanduser().resolve())
+    except OSError:
+        watch_resolved = str(watch_path)
+
+    def _same_watch(b: dict) -> bool:
+        wd = b.get("watch_dir")
+        if not wd:
+            return True
+        try:
+            return str(Path(wd).expanduser().resolve()) == watch_resolved
+        except OSError:
+            return str(wd) == watch_resolved
+
+    records = [b for b in records if _same_watch(b)]
     by_thread = {b["thread_id"]: b for b in records}
     by_folder = {b["folder_name"]: b for b in records if b.get("folder_name")}
     matched: dict[str, dict] = {}

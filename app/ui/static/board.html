@@ -27,6 +27,11 @@
   .start-modal .field label { display: block; font-size: 12px; color: #4b5563; margin-bottom: 4px; }
   .start-modal .field input, .start-modal .field select { width: 100%; box-sizing: border-box; }
   .start-modal .hint { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 0 0 12px; }
+  .markdone-modal .field { margin-bottom: 12px; }
+  .markdone-modal .field label { display: block; font-size: 12px; color: #4b5563; margin-bottom: 4px; }
+  .markdone-modal .field select { width: 100%; box-sizing: border-box; }
+  .markdone-modal .hint { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 0 0 12px; }
+  .markdone-modal .load-note { font-size: 12px; color: #b45309; margin: 4px 0 0; }
   .refresh-note { font-size: 12px; color: var(--muted); }
 </style>
 </head>
@@ -75,6 +80,23 @@
     <div class="modal-actions">
       <button class="btn" onclick="closeStartModal()">取消</button>
       <button class="btn btn-primary" id="start-confirm-btn" onclick="confirmStart()">确认启动</button>
+    </div>
+  </div>
+</div>
+
+<!-- 标记完成弹窗：可选关联到已有已完成批次（关联后详情/对话跳该批次） -->
+<div id="markdone-mask" class="modal-mask" onclick="if (event.target === this) closeMarkDoneModal()">
+  <div class="modal markdone-modal">
+    <h3 id="markdone-title">标记完成</h3>
+    <p class="hint">标记后扫描新批次不再列出该文件夹；关联到已有批次后，该文件夹的详情/对话将跳转到所选批次。</p>
+    <div class="field">
+      <label>关联到已有已完成批次（可选）</label>
+      <select id="markdone-link"></select>
+      <p class="load-note" id="markdone-load-note"></p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeMarkDoneModal()">取消</button>
+      <button class="btn btn-primary" id="markdone-confirm-btn" onclick="confirmMarkDone()">确认标记</button>
     </div>
   </div>
 </div>
@@ -191,7 +213,9 @@ function renderRunning(list) {
         '<br>批次号：' + esc(b.thread_id) + '</div>' +
       '<div class="b-actions">' +
       '<a class="btn btn-sm btn-primary" href="/chat?thread_id=' + encodeURIComponent(b.thread_id) + '">对话</a>' +
-      '<a class="btn btn-sm" href="/batch/' + encodeURIComponent(b.thread_id) + '">详情</a>' +
+      (b.has_checkpoint === false
+        ? '<button class="btn btn-sm" disabled>详情</button>'
+        : '<a class="btn btn-sm" href="/batch/' + encodeURIComponent(b.thread_id) + '">详情</a>') +
       '</div></div>';
   }).join("");
 }
@@ -205,24 +229,59 @@ function renderDone(list) {
       '<div class="b-meta">完成于 ' + esc(fmtTime(b.completed_at)) +
         '<br>批次号：' + esc(b.thread_id) + '</div>' +
       '<div class="b-actions">' +
-      '<a class="btn btn-sm" href="/batch/' + encodeURIComponent(b.thread_id) + '">详情</a>' +
+      (b.has_checkpoint === false
+        ? '<button class="btn btn-sm" disabled>详情</button>'
+        : '<a class="btn btn-sm" href="/batch/' + encodeURIComponent(b.thread_id) + '">详情</a>') +
       '<a class="btn btn-sm btn-ghost" href="/chat?thread_id=' + encodeURIComponent(b.thread_id) + '">对话</a>' +
       '</div></div>';
   }).join("");
 }
 
-/* ---------- 标记完成 ---------- */
+/* ---------- 标记完成（弹窗：可关联到已有已完成批次） ---------- */
+var _markCandidate = null;
+
 async function markDone(idx) {
   var c = (_board && _board.candidates || [])[idx];
   if (!c) return;
-  var folderName = c.folder_name;
-  if (!confirm("确认把「" + folderName + "」标记为已完成？\n标记后扫描新批次不再列出该文件夹。")) return;
+  _markCandidate = c;
+  $("markdone-title").textContent = "标记完成：" + c.folder_name;
+  var sel = $("markdone-link");
+  sel.innerHTML = '<option value="">不关联，仅标记完成</option>';
+  $("markdone-load-note").textContent = "";
+  $("markdone-confirm-btn").disabled = false;
+  $("markdone-mask").classList.add("show");
+  // 下拉数据源：批次列表里已完成的（有 checkpoint，关联后详情/对话才可看）
   try {
-    var r = await api("/api/v1/watch/mark-done", { method: "POST", body: { folder_name: folderName } });
+    var data = await api("/api/v1/batches");
+    var done = (data.batches || []).filter(function (b) { return b.status === "completed"; });
+    sel.innerHTML = '<option value="">不关联，仅标记完成</option>' + done.map(function (b) {
+      return '<option value="' + esc(b.thread_id) + '">' + esc(b.thread_id) + '</option>';
+    }).join("");
+  } catch (e) {
+    $("markdone-load-note").textContent = "批次列表加载失败，可仍选「仅标记完成」";
+  }
+}
+
+function closeMarkDoneModal() {
+  $("markdone-mask").classList.remove("show");
+  _markCandidate = null;
+}
+
+async function confirmMarkDone() {
+  if (!_markCandidate) return;
+  var body = { folder_name: _markCandidate.folder_name };
+  var tid = $("markdone-link").value;
+  if (tid) body.thread_id = tid;
+  var btn = $("markdone-confirm-btn");
+  btn.disabled = true;
+  try {
+    var r = await api("/api/v1/watch/mark-done", { method: "POST", body: body });
     toast(r.message || "已标记完成");
+    closeMarkDoneModal();
     loadBoard(false);
   } catch (e) {
     toast("标记失败：" + e.message, 4000);
+    btn.disabled = false;
   }
 }
 
@@ -288,8 +347,9 @@ async function confirmStart() {
 /* ---------- 轮询 ---------- */
 loadBoard(false);
 _pollTimer = setInterval(function () {
-  // 启动确认弹窗打开时暂停轮询，避免重绘打断输入
+  // 弹窗打开时暂停轮询，避免重绘打断输入
   if ($("start-mask").classList.contains("show")) return;
+  if ($("markdone-mask").classList.contains("show")) return;
   loadBoard(false);
 }, 10000);
 </script>

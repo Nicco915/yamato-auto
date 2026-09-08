@@ -31,6 +31,7 @@ from app.orchestrator import discovery  # noqa: E402
 from app.orchestrator.discovery import (  # noqa: E402
     discover_downstream_files,
     discover_mx2_files,
+    match_watch_folders,
     scan_new_batches,
 )
 
@@ -223,6 +224,29 @@ def test_watch_overview_completed_not_candidate():
         assert batch_store.get_batch("manual-test-93")["status"] == "completed"
     finally:
         get_settings().watch_dir = original
+
+
+def test_match_watch_folders_filters_other_watch_dir(tmp_path):
+    """watch_dir 归属过滤：别的监控目录的同名行不能配到本目录文件夹
+    （跨目录同名串扰）；watch_dir 为空的历史行保留资格（兼容存量）。"""
+    watch_a = tmp_path / "watchA"
+    watch_b = tmp_path / "watchB"
+    watch_a.mkdir()
+    watch_b.mkdir()
+    (watch_a / "同名").mkdir()
+    (watch_a / "遗留文件夹").mkdir()
+
+    # 别的监控目录的同名批次行：规则①（thread_id==文件夹名）不能误配
+    batch_store.upsert_batch("同名", watch_dir=str(watch_b),
+                             folder_name="同名", status="completed")
+    matched = match_watch_folders(watch_a)
+    assert "同名" not in matched
+
+    # watch_dir 为空的历史行：规则②（folder_name）仍命中
+    batch_store.upsert_batch("legacy-1", folder_name="遗留文件夹",
+                             status="completed")
+    matched = match_watch_folders(watch_a)
+    assert matched["遗留文件夹"]["thread_id"] == "legacy-1"
 
 
 if __name__ == "__main__":

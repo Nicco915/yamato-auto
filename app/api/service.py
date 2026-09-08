@@ -2280,7 +2280,8 @@ def delete_batch(thread_id: str) -> dict[str, Any]:
       - next 为空 → completed（允许删）。
 
     删除用独立 rw 连接（不碰 graph 单例 saver 连接，WAL 下并发安全）；
-    只动 checkpoints.db——sessions/*.json、主数据、输出文件一律不碰。
+    sessions/*.json、主数据、输出文件一律不碰；batches 表业务行随
+    checkpoint 一并删除（否则孤儿行会被监控看板配对成死链接）。
     删除成功后再向 review_audits 插一条 batch_deleted 留痕行
     （既有审计记录一律保留；留痕失败只警告，不反过来搞挂已完成的删除）。
     """
@@ -2303,6 +2304,10 @@ def delete_batch(thread_id: str) -> dict[str, Any]:
             conn.commit()
         finally:
             conn.close()
+
+        # 同步删除 batches 业务行（内部已兜底：失败只记 warning 不抛出），
+        # 避免已删批次留孤儿行被看板配对成死链接
+        batch_store.delete_batch(thread_id)
 
         # 审计留痕（顺序：先删成功再留痕；失败只警告，不阻塞返回）
         try:
@@ -2475,6 +2480,36 @@ def check_processed_factories(
     }
 
 
+def _watch_folder_of(*paths: Path) -> tuple[str, str] | None:
+    """路径落在监控目录某一级子文件夹内时返回 (watch_dir, folder_name)，否则 None。
+
+    建批时把「监控目录文件夹 ↔ 批次」显式写进 batches 行——手动建批与
+    扫描建批同口径，看板配对不再只靠路径归属兜底。任何异常静默返回
+    None：关联是体验优化，绝不阻塞建批。
+    """
+    try:
+        watch_str = get_settings().watch_dir
+        if not watch_str:
+            return None
+        watch = Path(watch_str).expanduser().resolve()
+        if not watch.is_dir():
+            return None
+        for p in paths:
+            try:
+                rp = Path(p).expanduser().resolve()
+            except OSError:
+                continue
+            if rp == watch or watch not in rp.parents:
+                continue
+            rel = rp.relative_to(watch)
+            folder = watch / rel.parts[0]
+            if folder.is_dir():
+                return str(watch), rel.parts[0]
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def create_batch(
     thread_id: str,
     downstream_file_path: str | None = None,
@@ -2584,12 +2619,15 @@ def create_batch(
     }
     _write_batch_config(thread_id, batch_config)
 
-    # 同步 batches 业务表（端到端升级新增）
+    # 同步 batches 业务表（端到端升级新增）；路径落进监控目录子文件夹时
+    # 顺带写 folder_name/watch_dir 显式关联（与扫描建批同口径）
+    assoc = _watch_folder_of(u_path, d_path)
     batch_store.upsert_batch(
         thread_id,
         downstream_file_path=str(d_path),
         upstream_root=str(u_path),
         status="pending_review" if result.get("status") == "pending_human_review" else "running",
+        **({"watch_dir": assoc[0], "folder_name": assoc[1]} if assoc else {}),
     )
     return result
 
