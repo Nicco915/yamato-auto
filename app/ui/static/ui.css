@@ -446,7 +446,7 @@ input::placeholder { color: #9ca3af; }
   margin-left: auto;
 }
 
-/* 商检标签 */
+/* 商检标签（统一单一「检」样式；红/橙分档已退役，类保留兼容） */
 .sj-badge {
   display: inline-flex;
   align-items: center;
@@ -457,6 +457,7 @@ input::placeholder { color: #9ca3af; }
   font-size: 9px;
   font-weight: 700;
   color: #fff;
+  background: #c2410c;
   flex-shrink: 0;
   line-height: 1;
 }

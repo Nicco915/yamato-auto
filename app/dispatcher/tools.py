@@ -1726,15 +1726,37 @@ def _proposal_summary(thread_id: str, proposal: dict) -> str:
     for pg in ports:
         port = pg.get("port", "?")
         tickets = pg.get("groups", [])
-        sj_count = sum(
-            1 for t in tickets
-            if t.get("sj_factories") and (
-                isinstance(t["sj_factories"], list) and len(t["sj_factories"]) > 0
-            )
-        )
+        sj_count = 0
+        sj_names: list[str] = []
+        nonsj_merge_count = 0
+        for t in tickets:
+            items = t.get("items") or []
+            if any(
+                isinstance(it, dict) and it.get("inspection_filter") is False
+                for it in items
+            ):
+                nonsj_merge_count += 1
+            sjs = t.get("sj_factories") or []
+            if isinstance(sjs, list) and sjs:
+                sj_count += 1
+                for f in sjs:
+                    if isinstance(f, dict):
+                        name = f.get("factory_name", "")
+                    else:
+                        name = str(f) if f else ""
+                    if name and name not in sj_names:
+                        sj_names.append(name)
         base = f"{port} {len(tickets)} 票"
+        extras = []
         if sj_count:
-            base += f"（含 {sj_count} 票商检）"
+            label = f"{sj_count} 张商检票"
+            if sj_names:
+                label += f"（{'、'.join(sj_names)}）"
+            extras.append(label)
+        if nonsj_merge_count:
+            extras.append(f"{nonsj_merge_count} 张不商检合并票")
+        if extras:
+            base += f"（含 {'、'.join(extras)}）"
         port_parts.append(base)
     return f"{header}：{'、'.join(port_parts)}"
 
@@ -1840,26 +1862,40 @@ def _fn_list_declarations(args: dict) -> dict:
 
         lines = []
         for d in decls:
-            sj_factories = d.sj_factories or []
-            if sj_factories:
-                factory_names = [
-                    f.get("factory_name", "")
-                    for f in sj_factories
-                    if isinstance(f, dict) and f.get("factory_name")
-                ]
-                if factory_names:
-                    sj_text = f" 含商检({', '.join(factory_names)})"
-                elif any(
-                    isinstance(f, str) and f
-                    for f in sj_factories
-                ):
-                    sj_text = f" 含商检({', '.join(f for f in sj_factories if isinstance(f, str) and f)})"
-                else:
-                    sj_text = " 含商检"
-            else:
-                sj_text = " 普通"
-
             items = d.items or []
+            has_nonsj_merge = any(
+                isinstance(it, dict) and it.get("inspection_filter") is False
+                for it in items
+            )
+            sj_factories = d.sj_factories or []
+            factory_names = []
+            for f in sj_factories:
+                if isinstance(f, dict):
+                    name = f.get("factory_name", "")
+                elif isinstance(f, str):
+                    name = f
+                else:
+                    name = ""
+                if name:
+                    factory_names.append(name)
+
+            kind_parts = []
+            if sj_factories:
+                if factory_names:
+                    kind_parts.append(f"商检票（{'、'.join(factory_names)}）")
+                else:
+                    kind_parts.append("商检票")
+            if has_nonsj_merge:
+                kind_parts.append("不商检合并票")
+            if not kind_parts:
+                # 无商检工厂且非不商检合并票：整柜票（或旧语义部分票）
+                has_partial = any(
+                    isinstance(it, dict) and it.get("is_partial")
+                    for it in items
+                )
+                kind_parts.append("部分票" if has_partial else "整柜票")
+            sj_text = " " + "，".join(kind_parts)
+
             full_count = sum(
                 1 for it in items
                 if isinstance(it, dict) and not it.get("is_partial")
@@ -1877,16 +1913,26 @@ def _fn_list_declarations(args: dict) -> dict:
             for d in decls:
                 port = d.port
                 if port not in port_summary:
-                    port_summary[port] = {"count": 0, "sj_count": 0}
+                    port_summary[port] = {"count": 0, "sj_count": 0, "nonsj_count": 0}
                 port_summary[port]["count"] += 1
                 if d.sj_factories:
                     port_summary[port]["sj_count"] += 1
+                if any(
+                    isinstance(it, dict) and it.get("inspection_filter") is False
+                    for it in (d.items or [])
+                ):
+                    port_summary[port]["nonsj_count"] += 1
 
             summary_lines = [f"共 {len(decls)} 票，以下为港口汇总："]
             for port, stats in sorted(port_summary.items()):
                 parts = [f"{port} {stats['count']} 票"]
+                extras = []
                 if stats["sj_count"]:
-                    parts.append(f"含 {stats['sj_count']} 票商检")
+                    extras.append(f"{stats['sj_count']} 张商检票")
+                if stats["nonsj_count"]:
+                    extras.append(f"{stats['nonsj_count']} 张不商检合并票")
+                if extras:
+                    parts.append(f"含 {'、'.join(extras)}")
                 summary_lines.append("  " + "，".join(parts))
             return {"status": "ok", "message": "\n".join(summary_lines),
                     "total": len(decls)}
