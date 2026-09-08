@@ -2746,8 +2746,8 @@ def _exec_upsert_product_mapping(
                     ProductMappingSku(sku_code=c) for c in sku_codes)
                 mapping.sku_code = sku_codes[0] if sku_codes else None
 
-            # 关键字段补齐则清待完善标记；税号仍空则标记待完善
-            mapping.is_incomplete = not bool(mapping.hs_code)
+            # 待完善标记口径（2026-09-08 起）：单位代码 unit_code 为空即待完善
+            mapping.is_incomplete = not bool((mapping.unit_code or "").strip())
 
             sess.flush()
             synced = sync_mapping_to_sku(sess, mapping)
