@@ -37,9 +37,15 @@ from app.split.normalize import classify_sj_factories, normalize_maker
 
 # ---- Constants ----
 
+# 红线：本文件直接读生产 master.db 与真实 fixture（96/...），必须保持
+# 只读运行——sqlite3 连接一律走 URI ?mode=ro，任何写操作都会立刻报错，
+# 绝不允许把测试写进生产库（参见 2026-08-11 测试隔离事故）。
 FIXTURE = "/Users/nz/Downloads/yamato/96/ContentsOfTheContainer_202624_青島XD_20260708.xlsx"
 SAMPLES_DIR = "/Users/nz/downloads/yamato/96/报关单"
-DB_PATH = "/Users/nz/Downloads/yamato/app/app/data/master.db"
+DB_PATH = os.environ.get(
+    "YAMATO_TEST_DECLARE_DB_PATH",
+    "/Users/nz/Downloads/yamato/app/app/data/master.db",
+)
 TEMPLATE = "/Users/nz/Downloads/yamato/app/app/templates/declaration_template.xlsx"
 
 # 主仓库模版路径的兜底（worktree 内运行时使用相对副本）
@@ -59,7 +65,9 @@ _REQUIRES = [FIXTURE, SAMPLES_DIR, DB_PATH]
 
 
 def _db_rows(sql: str, args=()):
-    con = sqlite3.connect(DB_PATH)
+    # URI 只读连接（mode=ro）：防止误写生产 master.db
+    uri = f"file:{Path(DB_PATH)}?mode=ro"
+    con = sqlite3.connect(uri, uri=True)
     con.row_factory = sqlite3.Row
     try:
         return [dict(r) for r in con.execute(sql, args)]

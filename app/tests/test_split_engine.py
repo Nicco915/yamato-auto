@@ -429,3 +429,44 @@ class TestSkuLevelInspectionSplit:
         assert len(tickets) == 1
         assert tickets[0].items[0].is_partial is False
         assert tickets[0].sj_factories == []
+
+    def test_beilai_mixed_zhengda_plain_end_to_end(self):
+        """端到端冒烟：贝来（软木板=商检 + 写字板=不商检）+ 正达（=商检）
+        + 其他厂（=不商检）同柜 → 3 票；贝来写字板行落在不商检合并票；
+        rows_for_ticket 展开无交集、合起来恰好覆盖全柜。"""
+        from app.declare.aggregator import rows_for_ticket
+
+        items = [
+            _row("K001", "青島貝来", "SKU-软木板", inspection=True),
+            _row("K001", "青島貝来", "SKU-写字板", inspection=False),
+            _row("K001", "Ｃ．正達工芸品", "SKU-正达1", inspection=True),
+            _row("K001", "上海億鑽五金工具（青島）", "SKU-其他1", inspection=False),
+        ]
+        proposal = propose(items, {})
+        tickets = _all_tickets(proposal)
+        assert len(tickets) == 3
+
+        half = {t.items[0].factory_filter: t for t in tickets
+                if t.items[0].inspection_filter is True}
+        merged = [t for t in tickets if t.items[0].inspection_filter is False]
+        assert sorted(half) == ["青島貝来", "Ｃ．正達工芸品"]
+        assert len(merged) == 1
+        assert merged[0].items[0].factory_exclude == ["青島貝来", "Ｃ．正達工芸品"]
+
+        rows_by_ticket = {
+            t.ticket_no: rows_for_ticket(t, items, {}) for t in tickets
+        }
+        # 贝来商检半票只含软木板；写字板（贝来不商检行）落在合并票
+        assert [r.sku for r in rows_by_ticket[half["青島貝来"].ticket_no]] == [
+            "SKU-软木板",
+        ]
+        assert sorted(r.sku for r in rows_by_ticket[merged[0].ticket_no]) == [
+            "SKU-其他1", "SKU-写字板",
+        ]
+        # 覆盖完整：无交集、合起来 = 全柜行
+        seen: dict[int, str] = {}
+        for no, rows in rows_by_ticket.items():
+            for r in rows:
+                assert id(r) not in seen, f"行被 {seen[id(r)]} 与 {no} 重复覆盖"
+                seen[id(r)] = no
+        assert len(seen) == len(items)
