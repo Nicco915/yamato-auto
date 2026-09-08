@@ -129,6 +129,16 @@ async function loadBoard(manual) {
     renderBoard(data);
     $("refresh-note").textContent = "每 10 秒自动刷新 · 上次 " + fmtTime(Date.now() / 1000);
   } catch (e) {
+    // 监控目录未配置/不存在（422）：落地页不能是死屏，给出引导入口
+    if (e.status === 422) {
+      $("refresh-note").textContent = "";
+      ["col-todo", "col-running", "col-done"].forEach(function (id) { $(id).innerHTML = ""; });
+      $("col-todo").innerHTML =
+        '<div class="b-empty" style="padding:28px 8px">' + esc(e.message) +
+        '<br><br><a class="btn btn-sm btn-primary" href="/chat">去对话页设置监控目录</a></div>';
+      $("watch-dir").textContent = "监控目录：未配置";
+      return;
+    }
     $("refresh-note").textContent = "刷新失败：" + e.message;
     if (manual) toast("刷新失败：" + e.message, 3500);
   } finally {

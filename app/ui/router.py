@@ -1,7 +1,9 @@
 """UI 路由：工作台 / 批次详情 / Agent 对话页 + UI 专用 API。
 
 页面路由（读 static/*.html，文件由前端线并行开发，缺失返回 503）：
-- GET  /、/dashboard        工作台页
+- GET  /                    落地页，重定向到 /board
+- GET  /board               监控看板页（三档总览 + 一键启动/标记完成）
+- GET  /dashboard           工作台页
 - GET  /chat                Agent 对话页
 - GET  /batch/{thread_id}   批次详情页
 - GET  /mappings            主数据维护页（产品映射 + 品名组）
@@ -76,8 +78,8 @@ def _read_page(filename: str) -> HTMLResponse:
 
 @router.get("/")
 async def index_page() -> RedirectResponse:
-    """落地页：对话优先，/ 重定向到 Agent 对话页。"""
-    return RedirectResponse("/chat")
+    """落地页：看板优先，/ 重定向到监控看板（批次总览 + 一键启动入口）。"""
+    return RedirectResponse("/board")
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
