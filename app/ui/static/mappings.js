@@ -6,7 +6,7 @@
    ============================================================ */
 
 /* ---------- 全局状态 ---------- */
-var activeTab = "products";       // products | groups | factories | skus | ports
+var activeTab = "skus";           // skus | products | groups | factories | ports（默认 SKU 主数据）
 var products = [];                // 产品映射列表缓存
 var groups = [];                  // 品名组列表缓存
 var factories = [];               // 工厂列表缓存（含别名）
@@ -89,6 +89,7 @@ function debouncedLoadSkus() { _debounced("skus", loadSkus); }
 /* ---------- 初始化 ---------- */
 function init() {
     renderTopbar("mappings");  // 链接表已含主数据维护，直接高亮
+    loadSkus();      // 默认落地 SKU 主数据 Tab
     loadProducts();
     loadGroups();
     loadFactories();

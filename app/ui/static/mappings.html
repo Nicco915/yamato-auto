@@ -64,15 +64,15 @@
 
   <!-- Tab 栏（复用 ui.css port-tabs 样式） -->
   <div class="port-tabs" id="mp-tabs">
-    <button class="port-tab active" id="tab-products" onclick="switchTab('products')">产品映射</button>
+    <button class="port-tab active" id="tab-skus" onclick="switchTab('skus')">SKU 主数据</button>
+    <button class="port-tab" id="tab-products" onclick="switchTab('products')">产品映射</button>
     <button class="port-tab" id="tab-groups" onclick="switchTab('groups')">品名组</button>
     <button class="port-tab" id="tab-factories" onclick="switchTab('factories')">工厂与别名</button>
-    <button class="port-tab" id="tab-skus" onclick="switchTab('skus')">SKU 主数据</button>
     <button class="port-tab" id="tab-ports" onclick="switchTab('ports')">港口</button>
   </div>
 
   <!-- 产品映射 Tab -->
-  <div id="pane-products">
+  <div id="pane-products" style="display:none">
     <div class="mp-toolbar">
       <input id="p-q" type="text" placeholder="搜索品名 / 税号 / 供应商 / SKU" oninput="debouncedLoadProducts()" onkeydown="if(event.key==='Enter')loadProducts()">
       <button class="btn" onclick="loadProducts()">搜索</button>
@@ -137,7 +137,7 @@
   </div>
 
   <!-- SKU 主数据 Tab -->
-  <div id="pane-skus" style="display:none">
+  <div id="pane-skus">
     <div class="mp-toolbar">
       <select id="s-factory" onchange="loadSkus()" style="padding:6px 9px;border:1px solid #cbd5e1;border-radius:5px;font-size:13px;font-family:var(--font)">
         <option value="">全部工厂</option>
