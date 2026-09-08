@@ -2,12 +2,16 @@
 """分票规则引擎单测（pytest）。
 
 真实文件：ContentsOfTheContainer_202624_青島XD_20260708.xlsx
-27 柜，10 双商检柜，17 非双商检柜。
+27 柜，按工厂级 sj_map 回填行级 inspection 后 10 个柜含 ≥2 家商检品工厂。
+
+新语义（SKU 级商检）：商检判定以行级 RawItem.inspection 为准；
+≥2 家实际含商检品工厂 → N 张商检半票（inspection_filter=True）
++ 柜内存在不商检行时 1 张不商检合并票（inspection_filter=False）。
 """
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 import pytest
@@ -15,6 +19,7 @@ import pytest
 from app.split.engine import propose
 from app.split.loader import load_filled_excel
 from app.split.normalize import classify_sj_factories, normalize_maker
+from app.split.schemas import RawItem
 
 # ---- Constants ----
 
@@ -34,56 +39,58 @@ NORMALIZE_MAP = {
 # ---- Helpers ----
 
 def _count_dual_sj_containers(raw_items):
-    """Return the set of kanri_no that have >=2 SJ factories (after normalization)."""
-    from collections import defaultdict
-    sj_set = {"青島貝来", "Ｃ．正達工芸品"}
-    container_makers = defaultdict(set)
+    """Return the set of kanri_no that have >=2 家实际含商检品的工厂。"""
+    container_sj: dict[str, set] = defaultdict(set)
     for item in raw_items:
-        container_makers[item.kanri_no].add(item.maker)
-    dual = {
-        k for k, makers in container_makers.items()
-        if len(makers & sj_set) >= 2
-    }
-    return dual
+        if item.inspection:
+            container_sj[item.kanri_no].add(item.maker)
+    return {k for k, sj in container_sj.items() if len(sj) >= 2}
 
 
 def _expected_partial_count(raw_items, kanri_no: str) -> int:
-    """双商检柜的预期半票数：2 张商检半票 + 混装非商检工厂时 1 张剩余票。"""
-    sj_set = {"青島貝来", "Ｃ．正達工芸品"}
-    makers = {item.maker for item in raw_items if item.kanri_no == kanri_no}
-    return len(makers & sj_set) + (1 if makers - sj_set else 0)
+    """拆分柜的预期半票数：N 张商检半票 + 柜内存在不商检行时 1 张合并票。"""
+    rows = [i for i in raw_items if i.kanri_no == kanri_no]
+    sj_makers = {i.maker for i in rows if i.inspection}
+    has_non_inspection = any(not i.inspection for i in rows)
+    return len(sj_makers) + (1 if has_non_inspection else 0)
+
+
+def _load_marked_raw():
+    """加载真实文件并归一化；按工厂级 sj_map 回填行级 inspection。
+
+    真实文件未经上游 SKU 级标注（inspection 全为 False 默认值），
+    这里把商检工厂的全部行标为商检，复现旧「双商检柜」场景。
+    """
+    raw = load_filled_excel(_REAL_FILE)
+    for r in raw:
+        r.maker = normalize_maker(r.maker, NORMALIZE_MAP)
+    sj_map = classify_sj_factories(raw, {}, FALLBACK_SJ)
+    for r in raw:
+        r.inspection = sj_map.get(r.maker, False)
+    return raw
 
 
 # ---- Fixture ----
 
 @pytest.fixture(scope="module")
 def proposal():
-    """Load real file, normalize, classify SJ, and run engine."""
+    """Load real file, normalize, mark row-level inspection, and run engine."""
     if not _REAL_FILE.exists():
         pytest.skip(f"Real data file not found: {_REAL_FILE}")
 
-    raw = load_filled_excel(_REAL_FILE)
-    # Step 1: normalize maker names
-    for r in raw:
-        r.maker = normalize_maker(r.maker, NORMALIZE_MAP)
-    # Step 2: classify SJ factories (master_inspection empty, rely on fallback)
-    sj_map = classify_sj_factories(raw, {}, FALLBACK_SJ)
-    # Step 3+: run engine
-    result = propose(raw, sj_map)
-    return result
+    raw = _load_marked_raw()
+    # sj_map 形参保留兼容，引擎内部以行级 inspection 为准
+    return propose(raw, {})
 
 
 # ---- Fixture for raw items (to compute expected counts) ----
 
 @pytest.fixture(scope="module")
 def raw_items():
-    """Load and normalize raw items."""
+    """Load, normalize and mark row-level inspection."""
     if not _REAL_FILE.exists():
         pytest.skip(f"Real data file not found: {_REAL_FILE}")
-    raw = load_filled_excel(_REAL_FILE)
-    for r in raw:
-        r.maker = normalize_maker(r.maker, NORMALIZE_MAP)
-    return raw
+    return _load_marked_raw()
 
 
 # ---- Tests ----
@@ -119,11 +126,14 @@ class TestInvariants:
             + "\n".join(violations)
         )
 
-    def test_dual_sj_container_yields_2_partial_tickets(self, proposal, raw_items):
-        """不变量 3：10 双商检柜各产生 2 张商检半票（混装非商检时再 +1 剩余票）。"""
+    def test_dual_sj_container_yields_partial_tickets(self, proposal, raw_items):
+        """不变量 3：10 个 ≥2 家商检品工厂的柜各产生 N 张商检半票
+        （inspection_filter=True），柜内存在不商检行时再 +1 不商检合并票
+        （inspection_filter=False）。"""
         dual_containers = _count_dual_sj_containers(raw_items)
         assert len(dual_containers) == 10, (
-            f"预期 10 个双商检柜，实际 {len(dual_containers)}: {sorted(dual_containers)}"
+            f"预期 10 个 ≥2 家商检品工厂的柜，实际 {len(dual_containers)}: "
+            f"{sorted(dual_containers)}"
         )
 
         # Collect kanri_no → count of partial ticket appearances
@@ -138,12 +148,38 @@ class TestInvariants:
             expected = _expected_partial_count(raw_items, k)
             count = partial_appearances.get(k, 0)
             assert count == expected, (
-                f"双商检柜 {k} 预期 {expected} 张半票，实际 {count}"
+                f"拆分柜 {k} 预期 {expected} 张半票，实际 {count}"
             )
 
+    def test_partial_tickets_carry_inspection_filter(self, proposal, raw_items):
+        """新口径：商检半票 inspection_filter=True + factory_filter；
+        不商检合并票 inspection_filter=False + factory_exclude=全部商检厂。"""
+        dual_containers = _count_dual_sj_containers(raw_items)
+
+        for pg in proposal.ports:
+            for ticket in pg.groups:
+                for item in ticket.items:
+                    if not item.is_partial or item.kanri_no not in dual_containers:
+                        continue
+                    rows = [
+                        i for i in raw_items if i.kanri_no == item.kanri_no
+                    ]
+                    sj_makers = sorted({i.maker for i in rows if i.inspection})
+                    if item.factory_filter:
+                        assert item.inspection_filter is True, (
+                            f"{ticket.ticket_no}: 商检半票缺 inspection_filter=True"
+                        )
+                        assert item.factory_filter in sj_makers
+                    else:
+                        assert item.inspection_filter is False, (
+                            f"{ticket.ticket_no}: 不商检合并票缺 "
+                            "inspection_filter=False"
+                        )
+                        assert item.factory_exclude == sj_makers
+
     def test_all_containers_covered(self, proposal, raw_items):
-        """不变量 5：全部 27 柜无遗漏无重复；双商检柜出现次数 = 商检半票数
-        （混装非商检工厂时 +1 剩余票）。"""
+        """不变量 5：全部 27 柜无遗漏无重复；拆分柜出现次数 = 商检半票数
+        （柜内存在不商检行时 +1 不商检合并票）。"""
         # All unique containers in data
         all_kanri = {item.kanri_no for item in raw_items}
         assert len(all_kanri) == 27, (
@@ -160,17 +196,17 @@ class TestInvariants:
                 for item in ticket.items:
                     appearances[item.kanri_no] += 1
 
-        # Check dual-SJ: 2 商检半票 +（有非商检行时）1 剩余票
+        # Check dual-SJ: N 商检半票 +（有不商检行时）1 不商检合并票
         for k in dual_containers:
             expected = _expected_partial_count(raw_items, k)
             assert appearances.get(k, 0) == expected, (
-                f"双商检柜 {k} 预期出现 {expected} 次，实际 {appearances.get(k, 0)}"
+                f"拆分柜 {k} 预期出现 {expected} 次，实际 {appearances.get(k, 0)}"
             )
 
         # Check non-dual-SJ: each appears exactly 1 time
         for k in non_dual:
             assert appearances.get(k, 0) == 1, (
-                f"非双商检柜 {k} 预期出现 1 次，实际 {appearances.get(k, 0)}"
+                f"非拆分柜 {k} 预期出现 1 次，实际 {appearances.get(k, 0)}"
             )
 
         # No missing containers
@@ -267,3 +303,129 @@ class TestInvariants:
             f"发现 {len(violations)} 张半票 item 数不为 1：\n"
             + "\n".join(violations)
         )
+
+
+# ---- 新语义合成用例（纯内存构造，不依赖真实文件） ----
+
+def _row(kanri: str, maker: str, sku: str, inspection: bool = False,
+         port: str = "東京港") -> RawItem:
+    return RawItem(
+        kanri_no=kanri,
+        port=port,
+        container_type="40HQ",
+        maker=maker,
+        sku=sku,
+        net_weight=1.0,
+        gross_weight=1.0,
+        pcs=1,
+        inspection=inspection,
+    )
+
+
+def _all_tickets(proposal):
+    return [t for pg in proposal.ports for t in pg.groups]
+
+
+class TestSkuLevelInspectionSplit:
+    """SKU 级商检拆分新口径：以行级 inspection 判定，与工厂名单无关。"""
+
+    def test_two_sj_factories_split_with_remainder(self):
+        """2 家含商检品工厂 + 1 家不商检厂 → 2 商检半票 + 1 不商检合并票。"""
+        items = [
+            _row("K001", "A厂", "SKU-A1", inspection=True),
+            _row("K001", "B厂", "SKU-B1", inspection=True),
+            _row("K001", "C厂", "SKU-C1", inspection=False),
+        ]
+        # sj_map 形参保留兼容：即使名单为空，引擎也以行级 inspection 为准
+        tickets = _all_tickets(propose(items, {}))
+        assert len(tickets) == 3
+
+        half = [t for t in tickets if t.items[0].inspection_filter is True]
+        remainder = [t for t in tickets if t.items[0].inspection_filter is False]
+        assert len(half) == 2 and len(remainder) == 1
+
+        # 商检半票按厂名排序，不商检合并票排最后
+        assert tickets[0].items[0].factory_filter == "A厂"
+        assert tickets[1].items[0].factory_filter == "B厂"
+        assert tickets[2] is remainder[0]
+
+        for t in half:
+            assert t.items[0].is_partial
+            assert t.sj_factories == [t.items[0].factory_filter]
+        assert remainder[0].items[0].factory_exclude == ["A厂", "B厂"]
+        assert remainder[0].items[0].is_partial
+        assert remainder[0].sj_factories == []
+        # 软警告保留 non_sj_remainder 规则标识
+        assert any(w.rule == "non_sj_remainder" for w in remainder[0].warnings)
+
+    def test_sj_factory_all_non_inspection_no_split(self):
+        """贝来类工厂全是不商检品 + 另一家含商检品 → 不拆分，整柜合票。"""
+        items = [
+            _row("K001", "青島貝来", "SKU-1", inspection=False),
+            _row("K001", "青島貝来", "SKU-2", inspection=False),
+            _row("K001", "正達", "SKU-3", inspection=True),
+        ]
+        # 即使 sj_map 把两家都标为商检工厂，行级全不商检即不算
+        tickets = _all_tickets(
+            propose(items, {"青島貝来": True, "正達": True})
+        )
+        assert len(tickets) == 1
+        assert not tickets[0].items[0].is_partial
+        assert tickets[0].items[0].inspection_filter is None
+        assert tickets[0].full_containers == 1
+        assert tickets[0].sj_factories == ["正達"]
+
+    def test_three_sj_factories_split(self):
+        """3 家含商检品工厂同柜 → 3 商检半票 + 1 不商检合并票。"""
+        items = [
+            _row("K001", "A厂", "SKU-A1", inspection=True),
+            _row("K001", "B厂", "SKU-B1", inspection=True),
+            _row("K001", "C厂", "SKU-C1", inspection=True),
+            _row("K001", "D厂", "SKU-D1", inspection=False),
+        ]
+        tickets = _all_tickets(propose(items, {}))
+        assert len(tickets) == 4
+        assert [t.items[0].factory_filter for t in tickets[:3]] == [
+            "A厂", "B厂", "C厂",
+        ]
+        assert all(t.items[0].inspection_filter is True for t in tickets[:3])
+        merged = tickets[3]
+        assert merged.items[0].inspection_filter is False
+        assert merged.items[0].factory_exclude == ["A厂", "B厂", "C厂"]
+
+    def test_all_inspection_rows_no_remainder(self):
+        """双商检柜但两厂全部行都商检、且无其他厂 → 无合并票。"""
+        items = [
+            _row("K001", "A厂", "SKU-A1", inspection=True),
+            _row("K001", "A厂", "SKU-A2", inspection=True),
+            _row("K001", "B厂", "SKU-B1", inspection=True),
+        ]
+        tickets = _all_tickets(propose(items, {}))
+        assert len(tickets) == 2
+        assert all(t.items[0].inspection_filter is True for t in tickets)
+        assert all(t.items[0].is_partial for t in tickets)
+
+    def test_sj_factory_mixed_rows_yield_remainder(self):
+        """商检厂混有不商检行（柜内无其他厂）→ 仍须生成不商检合并票。"""
+        items = [
+            _row("K001", "A厂", "SKU-A1", inspection=True),
+            _row("K001", "A厂", "SKU-A2", inspection=False),
+            _row("K001", "B厂", "SKU-B1", inspection=True),
+        ]
+        tickets = _all_tickets(propose(items, {}))
+        assert len(tickets) == 3
+        merged = tickets[-1]
+        assert merged.items[0].inspection_filter is False
+        assert merged.items[0].factory_exclude == ["A厂", "B厂"]
+        assert any(w.rule == "non_sj_remainder" for w in merged.warnings)
+
+    def test_no_inspection_rows_whole_container(self):
+        """柜内无任何商检行 → 整柜合票，不拆分。"""
+        items = [
+            _row("K001", "A厂", "SKU-A1", inspection=False),
+            _row("K001", "B厂", "SKU-B1", inspection=False),
+        ]
+        tickets = _all_tickets(propose(items, {}))
+        assert len(tickets) == 1
+        assert tickets[0].items[0].is_partial is False
+        assert tickets[0].sj_factories == []
