@@ -6,15 +6,19 @@
 2. 编辑增删 SKU：PUT 整体替换子表；
 3. 冲突 409：SKU 已被其他映射占用 → 中文 detail（带 SKU/映射 id/品名），整体不落库；
 4. 正向联动：sync_mapping_to_sku 回填列表每个 SKU；
-5. 反向联动：sync_sku_to_mapping 命中所有含该 SKU 的映射行，品名级行不碰；
-6. build_mapping_index：by_sku 多 SKU 命中（ORM/dict 两条路径）+ lookup 优先级回归；
-7. 旧 sku_code 单值入参兼容：API 与 dispatcher 工具两条路径都落到子表。
+5. build_mapping_index：by_sku 多 SKU 命中（ORM/dict 两条路径）+ lookup 优先级回归；
+6. 旧 sku_code 单值入参兼容：API 与 dispatcher 工具两条路径都落到子表。
+
+注（2026-09-08 映射重构）：SKU→映射反向回填（sync_sku_to_mapping）已废弃，
+归属变更统一走 relink_sku_to_name（单元覆盖见 tests/sku_mapping_sync_test.py），
+本文件不再含反向联动用例。
 
 隔离（血泪红线 2026-08-11，与 tests/mapping_skus_migration_test.py 同模板）：
 先 import 全部 app 模块，再调 validation/_test_isolation.isolate_to_tmp。
 绝不触碰 app/data/ 真实库。
 
-用法（在 app/ 目录下）：
+用法（在 worktree 根目录下）：
+  python3 tests/mapping_multi_sku_test.py
   PYTHONPATH=. python3 -m pytest tests/mapping_multi_sku_test.py -q
 """
 from __future__ import annotations
@@ -38,7 +42,7 @@ from app.api.main import app  # noqa: E402
 from app.declare.mapping import build_mapping_index, lookup  # noqa: E402
 from app.db.models import Factory, FactorySKU, ProductMapping, ProductMappingSku  # noqa: E402
 from app.db.session import get_session  # noqa: E402
-from app.db.sync import sync_mapping_to_sku, sync_sku_to_mapping  # noqa: E402
+from app.db.sync import sync_mapping_to_sku  # noqa: E402
 from app.dispatcher.tools import _exec_upsert_product_mapping  # noqa: E402
 
 from _test_isolation import isolate_to_tmp  # noqa: E402
@@ -234,49 +238,7 @@ def test_forward_sync_fills_every_sku_in_list():
 
 
 # ---------------------------------------------------------------------------
-# 5. 反向联动：命中所有含该 SKU 的行；品名级行不碰
-# ---------------------------------------------------------------------------
-
-def test_reverse_sync_hits_all_rows_containing_sku():
-    shared = _sku()
-    other = _sku()
-    with get_session() as s:
-        f = Factory(factory_name=f"反向工厂-{shared}", short_name="テ")
-        s.add(f)
-        s.flush()
-        k = FactorySKU(factory_id=f.factory_id, sku_code=shared,
-                       name_cn="旧品名", hs_code="9404909000")
-        s.add(k)
-        s.flush()
-        sku_id = k.sku_id
-        # 两条映射的子表都含 shared（其中一条还多挂 other）；一条品名级行
-        m1 = ProductMapping(product_name_cn="反向品名一", hs_code="1111111111")
-        m2 = ProductMapping(product_name_cn="反向品名二", hs_code="2222222222")
-        m3 = ProductMapping(product_name_cn="品名级兜底", hs_code="3333333333")
-        s.add_all([m1, m2, m3])
-        s.flush()
-        s.add(ProductMappingSku(mapping_id=m1.id, sku_code=shared))
-        s.add(ProductMappingSku(mapping_id=m2.id, sku_code=shared))
-        s.add(ProductMappingSku(mapping_id=m2.id, sku_code=other))
-        s.commit()
-        ids = (m1.id, m2.id, m3.id)
-
-    r = client.put(f"/api/v1/mappings/skus/{sku_id}", json={
-        "name_cn": "反向新品名", "hs_code": "9999999999",
-    })
-    assert r.status_code == 200, r.text
-    assert r.json()["synced_mappings"] == 2  # m1 + m2，品名级行不算
-
-    with get_session() as s:
-        r1, r2, r3 = (s.get(ProductMapping, i) for i in ids)
-        assert r1.product_name_cn == "反向新品名" and r1.hs_code == "9999999999"
-        assert r2.product_name_cn == "反向新品名" and r2.hs_code == "9999999999"
-        # 品名级行（SKU 列表为空）绝不被触碰
-        assert r3.product_name_cn == "品名级兜底" and r3.hs_code == "3333333333"
-
-
-# ---------------------------------------------------------------------------
-# 6. build_mapping_index：多 SKU 命中 + lookup 优先级回归
+# 5. build_mapping_index：多 SKU 命中 + lookup 优先级回归
 # ---------------------------------------------------------------------------
 
 def test_build_index_multi_sku_dict_and_lookup_priority():
@@ -333,7 +295,7 @@ def test_build_index_from_orm_with_sku_links():
 
 
 # ---------------------------------------------------------------------------
-# 7. dispatcher 工具：旧 sku_code 单值兼容 + 冲突中文报错
+# 6. dispatcher 工具：旧 sku_code 单值兼容 + 冲突中文报错
 # ---------------------------------------------------------------------------
 
 def test_dispatcher_tool_legacy_sku_code_writes_subtable():
@@ -373,3 +335,21 @@ def test_dispatcher_tool_conflict_returns_chinese_error():
     assert "error" in r, r
     assert a in r["error"] and "调度占用方" in r["error"]
     assert _mapping_count() == before  # 冲突不落库
+
+
+def main():
+    test_create_with_multiple_skus_roundtrip()
+    test_create_legacy_single_sku_param()
+    test_update_replaces_sku_list()
+    test_conflict_409_on_create_no_partial_write()
+    test_conflict_409_on_update_and_self_excluded()
+    test_forward_sync_fills_every_sku_in_list()
+    test_build_index_multi_sku_dict_and_lookup_priority()
+    test_build_index_from_orm_with_sku_links()
+    test_dispatcher_tool_legacy_sku_code_writes_subtable()
+    test_dispatcher_tool_conflict_returns_chinese_error()
+    print("\nmapping_multi_sku_test: PASS")
+
+
+if __name__ == "__main__":
+    main()

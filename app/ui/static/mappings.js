@@ -1007,9 +1007,21 @@ async function saveSku() {
             method: "PUT", body: body
         });
         var n = result && result.audited_fields ? result.audited_fields.length : 0;
-        var synced = result && result.synced_mappings ? result.synced_mappings : 0;
         var msg = n > 0 ? "已保存，已记录留痕（" + n + " 个字段变更）" : "已保存（无字段变化）";
-        if (synced > 0) msg += "；已同步 " + synced + " 条品名映射";
+        // 品名变更触发的映射归属移动（relink）：脱离旧品名 / 挂入或新建映射行
+        var relink = result && result.relink ? result.relink : null;
+        if (relink) {
+            var detached = relink.detached_from || [];
+            if (detached.length > 0) {
+                var names = detached.map(function (d) { return "「" + d[1] + "」"; }).join("、");
+                msg += "；已脱离品名" + names;
+            }
+            if (relink.action === "appended") {
+                msg += "；已挂入既有品名映射";
+            } else if (relink.action === "created") {
+                msg += "；已新建品名映射行（单位代码待补）";
+            }
+        }
         toast(msg, 3500);
         closeSkuModal();
         loadSkus();

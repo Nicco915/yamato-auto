@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-"""新 SKU 落库自动挂产品映射回归测试（S5：writer._upsert_db → sync.auto_link_new_sku_to_mapping）。
+"""新 SKU 落库自动挂产品映射回归测试（S5：writer._upsert_db → sync.attach_sku_to_mapping）。
 
 覆盖：
 1. e2e（EXTRACTION_MOCK 跑真实图 Node1→挂起→resume 批准→Node6 落库）：
    - 新 SKU 落库且品名在映射中不存在 → 自动建品名级行（字段继承、
-     is_incomplete 口径、子表含该 SKU、旧列 sku_code 同步）；
+     is_incomplete 新语义恒 True（unit_code 留空）、子表含该 SKU、旧列 sku_code 同步）；
    - 第二个同品名新 SKU 落库 → 不建行，追加进既有行的 SKU 列表；
    - 同 SKU 跨工厂再次落库 → 幂等无重复子表行、不重复建行；
    - name_cn 为空的新 SKU → 不触发任何映射动作；
    - 已有映射行的 unit_code/hs_code 不被自动挂接改动（只挂接，不反向回填）；
 2. 老 SKU 重跑批次（record 非 None）→ 不触发自动挂接，映射零变化；
-3. 单元级（直接调 sync.auto_link_new_sku_to_mapping）：
+3. 单元级（直接调 sync.attach_sku_to_mapping）：
    - name_cn 空/纯空格 → 不动作；
    - 同品名多行 → 挂到最近更新行（id 大者优先兜底）；
    - SKU 已被其他品名映射占用 → 跳过不抢挂。
@@ -43,7 +43,7 @@ from sqlalchemy import select  # noqa: E402
 from app.api import service  # noqa: E402
 from app.db.models import ProductMapping, ProductMappingSku  # noqa: E402
 from app.db.session import get_session  # noqa: E402
-from app.db.sync import auto_link_new_sku_to_mapping  # noqa: E402
+from app.db.sync import attach_sku_to_mapping  # noqa: E402
 from app.nodes import extraction_node as en  # noqa: E402
 
 from _test_isolation import isolate_to_tmp  # noqa: E402
@@ -131,17 +131,17 @@ def _all_links() -> list[ProductMappingSku]:
 
 
 # ---------------------------------------------------------------------------
-# 1. 单元级：sync.auto_link_new_sku_to_mapping 边界行为
+# 1. 单元级：sync.attach_sku_to_mapping 边界行为
 # ---------------------------------------------------------------------------
 
 def test_unit_blank_name_no_action():
     """name_cn 为空/纯空格 → 返回 None，不产生任何映射行/子表行。"""
     before_m, before_l = len(_all_mappings()), len(_all_links())
     with get_session() as s:
-        assert auto_link_new_sku_to_mapping(
+        assert attach_sku_to_mapping(
             s, factory_name="单元厂", sku_code="4900000008001",
             name_cn=None, hs_code="1234") is None
-        assert auto_link_new_sku_to_mapping(
+        assert attach_sku_to_mapping(
             s, factory_name="单元厂", sku_code="4900000008001",
             name_cn="   ", hs_code="1234") is None
         s.commit()
@@ -160,7 +160,7 @@ def test_unit_multi_row_picks_latest():
         s.refresh(m1)
         s.refresh(m2)
         older_id, latest_id = m1.id, m2.id
-        r = auto_link_new_sku_to_mapping(
+        r = attach_sku_to_mapping(
             s, factory_name="单元厂", sku_code="4900000008002",
             name_cn="单元品名丁", hs_code="3333")
         s.commit()
@@ -179,7 +179,7 @@ def test_unit_conflict_skip():
         s.commit()
     before_m = len(_all_mappings())
     with get_session() as s:
-        r = auto_link_new_sku_to_mapping(
+        r = attach_sku_to_mapping(
             s, factory_name="单元厂", sku_code="4900000008003",
             name_cn="单元品名丙新", hs_code="5555")
         s.commit()
@@ -257,7 +257,7 @@ def test_e2e_auto_link_create_append_idempotent(monkeypatch):
     assert ma.inspection_required is True
     assert ma.name_en == "TEST ITEM A"
     assert ma.unit_code is None                      # 无源可继承，留空
-    assert ma.is_incomplete is False                 # hs_code 非空
+    assert ma.is_incomplete is True                  # 新语义 = unit_code 空，建行恒 True
     assert ma.sku_code == SKU1                       # 旧列与列表首个一致
     links_a = [l.sku_code for l in _link_rows(ma.id)]
     assert sorted(links_a) == sorted([SKU1, SKU2]), \

@@ -1,8 +1,16 @@
-"""product_mappings ↔ factory_skus 双向同步工具（供 UI 与脚本复用）。
+"""product_mappings ↔ factory_skus 同步与 SKU 归属工具（供流水线 / UI / 脚本复用）。
 
-正向 sync_mapping_to_sku：品名映射 Tab 编辑 → 回填 SKU 主数据；
-反向 sync_sku_to_mapping：SKU 主数据 Tab 编辑 → 回填品名映射（仅 SKU 级行）；
-自动挂接 auto_link_new_sku_to_mapping：Node6 新 SKU 落库后按品名挂/建映射行；
+设计定型（2026-09-08 与用户确认）：产品映射是「SKU → 单位代码」查找表，
+有效字段只有中文品名（匹配跳板）、unit_code、SKU 列表；一个 SKU 在映射表里
+最多归属一个品名行。SKU 侧任何字段变化都不再反向回填映射行。
+
+正向 sync_mapping_to_sku：品名映射 Tab 编辑 → 回填 SKU 主数据（保留）；
+归属三原子操作：
+- detach_sku_from_mappings：把 SKU 从所有映射行摘除（行保留，摘空变品名级兜底行）；
+- attach_sku_to_mapping：按中文品名挂接——命中追加，未命中建行（一次性继承
+  税号/商检/英文名，unit_code 留空，is_incomplete 按新语义=unit_code 空）；
+- relink_sku_to_name：detach + attach 组合（品名空 → 只 detach），
+  流水线老 SKU 改品名与手动编辑品名共用；
 启动迁移 ensure_mapping_skus_migrated：旧 sku_code 单列只读搬迁到
 product_mapping_skus 子表（幂等，失败只记 warning 不阻断启动）。
 """
@@ -79,6 +87,14 @@ def _mapping_sku_codes(mapping: ProductMapping) -> list[str]:
     return result
 
 
+def _is_blank(v) -> bool:
+    """空值口径（与 mappings_api._blank 一致）：None 或纯空白字符串。
+
+    供 scripts/merge_duplicate_mappings.py 等老脚本复用，勿删。
+    """
+    return v is None or (isinstance(v, str) and not v.strip())
+
+
 def check_sku_conflicts(
     session: Session,
     sku_codes: list[str],
@@ -136,104 +152,88 @@ def sync_mapping_to_sku(session: Session, mapping: ProductMapping) -> int:
     return len(rows)
 
 
-def sync_sku_to_mapping(
-    session: Session,
-    sku: FactorySKU,
-    *,
-    sync_name: bool = False,
-    sync_name_en: bool = False,
-    sync_hs: bool = False,
-    sync_inspection: bool = False,
-) -> int:
-    """factory_skus → product_mappings 反向回填（SKU 主数据 Tab 编辑后调用）。
+def detach_sku_from_mappings(session: Session, sku_code: str) -> list[ProductMapping]:
+    """把 SKU 从所有包含它的映射行中摘除（一品名一 SKU 归属的前置步骤）。
 
-    命中范围：product_mapping_skus 子表里 sku_code 等于该 SKU 的**所有**映射行
-    （一品名多 SKU 后，含该 SKU 的每一行都算 SKU 级行，不限工厂全部更新）；
-    为兼容未迁移的老数据，旧列 sku_code 精确匹配的行也并入。
-    品名级行（SKU 列表为空）可能被多个 SKU 共享兜底，绝不触碰。
-
-    风险边界（2026-08-12 与用户确认的设计决策）：
-    - product_name_cn / name_en 是报关匹配主键/辅助字段，清空不会回写，
-      仅在原值非空时回写，避免毁掉匹配键；
-    - 同 sku_code 的映射行可能有多条且不限工厂，全部更新（与正向 sync 同 scope）；
-    - product_mappings 无审计表，此处改动静默——调用方需在响应里返回行数告知用户。
-
-    参数 sync_*：只回写发生变化的字段（调用方按 audited_fields 传入）。
-    返回更新的映射行数。
+    - 子表 product_mapping_skus 里 sku_code 相等的关联全部删除（不限工厂）；
+    - 旧列 sku_code 等于该 SKU 的行：旧列同步为剩余列表首个 / None
+      （与 attach 同约定，防启动迁移 ensure_mapping_skus_migrated 幽灵搬回）；
+    - 映射行本身保留：摘空后成为品名级兜底行（设计决策，不自动删行）；
+    - 返回受影响的映射行列表（调用方用于日志/用户提示）。
     """
-    if not (sync_name or sync_name_en or sync_hs or sync_inspection):
-        return 0
-    # 子表反查：含该 SKU 的所有映射行（多 SKU 化后的主路径）
-    link_ids = [
+    sku_code = (sku_code or "").strip()
+    if not sku_code:
+        return []
+    mapping_ids = {
         row.mapping_id
         for row in session.query(ProductMappingSku)
-        .filter(ProductMappingSku.sku_code == sku.sku_code)
+        .filter(ProductMappingSku.sku_code == sku_code)
         .all()
-    ]
-    # 兼容未迁移老数据：旧列 sku_code 精确匹配的行并入（去重）
-    legacy_ids = [
+    }
+    # 兼容未迁移老数据：旧列精确匹配的行并入
+    mapping_ids |= {
         m.id
         for m in session.query(ProductMapping)
-        .filter(ProductMapping.sku_code == sku.sku_code)
+        .filter(ProductMapping.sku_code == sku_code)
         .all()
-    ]
-    ids = list(dict.fromkeys(link_ids + legacy_ids))
-    if not ids:
-        return 0
+    }
+    if not mapping_ids:
+        return []
     rows = (
         session.query(ProductMapping)
-        .filter(ProductMapping.id.in_(ids))
+        .filter(ProductMapping.id.in_(mapping_ids))
         .all()
     )
+    affected: list[ProductMapping] = []
     for m in rows:
-        if sync_name and sku.name_cn:
-            m.product_name_cn = sku.name_cn
-        if sync_name_en and sku.name_en:
-            m.name_en = sku.name_en
-        if sync_hs:
-            m.hs_code = sku.hs_code
-            m.is_incomplete = not (sku.hs_code or "").strip()
-        if sync_inspection:
-            m.inspection_required = sku.inspection_required
+        before = len(m.sku_links)
+        # delete-orphan 级联：从集合移除即 flush 时删子表行
+        m.sku_links[:] = [l for l in m.sku_links if l.sku_code != sku_code]
+        removed = len(m.sku_links) != before
+        legacy_hit = (m.sku_code or "") == sku_code
+        if not removed and not legacy_hit:
+            continue
+        if legacy_hit:
+            m.sku_code = m.sku_links[0].sku_code if m.sku_links else None
+        affected.append(m)
     session.flush()
-    if rows:
+    if affected:
         logger.info(
-            "[sync] SKU %s → 品名映射反向回填 %d 行（name=%s name_en=%s hs=%s inspection=%s）",
-            sku.sku_code, len(rows), sync_name, sync_name_en, sync_hs, sync_inspection,
+            "[sync] 摘除 SKU %s：从 %d 行映射移除（行保留）→ %s",
+            sku_code, len(affected),
+            [(m.id, m.product_name_cn) for m in affected],
         )
-    return len(rows)
+    return affected
 
 
-def _is_blank(v) -> bool:
-    """空值口径（与 mappings_api._blank 一致）：None 或纯空白字符串。"""
-    return v is None or (isinstance(v, str) and not v.strip())
-
-
-def auto_link_new_sku_to_mapping(
+def attach_sku_to_mapping(
     session: Session,
     *,
-    factory_name: str,
     sku_code: str,
     name_cn: str | None,
     hs_code: str | None = None,
     inspection_required: bool = False,
     name_en: str | None = None,
+    factory_name: str = "",
 ) -> str | None:
-    """新 SKU 落库后的自动挂接：按中文品名挂/建产品映射行。
+    """按中文品名挂接 SKU：命中既有映射行则追加，未命中则新建品名级行。
 
-    只在 Node6 真·新 SKU（INSERT 分支）后由 writer 调用；name_cn 为空直接返回。
     - 品名 strip 后精确匹配 product_mappings（多条取最近更新，与
       lookup-by-name 同口径：updated_at 倒序 + id 倒序兜底）；
     - 命中：SKU 不在其子表列表则追加（已在则不动，幂等）；只挂接，
-      不做反向回填（映射行既有字段一概不改，unit_code 等不受影响）；
-    - 未命中：新建品名级映射行，hs_code/inspection_required/name_en 从
-      该 SKU 继承，unit_code 留空，is_incomplete 按 hs_code 是否为空；
+      映射行既有字段一概不改（unit_code 等不受影响）；
+    - 未命中：新建品名级映射行，hs_code/inspection_required/name_en 从触发
+      SKU 一次性继承（审核页「失焦带出税号/商检」依赖这些字段），
+      unit_code 留空待人工补；is_incomplete 新语义 = unit_code 为空，
+      新建行必为 True；
     - 防御：SKU 已被其他品名的映射行占用时跳过挂接并记 warning
-      （与 UI 409 同语义，杜绝一品名一 SKU 约束被自动流程撞破）。
+      （正常流程调用方已先 detach，不会撞；此为兜底）。
+    - factory_name 仅用于日志；品名为空直接返回 None。
 
     返回 "created" / "appended" / None（未动作）。
     """
     name = (name_cn or "").strip()
+    sku_code = (sku_code or "").strip()
     if not name or not sku_code:
         return None
 
@@ -253,32 +253,31 @@ def auto_link_new_sku_to_mapping(
     )
     if conflicts:
         logger.warning(
-            "[sync] 自动挂接跳过：SKU %s（工厂「%s」品名「%s」）已被映射「%s」(id=%s) 占用",
+            "[sync] 挂接跳过：SKU %s（工厂「%s」品名「%s」）已被映射「%s」(id=%s) 占用",
             sku_code, factory_name, name,
             conflicts[0]["product_name_cn"], conflicts[0]["mapping_id"],
         )
         return None
 
     if mapping is None:
-        hs = (hs_code or "").strip() or None
         mapping = ProductMapping(
             product_name_cn=name,
-            hs_code=hs,
+            hs_code=(hs_code or "").strip() or None,
             inspection_required=bool(inspection_required),
             name_en=(name_en or "").strip() or None,
             unit_code=None,  # 计量单位代码无源可继承，留空待人工补
-            is_incomplete=_is_blank(hs),
+            is_incomplete=True,  # 新语义 = unit_code 为空；新建行 unit_code 必空
         )
         session.add(mapping)
         session.flush()  # 拿到 mapping.id 供子表挂接
         mapping.sku_links.append(ProductMappingSku(sku_code=sku_code))
-        # 旧列保持与列表一致（防启动迁移幽灵搬回，语义同 _replace_sku_links）
+        # 旧列保持与列表一致（防启动迁移幽灵搬回）
         mapping.sku_code = sku_code
         session.flush()
         logger.info(
-            "[sync] 自动挂接：工厂「%s」新 SKU %s 品名「%s」→ 新建品名级映射行 "
-            "(id=%s, hs_code=%s, is_incomplete=%s)",
-            factory_name, sku_code, name, mapping.id, hs, mapping.is_incomplete,
+            "[sync] 挂接：工厂「%s」SKU %s 品名「%s」→ 新建品名级映射行 "
+            "(id=%s, hs_code=%s, is_incomplete=True)",
+            factory_name, sku_code, name, mapping.id, mapping.hs_code,
         )
         return "created"
 
@@ -288,8 +287,42 @@ def auto_link_new_sku_to_mapping(
             mapping.sku_code = sku_code  # 旧列与列表首个保持一致
         session.flush()
         logger.info(
-            "[sync] 自动挂接：工厂「%s」新 SKU %s 品名「%s」→ 追加进既有映射行 (id=%s)",
+            "[sync] 挂接：工厂「%s」SKU %s 品名「%s」→ 追加进既有映射行 (id=%s)",
             factory_name, sku_code, name, mapping.id,
         )
         return "appended"
     return None  # 幂等：SKU 已在列表中，不动
+
+
+def relink_sku_to_name(
+    session: Session,
+    *,
+    sku_code: str,
+    name_cn: str | None,
+    hs_code: str | None = None,
+    inspection_required: bool = False,
+    name_en: str | None = None,
+    factory_name: str = "",
+) -> dict:
+    """SKU 品名归属变更的统一入口：先摘除旧归属，再按新品名挂接。
+
+    流水线老 SKU 改品名（writer UPDATE 分支）与手动编辑 SKU 品名
+    （mappings_api update_sku）共用；品名为空 → 只摘除不挂接
+    （SKU 暂时不属于任何映射，待补了品名再挂）。
+
+    返回 {"detached_from": [(mapping_id, 品名)], "action": created/appended/None}。
+    """
+    detached = detach_sku_from_mappings(session, sku_code)
+    action = attach_sku_to_mapping(
+        session,
+        sku_code=sku_code,
+        name_cn=name_cn,
+        hs_code=hs_code,
+        inspection_required=inspection_required,
+        name_en=name_en,
+        factory_name=factory_name,
+    )
+    return {
+        "detached_from": [(m.id, m.product_name_cn) for m in detached],
+        "action": action,
+    }

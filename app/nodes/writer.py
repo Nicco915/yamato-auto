@@ -32,7 +32,7 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.db.models import Factory, FactorySKU, ReviewAudit
 from app.db.session import get_session
-from app.db.sync import auto_link_new_sku_to_mapping
+from app.db.sync import attach_sku_to_mapping, relink_sku_to_name
 from app.logging_config import bind_factory_from_state
 from app.state import AgentState
 
@@ -264,23 +264,49 @@ def _auto_link_mappings(factory_name: str, new_items: list[dict]) -> None:
 
     只在真·新 SKU（INSERT 分支）落库成功后触发；独立 session、独立事务，
     整体失败只记 warning，绝不影响已完成的 Excel 写入/主数据落库。
-    幂等由 auto_link_new_sku_to_mapping 内部保证（先查后插 + 子表唯一约束）。
+    幂等由 attach_sku_to_mapping 内部保证（SKU 已在列表则不动 + 子表唯一约束）。
     """
     try:
         with get_session() as session:
             for item in new_items:
-                auto_link_new_sku_to_mapping(
+                attach_sku_to_mapping(
                     session,
-                    factory_name=factory_name,
                     sku_code=str(item.get("sku") or ""),
                     name_cn=item.get("name_cn"),
                     hs_code=item.get("hs_code"),
                     inspection_required=bool(item.get("inspection_required", False)),
                     name_en=item.get("name_en"),
+                    factory_name=factory_name,
                 )
             session.commit()
     except Exception as e:  # noqa: BLE001 辅助设施失败静默降级，见 docstring
         logger.warning("[Node6] 新 SKU 自动挂接产品映射失败（主流程不受影响）："
+                       "%s: %s", type(e).__name__, e)
+
+
+def _relink_mappings(factory_name: str, relink_items: list[dict]) -> None:
+    """老 SKU 人工改品名后重挂映射归属（辅助设施，与 _auto_link_mappings 同哲学）。
+
+    只在 UPDATE 分支检测到 name_cn 变化后触发；独立 session、独立事务，
+    逐个调 relink_sku_to_name（先把 SKU 从所有映射行摘除、行保留，
+    再按新品名挂接），整体失败只记 warning，绝不影响已完成的
+    Excel 写入/主数据落库。
+    """
+    try:
+        with get_session() as session:
+            for item in relink_items:
+                relink_sku_to_name(
+                    session,
+                    sku_code=str(item.get("sku") or ""),
+                    name_cn=item.get("name_cn"),
+                    hs_code=item.get("hs_code"),
+                    inspection_required=bool(item.get("inspection_required", False)),
+                    name_en=item.get("name_en"),
+                    factory_name=factory_name,
+                )
+            session.commit()
+    except Exception as e:  # noqa: BLE001 辅助设施失败静默降级，见 docstring
+        logger.warning("[Node6] 品名变更重挂产品映射失败（主流程不受影响）："
                        "%s: %s", type(e).__name__, e)
 
 
@@ -292,6 +318,7 @@ def _upsert_db(state: AgentState) -> tuple[int, int]:
     auto_short_name: str | None = None
     match_method = cur.get("match_method")
     new_sku_items: list[dict] = []  # 真·新 SKU（INSERT 分支），commit 后自动挂映射用
+    relink_items: list[dict] = []   # 老 SKU 品名变更（UPDATE 分支），commit 后重挂映射用
 
     with get_session() as session:
         factory = session.scalar(
@@ -348,6 +375,7 @@ def _upsert_db(state: AgentState) -> tuple[int, int]:
                 # 老 SKU：人工微调过 → UPDATE 刷新重量与合规字段；
                 # 或提交时勾选了「更新历史单重」（单重波动人工确认沉淀为新基准，
                 # 即使数值未编辑也刷新重量；合规字段提交值=主库现值，写回无副作用）
+                old_name_cn = (record.name_cn or "").strip()  # 品名变更检测基线
                 if unit_net is not None:
                     record.unit_net_weight = unit_net
                 if unit_gross is not None:
@@ -358,10 +386,25 @@ def _upsert_db(state: AgentState) -> tuple[int, int]:
                 if item.get("inspection_required") is not None:
                     record.inspection_required = bool(item["inspection_required"])
                 updated += 1
+                # 品名变更 → 收进 relink_items，主 commit 后重挂映射归属；
+                # name_cn 只在提交值非 None 时刷新（保持现状），故人工没改品名
+                # 或只改重量时自然不会进 relink_items；继承字段以落库后现值为准
+                new_name_cn = (record.name_cn or "").strip()
+                if new_name_cn != old_name_cn:
+                    relink_items.append({
+                        "sku": sku,
+                        "name_cn": record.name_cn,
+                        "hs_code": record.hs_code,
+                        "inspection_required": record.inspection_required,
+                        "name_en": record.name_en,
+                    })
         session.commit()
     if new_sku_items:
         # 自动挂接放在主落库 commit 之后：映射是辅助设施，失败不牵连主流程
         _auto_link_mappings(factory_name, new_sku_items)
+    if relink_items:
+        # 品名变更重挂与自动挂接同款哲学：辅助设施，失败不牵连主流程
+        _relink_mappings(factory_name, relink_items)
     if auto_short_name:
         _write_short_name_audit(state, factory_name, auto_short_name,
                                 match_method or "")

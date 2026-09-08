@@ -20,7 +20,7 @@
 - DELETE /api/v1/mappings/aliases/{alias_id}      删除别名
 - GET    /api/v1/mappings/skus              SKU 主数据列表（?factory_id=&q= 模糊搜 SKU/品名）
 - DELETE /api/v1/mappings/skus/{sku_id}     删除 SKU 主数据
-- PUT    /api/v1/mappings/skus/{sku_id}     编辑 SKU 主数据（逐字段 diff 写 sku_master_audits 留痕；品名/税号/商检变更反向回填 SKU 级映射）
+- PUT    /api/v1/mappings/skus/{sku_id}     编辑 SKU 主数据（逐字段 diff 写 sku_master_audits 留痕；品名变更走 relink 移动映射归属）
 - POST   /api/v1/mappings/products/batch-delete   批量删除产品映射
 - POST   /api/v1/mappings/groups/batch-delete     批量删除品名组（含成员）
 - POST   /api/v1/mappings/factories/batch-delete  批量删除工厂（有关联跳过）
@@ -53,7 +53,7 @@ from app.db.models import (
     SkuMasterAudit,
 )
 from app.db.session import get_session
-from app.db.sync import check_sku_conflicts, sync_mapping_to_sku, sync_sku_to_mapping
+from app.db.sync import check_sku_conflicts, relink_sku_to_name, sync_mapping_to_sku
 
 logger = logging.getLogger(__name__)
 
@@ -297,7 +297,7 @@ def lookup_product_by_name(name: str = Query(default="")):
 
 @router.post("/products", status_code=201)
 def create_product(req: ProductUpsert):
-    """新增映射（多 SKU：写子表）。税号缺失时自动标待完善。
+    """新增映射（多 SKU：写子表）。单位代码（unit_code）缺失时自动标待完善。
 
     冲突拦截：任一 SKU 已被其他映射行占用 → 409，整体不落库（先全量校验再写入）。
     """
@@ -314,7 +314,7 @@ def create_product(req: ProductUpsert):
             name_en=(req.name_en or "").strip() or None,
             unit_code=(req.unit_code or "").strip() or None,
             factory_id=req.factory_id,
-            is_incomplete=_blank(req.hs_code),
+            is_incomplete=_blank(req.unit_code),
         )
         _replace_sku_links(s, m, sku_codes)
         s.add(m)
@@ -328,7 +328,7 @@ def update_product(product_id: int, req: ProductUpsert):
     """编辑映射（多 SKU：子表整体替换）：保存后调 sync_mapping_to_sku 逐 SKU 回填 factory_skus。
 
     冲突拦截：任一 SKU 已被其他映射行占用 → 409（排除本行），整体不落库。
-    人工补全税号后自动清除待完善标记。返回 synced_skus 便于前端提示。
+    人工补全单位代码后自动清除待完善标记。返回 synced_skus 便于前端提示。
     """
     if _blank(req.product_name_cn):
         raise HTTPException(status_code=400, detail="中文品名不能为空")
@@ -345,7 +345,7 @@ def update_product(product_id: int, req: ProductUpsert):
         m.name_en = (req.name_en or "").strip() or None
         m.unit_code = (req.unit_code or "").strip() or None
         m.factory_id = req.factory_id
-        m.is_incomplete = _blank(m.hs_code)
+        m.is_incomplete = _blank(m.unit_code)
         _replace_sku_links(s, m, sku_codes)
         synced = sync_mapping_to_sku(s, m)
         s.commit()
@@ -865,9 +865,10 @@ def update_sku(sku_id: int, req: SkuUpsert):
     """编辑 SKU 主数据：逐字段 diff，有变化的字段各写一条 sku_master_audits。
 
     单件净重/毛重允许留空（None）：每批次 Node4 重新计算，DB 值仅作比对参考。
-    品名/税号/商检有变化时反向回填 product_mappings 的 SKU 级行
-    （sync_sku_to_mapping，仅 sku_code 精确匹配；品名级行不动）。
-    返回 audited_fields + synced_mappings 便于前端提示。
+    SKU 侧任何字段变化都不再反向回填映射行（旧 sync_sku_to_mapping 已废弃）；
+    仅品名（name_cn）变化时调 relink_sku_to_name 移动映射归属：先从所有映射行
+    摘除（行保留），再按新品名挂接（命中追加/未命中建行）；品名清空 → 只摘除。
+    返回 audited_fields + relink（无归属变动时为 None）便于前端提示。
     """
     with get_session() as s:
         k = s.get(FactorySKU, sku_id)
@@ -899,17 +900,27 @@ def update_sku(sku_id: int, req: SkuUpsert):
             )
             setattr(k, field, new)
             audited.append(field)
-        # 反向打通：品名/英文品名/税号/商检变了才回填映射表（与正向 sync 对称的字段）
-        synced = sync_sku_to_mapping(
-            s, k,
-            sync_name="name_cn" in audited,
-            sync_name_en="name_en" in audited,
-            sync_hs="hs_code" in audited,
-            sync_inspection="inspection_required" in audited,
-        )
+        # 品名变更 → 移动映射归属（同一 session 同一事务；此时 k 已是新值，
+        # name_cn 清空 → None → 只摘除不挂接）
+        relink = None
+        if "name_cn" in audited:
+            result = relink_sku_to_name(
+                s,
+                sku_code=k.sku_code,
+                name_cn=k.name_cn,
+                hs_code=k.hs_code,
+                inspection_required=k.inspection_required,
+                name_en=k.name_en,
+            )
+            if result["detached_from"] or result["action"] is not None:
+                relink = {
+                    # list 套 list 保证 JSON 可序列化（元组会原样转数组，显式转换更稳）
+                    "detached_from": [[mid, name] for mid, name in result["detached_from"]],
+                    "action": result["action"],
+                }
         s.commit()
         s.refresh(k)
-        return {**_sku_dict(k), "audited_fields": audited, "synced_mappings": synced}
+        return {**_sku_dict(k), "audited_fields": audited, "relink": relink}
 
 
 # ---------------------------------------------------------------------------

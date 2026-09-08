@@ -1,18 +1,36 @@
 # -*- coding: utf-8 -*-
-"""SKU 主数据 → 品名映射 反向同步测试（2026-08-12 双向打通）。
+"""SKU ↔ 品名映射归属三原子操作单元测试（2026-09-08 映射重构：SKU → 单位代码查找表）。
 
-覆盖 update_sku（PUT /api/v1/mappings/skus/{id}）的反向回填行为：
-- name_cn / hs_code / inspection_required 变更 → 同 sku_code 的 SKU 级映射行同步
-- 品名级映射行（sku_code 为空）绝不被触碰（可能被多 SKU 共享兜底）
-- 清空 name_cn 不回写映射键（保护报关匹配主键不被写空）
-- 清空 hs_code 联动 is_incomplete=True
-- 仅改重量不同步；无映射行时 synced_mappings=0
-- 正向（映射 → SKU）回归：update_product 仍正常回填
+直接调 app.db.sync 的三个新 API（get_session 建临时数据，无需跑图）：
 
-运行方式：
-    cd app && PYTHONPATH=. python3 -m pytest tests/sku_mapping_sync_test.py -v
+attach_sku_to_mapping（按中文品名挂接）：
+- 命中既有行 → 追加进 SKU 列表（幂等，不重复）；既有字段（unit_code/hs 等）一概不改；
+- 未命中 → 新建品名级行：hs_code/inspection_required/name_en 从 SKU 一次性继承，
+  unit_code=None，is_incomplete 恒为 True（新语义 = unit_code 空），旧列 sku_code 同步；
+- 品名 None / 纯空格 → 返回 None，不产生任何映射行/子表行；
+- SKU 已被其他品名行占用 → 返回 None 且不挂不建行；
+- 同品名多行 → 挂到最近更新行（updated_at 同秒并列时 id 大者优先）。
 
-隔离：validation/_test_isolation.isolate_to_tmp（血泪红线，绝不碰真实库）。
+detach_sku_from_mappings（从所有映射行摘除）：
+- 一个 SKU 挂在多行（含仅旧列 sku_code 匹配的未迁移老数据行）→ 全部摘除；
+- 旧列等于被摘 SKU 时同步为剩余列表首个 / None（防启动迁移幽灵搬回）；
+- 摘空后映射行本身保留（品名级兜底行）；不影响其他 SKU 的关联。
+
+relink_sku_to_name（detach + attach 组合）：
+- SKU 从品名 X 行移到既有品名 Y 行：detached_from 含 X，action="appended"；
+- 移到不存在的品名：action="created"，新行字段继承正确；
+- 品名传 None：只 detach，action 为 None。
+
+防幽灵回归：detach 后跑 ensure_mapping_skus_migrated()，
+被摘 SKU 不会被启动迁移从旧列搬回任何映射行。
+
+隔离（血泪红线 2026-08-11，与 tests/mapping_skus_migration_test.py 同模板）：
+先 import 全部 app 模块，再调 validation/_test_isolation.isolate_to_tmp。
+绝不触碰 app/data/ 真实库。
+
+用法（在 worktree 根目录下）：
+  python3 tests/sku_mapping_sync_test.py
+  PYTHONPATH=. python3 -m pytest tests/sku_mapping_sync_test.py -q
 """
 from __future__ import annotations
 
@@ -21,94 +39,47 @@ import os
 import sys
 from pathlib import Path
 
-APP_ROOT = Path(__file__).resolve().parent.parent
-if str(APP_ROOT) not in sys.path:
-    sys.path.insert(0, str(APP_ROOT))
-sys.path.insert(0, str(APP_ROOT / "validation"))
-
-os.environ["EXTRACTION_MOCK"] = "1"
+# ---- env 前置（EXTRACTION_MOCK 需在 import app 之前；db 路径在 import 后隔离）----
+os.environ["EXTRACTION_MOCK"] = "1"                      # 提取走 mock，不调 LLM
 os.environ["DISPATCHER_MOCK"] = "1"
 
-from fastapi.testclient import TestClient  # noqa: E402
+APP_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(APP_ROOT))
+sys.path.insert(0, str(APP_ROOT / "validation"))
 
-from app.api.main import app  # noqa: E402
-from app.db.models import Factory, FactorySKU, ProductMapping  # noqa: E402
+from app.db.models import ProductMapping, ProductMappingSku  # noqa: E402
 from app.db.session import get_session  # noqa: E402
+from app.db.sync import (  # noqa: E402
+    attach_sku_to_mapping,
+    detach_sku_from_mappings,
+    ensure_mapping_skus_migrated,
+    relink_sku_to_name,
+)
 
 from _test_isolation import isolate_to_tmp  # noqa: E402
 
-# 隔离必须在 import 全部 app 模块之后（llm_client 的 load_dotenv override 红线）
-TMP = isolate_to_tmp("yamato_sku_sync_test_")
+# 隔离必须在 import app 模块之后（load_dotenv override 红线）；
+# engine 是惰性单例，首次 get_session 才按隔离后的 settings 建临时库
+TMP = isolate_to_tmp("yamato_sku_mapping_sync_test_")
 
-client = TestClient(app)
-
-_SKU_SEQ = itertools.count(1)
-_FACTORY_SEQ = itertools.count(1)
+_SEQ = itertools.count(1)
 
 
-def _new_sku() -> str:
-    """每个测试用唯一 sku_code：sync 按 sku_code 全表匹配，复用会被前序用例污染。"""
-    return f"4901234567{next(_SKU_SEQ):03d}"
+def _sku() -> str:
+    """每个用例唯一 SKU：detach/attach 按 sku_code 全表匹配，复用会被前序用例污染。"""
+    return f"4907777{next(_SEQ):06d}"
 
 
-def _seed(
-    *,
-    sku: str,
-    sku_name_cn="旧品名",
-    sku_hs="9404909000",
-    sku_inspection=False,
-    with_sku_mapping=True,
-    with_name_mapping=True,
-    extra_sku_mapping_rows=0,
-):
-    """造数：1 工厂 + 1 SKU + 映射行。返回 (sku_id, [mapping_ids])。"""
+def _links_of(mapping_id: int) -> list[str]:
+    """子表 SKU 列表（按 id 排序）。"""
     with get_session() as s:
-        f = Factory(factory_name=f"测试工厂-{next(_FACTORY_SEQ)}", short_name="テスト")
-        s.add(f)
-        s.flush()
-        k = FactorySKU(
-            factory_id=f.factory_id,
-            sku_code=sku,
-            name_cn=sku_name_cn,
-            hs_code=sku_hs,
-            inspection_required=sku_inspection,
+        rows = (
+            s.query(ProductMappingSku)
+            .filter(ProductMappingSku.mapping_id == mapping_id)
+            .order_by(ProductMappingSku.id)
+            .all()
         )
-        s.add(k)
-        s.flush()
-        mapping_ids = []
-        if with_sku_mapping:
-            m = ProductMapping(
-                product_name_cn=sku_name_cn,
-                sku_code=sku,
-                hs_code=sku_hs,
-                inspection_required=sku_inspection,
-            )
-            s.add(m)
-            s.flush()
-            mapping_ids.append(m.id)
-        for i in range(extra_sku_mapping_rows):
-            m = ProductMapping(
-                product_name_cn=sku_name_cn,
-                sku_code=sku,
-                hs_code=sku_hs,
-                inspection_required=sku_inspection,
-            )
-            s.add(m)
-            s.flush()
-            mapping_ids.append(m.id)
-        if with_name_mapping:
-            # 品名级兜底行：与 SKU 同名但 sku_code 为空，绝不许被反向同步碰到
-            nm = ProductMapping(
-                product_name_cn=sku_name_cn,
-                sku_code=None,
-                hs_code="1111111111",
-                inspection_required=True,
-            )
-            s.add(nm)
-            s.flush()
-            mapping_ids.append(nm.id)
-        s.commit()
-        return k.sku_id, mapping_ids
+        return [r.sku_code for r in rows]
 
 
 def _get_mapping(mapping_id: int) -> ProductMapping:
@@ -118,147 +89,365 @@ def _get_mapping(mapping_id: int) -> ProductMapping:
         return m
 
 
-def _put_sku(sku_id: int, **fields):
-    body = {
-        "name_cn": fields.get("name_cn"),
-        "name_en": fields.get("name_en"),
-        "hs_code": fields.get("hs_code"),
-        "inspection_required": fields.get("inspection_required", False),
-        "unit_net_weight": fields.get("unit_net_weight"),
-        "unit_gross_weight": fields.get("unit_gross_weight"),
-    }
-    return client.put(f"/api/v1/mappings/skus/{sku_id}", json=body)
-
-
-# ---------------------------------------------------------------------------
-# 反向同步核心行为
-# ---------------------------------------------------------------------------
-
-
-def test_rename_syncs_sku_level_mapping():
-    """改 name_cn → 同 sku_code 的映射行 product_name_cn 同步更新。"""
-    sku_id, ids = _seed(sku=_new_sku())
-    r = _put_sku(sku_id, name_cn="新品名", hs_code="9404909000")
-    assert r.status_code == 200, r.text
-    data = r.json()
-    assert "name_cn" in data["audited_fields"]
-    assert data["synced_mappings"] == 1
-    assert _get_mapping(ids[0]).product_name_cn == "新品名"
-
-
-def test_name_level_mapping_untouched():
-    """品名级映射行（sku_code 为空）不被反向同步——即使它与 SKU 同名。"""
-    sku_id, ids = _seed(sku=_new_sku())
-    r = _put_sku(sku_id, name_cn="新品名", hs_code="9404909000")
-    assert r.status_code == 200, r.text
-    # ids[1] 是品名级行：品名/税号/商检全部保持原样
-    nm = _get_mapping(ids[1])
-    assert nm.product_name_cn == "旧品名"
-    assert nm.hs_code == "1111111111"
-    assert nm.inspection_required is True
-
-
-def test_clear_name_does_not_blank_mapping_key():
-    """清空 name_cn → 映射行的 product_name_cn 保持旧值（不写空匹配键）。"""
-    sku_id, ids = _seed(sku=_new_sku())
-    r = _put_sku(sku_id, name_cn=None, hs_code="9404909000")
-    assert r.status_code == 200, r.text
-    assert "name_cn" in r.json()["audited_fields"]
-    # SKU 本身被清空，但映射键不动
-    assert _get_mapping(ids[0]).product_name_cn == "旧品名"
-
-
-def test_hs_change_syncs_and_marks_incomplete():
-    """清空 hs_code → 映射行 hs_code=None 且 is_incomplete=True。"""
-    sku_id, ids = _seed(sku=_new_sku())
-    r = _put_sku(sku_id, name_cn="旧品名", hs_code=None)
-    assert r.status_code == 200, r.text
-    assert "hs_code" in r.json()["audited_fields"]
-    m = _get_mapping(ids[0])
-    assert m.hs_code is None
-    assert m.is_incomplete is True
-
-
-def test_inspection_change_syncs():
-    """inspection_required 变更 → 映射行同步。"""
-    sku_id, ids = _seed(sku=_new_sku())
-    r = _put_sku(sku_id, name_cn="旧品名", hs_code="9404909000", inspection_required=True)
-    assert r.status_code == 200, r.text
-    assert "inspection_required" in r.json()["audited_fields"]
-    assert _get_mapping(ids[0]).inspection_required is True
-
-
-def test_weight_only_change_no_sync():
-    """仅改重量 → 不回填映射（synced_mappings=0）。"""
-    sku_id, ids = _seed(sku=_new_sku())
-    r = _put_sku(sku_id, name_cn="旧品名", hs_code="9404909000", unit_net_weight=1.234)
-    assert r.status_code == 200, r.text
-    assert r.json()["synced_mappings"] == 0
-    assert _get_mapping(ids[0]).product_name_cn == "旧品名"
-
-
-def test_multiple_sku_level_rows_all_synced():
-    """同 sku_code 有多条映射行 → 全部更新（与正向 sync 同 scope）。"""
-    sku_id, ids = _seed(sku=_new_sku(), extra_sku_mapping_rows=1)
-    r = _put_sku(sku_id, name_cn="新品名", hs_code="9404909000")
-    assert r.status_code == 200, r.text
-    assert r.json()["synced_mappings"] == 2
-    assert _get_mapping(ids[0]).product_name_cn == "新品名"
-    assert _get_mapping(ids[1]).product_name_cn == "新品名"
-
-
-def test_no_mapping_row_is_noop():
-    """没有映射行 → synced_mappings=0，不报错。"""
-    sku_id, _ = _seed(sku=_new_sku(), with_sku_mapping=False, with_name_mapping=False)
-    r = _put_sku(sku_id, name_cn="新品名", hs_code="9404909000")
-    assert r.status_code == 200, r.text
-    assert r.json()["synced_mappings"] == 0
-
-
-# ---------------------------------------------------------------------------
-# 正向回归：映射 → SKU 仍正常（双向共存不打架）
-# ---------------------------------------------------------------------------
-
-
-def test_forward_sync_still_works():
-    """编辑映射（update_product）仍回填 factory_skus——正向不被反向破坏。"""
-    sku = _new_sku()
-    sku_id, ids = _seed(sku=sku)
-    r = client.put(
-        f"/api/v1/mappings/products/{ids[0]}",
-        json={
-            "product_name_cn": "映射侧改名",
-            "hs_code": "2222222222",
-            "inspection_required": True,
-            "sku_code": sku,
-        },
-    )
-    assert r.status_code == 200, r.text
-    assert r.json()["synced_skus"] == 1
+def _mappings_by_name(name: str) -> list[ProductMapping]:
     with get_session() as s:
-        k = s.get(FactorySKU, sku_id)
-        assert k.name_cn == "映射侧改名"
-        assert k.hs_code == "2222222222"
-        assert k.inspection_required is True
+        rows = (
+            s.query(ProductMapping)
+            .filter(ProductMapping.product_name_cn == name)
+            .order_by(ProductMapping.id)
+            .all()
+        )
+        for m in rows:
+            s.expunge(m)
+        return rows
+
+
+def _mapping_exists(mapping_id: int) -> bool:
+    with get_session() as s:
+        return s.get(ProductMapping, mapping_id) is not None
+
+
+def _sku_link_rows(sku_code: str) -> list[tuple[int, str]]:
+    """全库子表中含该 SKU 的 (mapping_id, sku_code) 行。"""
+    with get_session() as s:
+        return [
+            (r.mapping_id, r.sku_code)
+            for r in s.query(ProductMappingSku)
+            .filter(ProductMappingSku.sku_code == sku_code)
+            .all()
+        ]
+
+
+def _table_counts() -> tuple[int, int]:
+    with get_session() as s:
+        return (
+            s.query(ProductMapping).count(),
+            s.query(ProductMappingSku).count(),
+        )
 
 
 # ---------------------------------------------------------------------------
-# 列表搜索：list_products 支持按 SKU 模糊搜（2026-08-12 加入）
+# 1. attach_sku_to_mapping：命中追加 + 幂等 + 既有字段不动
 # ---------------------------------------------------------------------------
 
+def test_attach_appends_to_existing_and_idempotent():
+    name = "挂接既有品名"
+    sku1, sku2 = _sku(), _sku()
+    with get_session() as s:
+        m = ProductMapping(
+            product_name_cn=name, hs_code="9999.99",
+            inspection_required=True, name_en="EXISTING EN",
+            unit_code="007", is_incomplete=False,
+        )
+        s.add(m)
+        s.commit()
+        s.refresh(m)
+        mid = m.id
 
-def test_list_products_search_by_sku():
-    """q 为 SKU 片段时应命中 sku_code 列。"""
-    sku = _new_sku()
-    _seed(sku=sku)
-    r = client.get(f"/api/v1/mappings/products?q={sku[3:10]}")
-    assert r.status_code == 200, r.text
-    hits = [m for m in r.json() if m["sku_code"] == sku]
-    assert len(hits) >= 1
+    with get_session() as s:
+        r = attach_sku_to_mapping(
+            s, sku_code=sku1, name_cn=name,
+            hs_code="1111.11", inspection_required=False,  # 与既有行不同：不得覆盖
+            factory_name="挂接厂")
+        assert r == "appended", r
+        s.commit()
+    m = _get_mapping(mid)
+    assert _links_of(mid) == [sku1]
+    assert m.sku_code == sku1                      # 旧列原本为空 → 同步为列表首个
+    assert m.unit_code == "007"                    # 既有字段一概不改
+    assert m.hs_code == "9999.99"
+    assert m.inspection_required is True
+    assert m.name_en == "EXISTING EN"
+    assert m.is_incomplete is False
+
+    with get_session() as s:
+        r = attach_sku_to_mapping(
+            s, sku_code=sku1, name_cn=name, factory_name="挂接厂")
+        assert r is None, f"幂等重跑应返回 None: {r}"  # 已在列表 → 不动
+        r = attach_sku_to_mapping(
+            s, sku_code=sku2, name_cn=name,
+            hs_code="2222.22", factory_name="挂接厂")
+        assert r == "appended", r
+        s.commit()
+    m = _get_mapping(mid)
+    assert _links_of(mid) == [sku1, sku2]          # 无重复子表行
+    assert m.sku_code == sku1                      # 旧列已有值 → 保持列表首个
+    assert m.hs_code == "9999.99"                  # 追加不反向回填
+    print("[断言通过] attach：命中追加；幂等不重复；既有行字段不被改动")
 
 
-def test_list_products_search_no_hit():
-    """q 不匹配任何字段时返回空（ sku 列加入搜索不破坏原有语义）。"""
-    r = client.get("/api/v1/mappings/products?q=绝不存在的关键词xyz123")
-    assert r.status_code == 200, r.text
-    assert r.json() == []
+def test_attach_creates_row_with_inheritance():
+    sku = _sku()
+    before_m, before_l = _table_counts()
+    with get_session() as s:
+        r = attach_sku_to_mapping(
+            s, sku_code=sku, name_cn="  挂接新品名  ",   # 前后空格应 strip
+            hs_code="1234.56", inspection_required=True,
+            name_en="  CREATED EN  ", factory_name="挂接厂")
+        assert r == "created", r
+        s.commit()
+    after_m, after_l = _table_counts()
+    assert after_m == before_m + 1 and after_l == before_l + 1
+    rows = _mappings_by_name("挂接新品名")
+    assert len(rows) == 1
+    m = rows[0]
+    assert m.hs_code == "1234.56"                  # 从 SKU 一次性继承
+    assert m.inspection_required is True
+    assert m.name_en == "CREATED EN"               # 继承且 strip
+    assert m.unit_code is None                     # 计量单位无源可继承，留空待人工补
+    assert m.is_incomplete is True                 # 新语义 = unit_code 空，建行必 True
+    assert m.sku_code == sku                       # 旧列与列表同步
+    assert _links_of(m.id) == [sku]
+    print("[断言通过] attach：未命中建行，字段继承正确，unit_code 留空，is_incomplete=True")
+
+
+def test_attach_blank_name_no_action():
+    sku = _sku()
+    before_m, before_l = _table_counts()
+    with get_session() as s:
+        assert attach_sku_to_mapping(
+            s, sku_code=sku, name_cn=None, hs_code="1234",
+            factory_name="挂接厂") is None
+        assert attach_sku_to_mapping(
+            s, sku_code=sku, name_cn="   ", hs_code="1234",
+            factory_name="挂接厂") is None
+        s.commit()
+    assert _table_counts() == (before_m, before_l)
+    assert _sku_link_rows(sku) == []
+    print("[断言通过] attach：品名 None/纯空格 → 不动作")
+
+
+def test_attach_conflict_skip_when_sku_owned_by_other_name():
+    sku = _sku()
+    with get_session() as s:
+        m = ProductMapping(product_name_cn="占用方品名", hs_code="4444.44")
+        s.add(m)
+        s.flush()
+        m.sku_links.append(ProductMappingSku(sku_code=sku))
+        s.commit()
+        s.refresh(m)
+        owner_id = m.id
+    before_m, before_l = _table_counts()
+    with get_session() as s:
+        r = attach_sku_to_mapping(
+            s, sku_code=sku, name_cn="抢挂品名", hs_code="5555.55",
+            factory_name="挂接厂")
+        assert r is None, f"被其他品名占用应跳过: {r}"
+        s.commit()
+    assert _table_counts() == (before_m, before_l)  # 不建行、不挂接
+    assert _mappings_by_name("抢挂品名") == []
+    assert _links_of(owner_id) == [sku]             # 原归属不动
+    print("[断言通过] attach：SKU 被其他品名行占用 → 跳过不抢挂")
+
+
+def test_attach_multi_row_picks_latest():
+    sku = _sku()
+    with get_session() as s:
+        m1 = ProductMapping(product_name_cn="多行同名品名", hs_code="1111")
+        m2 = ProductMapping(product_name_cn="多行同名品名", hs_code="2222")
+        s.add_all([m1, m2])
+        s.commit()
+        s.refresh(m1)
+        s.refresh(m2)
+        older_id, latest_id = m1.id, m2.id
+        r = attach_sku_to_mapping(
+            s, sku_code=sku, name_cn="多行同名品名",
+            hs_code="3333", factory_name="挂接厂")
+        assert r == "appended", r
+        s.commit()
+    assert _links_of(latest_id) == [sku]            # updated_at 同秒并列 → id 大者优先
+    assert _links_of(older_id) == []
+    print("[断言通过] attach：同品名多行 → 挂到最近更新行（id 大者优先）")
+
+
+# ---------------------------------------------------------------------------
+# 2. detach_sku_from_mappings：多行摘除 + 旧列同步 + 行保留
+# ---------------------------------------------------------------------------
+
+def test_detach_from_multiple_rows_and_legacy_sync():
+    sku, other = _sku(), _sku()
+    with get_session() as s:
+        # m1：子表 [sku, other]，旧列=sku → 摘后旧列同步为剩余列表首个 other
+        m1 = ProductMapping(product_name_cn="摘除品名一", sku_code=sku)
+        m1.sku_links.append(ProductMappingSku(sku_code=sku))
+        m1.sku_links.append(ProductMappingSku(sku_code=other))
+        # m2：仅旧列匹配的老数据行（无子表行）→ 摘后旧列 None
+        m2 = ProductMapping(product_name_cn="摘除品名二", sku_code=sku)
+        # m3：子表 [sku]，旧列为 None（旧列不等于被摘 SKU → 不碰）
+        m3 = ProductMapping(product_name_cn="摘除品名三", sku_code=None)
+        m3.sku_links.append(ProductMappingSku(sku_code=sku))
+        # m4：与 sku 无关的行 → 完全不受影响
+        m4 = ProductMapping(product_name_cn="无关品名", sku_code=other)
+        m4.sku_links.append(ProductMappingSku(sku_code=other))
+        s.add_all([m1, m2, m3, m4])
+        s.commit()
+        for m in (m1, m2, m3, m4):
+            s.refresh(m)
+        ids = (m1.id, m2.id, m3.id, m4.id)
+
+    with get_session() as s:
+        affected = detach_sku_from_mappings(s, sku)
+        affected_ids = {m.id for m in affected}
+        assert affected_ids == {ids[0], ids[1], ids[2]}, \
+            f"应命中 m1/m2/m3（含仅旧列匹配行）: {affected_ids}"
+        s.commit()
+
+    m1, m2, m3, m4 = (_get_mapping(i) for i in ids)
+    assert _links_of(ids[0]) == [other]
+    assert m1.sku_code == other                     # 旧列 = 剩余列表首个
+    assert _links_of(ids[1]) == []
+    assert m2.sku_code is None                      # 摘空 → 旧列 None
+    assert _links_of(ids[2]) == []
+    assert m3.sku_code is None                      # 旧列本非被摘 SKU，保持原样
+    # 摘空后映射行保留（品名级兜底行，不自动删行）
+    assert all(_mapping_exists(i) for i in ids)
+    # 不影响其他 SKU 的关联
+    assert _links_of(ids[3]) == [other] and m4.sku_code == other
+    assert _sku_link_rows(sku) == []
+    print("[断言通过] detach：多行（含仅旧列匹配行）全部摘除；旧列同步；行保留；其他 SKU 不动")
+
+
+def test_detach_nonexistent_sku_returns_empty():
+    with get_session() as s:
+        assert detach_sku_from_mappings(s, _sku()) == []
+        assert detach_sku_from_mappings(s, "") == []
+        assert detach_sku_from_mappings(s, "   ") == []
+    print("[断言通过] detach：不存在/空 SKU → 返回空列表，不动作")
+
+
+def test_detach_then_migration_no_ghost():
+    """防幽灵：detach 清过旧列后，启动迁移不得把被摘 SKU 搬回子表。"""
+    sku = _sku()
+    with get_session() as s:
+        # 子表+旧列双载的行，与仅旧列的老数据行，各一
+        m1 = ProductMapping(product_name_cn="幽灵品名一", sku_code=sku)
+        m1.sku_links.append(ProductMappingSku(sku_code=sku))
+        m2 = ProductMapping(product_name_cn="幽灵品名二", sku_code=sku)
+        s.add_all([m1, m2])
+        s.commit()
+    with get_session() as s:
+        affected = detach_sku_from_mappings(s, sku)
+        assert len(affected) == 2
+        s.commit()
+
+    added = ensure_mapping_skus_migrated()
+    assert _sku_link_rows(sku) == [], \
+        f"迁移不得把被摘 SKU 搬回（本次新增 {added} 行）"
+    with get_session() as s:
+        ghosts = (
+            s.query(ProductMapping)
+            .filter(ProductMapping.sku_code == sku)
+            .all()
+        )
+        assert ghosts == [], f"旧列不得残留被摘 SKU: {ghosts}"
+    print("[断言通过] 防幽灵：detach 后 ensure_mapping_skus_migrated 不搬回被摘 SKU")
+
+
+# ---------------------------------------------------------------------------
+# 3. relink_sku_to_name：detach + attach 组合
+# ---------------------------------------------------------------------------
+
+def test_relink_move_to_existing_name():
+    sku, other = _sku(), _sku()
+    with get_session() as s:
+        mx = ProductMapping(product_name_cn="改属品名X", sku_code=sku)
+        mx.sku_links.append(ProductMappingSku(sku_code=sku))
+        my = ProductMapping(product_name_cn="改属品名Y", sku_code=other,
+                            unit_code="008", is_incomplete=False)
+        my.sku_links.append(ProductMappingSku(sku_code=other))
+        s.add_all([mx, my])
+        s.commit()
+        s.refresh(mx)
+        s.refresh(my)
+        x_id, y_id = mx.id, my.id
+
+    with get_session() as s:
+        r = relink_sku_to_name(
+            s, sku_code=sku, name_cn="改属品名Y", factory_name="改属厂")
+        assert r["detached_from"] == [(x_id, "改属品名X")], r
+        assert r["action"] == "appended", r
+        s.commit()
+
+    mx, my = _get_mapping(x_id), _get_mapping(y_id)
+    assert _links_of(x_id) == [] and mx.sku_code is None   # 旧归属摘空，行保留
+    assert _mapping_exists(x_id)
+    assert _links_of(y_id) == [other, sku]                 # 追加进既有 Y 行
+    assert my.unit_code == "008" and my.is_incomplete is False  # Y 行字段不动
+    print("[断言通过] relink：从品名 X 移到既有品名 Y（detached_from 含 X，action=appended）")
+
+
+def test_relink_move_to_new_name_creates():
+    sku = _sku()
+    with get_session() as s:
+        mx = ProductMapping(product_name_cn="改属旧品名", sku_code=sku)
+        mx.sku_links.append(ProductMappingSku(sku_code=sku))
+        s.add(mx)
+        s.commit()
+        s.refresh(mx)
+        x_id = mx.id
+
+    with get_session() as s:
+        r = relink_sku_to_name(
+            s, sku_code=sku, name_cn="改属全新品名",
+            hs_code="5555.66", inspection_required=True,
+            name_en="RELINK EN", factory_name="改属厂")
+        assert r["detached_from"] == [(x_id, "改属旧品名")], r
+        assert r["action"] == "created", r
+        s.commit()
+
+    assert _links_of(x_id) == [] and _get_mapping(x_id).sku_code is None
+    rows = _mappings_by_name("改属全新品名")
+    assert len(rows) == 1
+    m = rows[0]
+    assert m.hs_code == "5555.66"                   # 字段继承正确
+    assert m.inspection_required is True
+    assert m.name_en == "RELINK EN"
+    assert m.unit_code is None and m.is_incomplete is True
+    assert m.sku_code == sku
+    assert _links_of(m.id) == [sku]
+    print("[断言通过] relink：移到不存在品名 → 建行（action=created），字段继承正确")
+
+
+def test_relink_blank_name_detach_only():
+    sku = _sku()
+    with get_session() as s:
+        mx = ProductMapping(product_name_cn="清空品名归属", sku_code=sku)
+        mx.sku_links.append(ProductMappingSku(sku_code=sku))
+        s.add(mx)
+        s.commit()
+        s.refresh(mx)
+        x_id = mx.id
+
+    before_m, _ = _table_counts()
+    with get_session() as s:
+        r = relink_sku_to_name(
+            s, sku_code=sku, name_cn=None, factory_name="改属厂")
+        assert r["detached_from"] == [(x_id, "清空品名归属")], r
+        assert r["action"] is None, r                       # 品名空 → 只 detach
+        s.commit()
+
+    after_m, _ = _table_counts()
+    assert after_m == before_m                              # 不建行
+    assert _sku_link_rows(sku) == []                        # SKU 不属于任何映射
+    assert _links_of(x_id) == [] and _get_mapping(x_id).sku_code is None
+    assert _mapping_exists(x_id)                            # 行保留
+    print("[断言通过] relink：品名 None → 只 detach，action=None，不建行")
+
+
+def main():
+    test_attach_appends_to_existing_and_idempotent()
+    test_attach_creates_row_with_inheritance()
+    test_attach_blank_name_no_action()
+    test_attach_conflict_skip_when_sku_owned_by_other_name()
+    test_attach_multi_row_picks_latest()
+    test_detach_from_multiple_rows_and_legacy_sync()
+    test_detach_nonexistent_sku_returns_empty()
+    test_detach_then_migration_no_ghost()
+    test_relink_move_to_existing_name()
+    test_relink_move_to_new_name_creates()
+    test_relink_blank_name_detach_only()
+    print("\nsku_mapping_sync_test: PASS")
+
+
+if __name__ == "__main__":
+    main()
