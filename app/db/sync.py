@@ -4,21 +4,30 @@
 有效字段只有中文品名（匹配跳板）、unit_code、SKU 列表；一个 SKU 在映射表里
 最多归属一个品名行。SKU 侧任何字段变化都不再反向回填映射行。
 
-正向 sync_mapping_to_sku：品名映射 Tab 编辑 → 回填 SKU 主数据（保留）；
+正向 sync_mapping_to_sku：品名映射 Tab 改名 → 批量回填绑定 SKU 的 name_cn
+（仅品名；税号/商检/英文名不回填，主数据是这三项的唯一权威源）；
+待完善判定 is_mapping_incomplete：unit_code 空 且 品名不是任何品名组的
+源品名（组源品名如「6件套」天经地义无单位代码，不算待完善）；
 归属三原子操作：
 - detach_sku_from_mappings：把 SKU 从所有映射行摘除（行保留，摘空变品名级兜底行）；
 - attach_sku_to_mapping：按中文品名挂接——命中追加，未命中建行（一次性继承
-  税号/商检/英文名，unit_code 留空，is_incomplete 按新语义=unit_code 空）；
+  税号/商检/英文名，unit_code 留空，is_incomplete 走 is_mapping_incomplete）；
 - relink_sku_to_name：detach + attach 组合（品名空 → 只 detach），
   流水线老 SKU 改品名与手动编辑品名共用；
 启动迁移 ensure_mapping_skus_migrated：旧 sku_code 单列只读搬迁到
-product_mapping_skus 子表（幂等，失败只记 warning 不阻断启动）。
+product_mapping_skus 子表；启动对账 reconcile_incomplete_flags：
+is_incomplete 按 is_mapping_incomplete 全量重算（均幂等，失败只记 warning）。
 """
 import logging
 
 from sqlalchemy.orm import Session
 
-from app.db.models import FactorySKU, ProductMapping, ProductMappingSku
+from app.db.models import (
+    FactorySKU,
+    ProductGroup,
+    ProductMapping,
+    ProductMappingSku,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +104,70 @@ def _is_blank(v) -> bool:
     return v is None or (isinstance(v, str) and not v.strip())
 
 
+def is_group_source_name(session: Session, product_name_cn: str | None) -> bool:
+    """该品名是否是任一品名组的源品名（如「6件套」之于 set_split 组）。"""
+    name = (product_name_cn or "").strip()
+    if not name:
+        return False
+    return (
+        session.query(ProductGroup)
+        .filter(ProductGroup.source_name_cn == name)
+        .first()
+    ) is not None
+
+
+def is_mapping_incomplete(
+    session: Session,
+    product_name_cn: str | None,
+    unit_code: str | None,
+) -> bool:
+    """待完善统一判定（2026-09-08 定）：unit_code 空 且 品名不是品名组源品名。
+
+    组源品名（「6件套」等复合品名）拆成组员报关，自身天经地义无单位代码，
+    不算待完善——否则永远挂在待完善列表里诱导误填。
+    所有 is_incomplete 写入点（attach 建行、UI 建/改、dispatcher 工具、
+    品名组联动）与启动对账 reconcile_incomplete_flags 都必须走本函数。
+    """
+    if not _is_blank(unit_code):
+        return False
+    return not is_group_source_name(session, product_name_cn)
+
+
+def reconcile_incomplete_flags() -> int:
+    """启动幂等对账：product_mappings.is_incomplete 按 is_mapping_incomplete 全量重算。
+
+    覆盖历史存量（旧口径=税号空）与品名组变化后的漂移；幂等可重跑，
+    失败只记 warning 绝不阻断启动。返回本次翻转的行数。
+    """
+    from app.db.session import get_session
+
+    try:
+        changed = 0
+        with get_session() as session:
+            sources = {
+                (g.source_name_cn or "").strip()
+                for g in session.query(ProductGroup).all()
+            }
+            sources.discard("")
+            for m in session.query(ProductMapping).all():
+                # 与 is_mapping_incomplete 同口径，但批量走内存集合避免逐行查组表
+                want = _is_blank(m.unit_code) and (
+                    (m.product_name_cn or "").strip() not in sources
+                )
+                if bool(m.is_incomplete) != want:
+                    m.is_incomplete = want
+                    changed += 1
+            session.commit()
+        if changed:
+            logger.info("[对账] is_incomplete 口径重算完成：翻转 %d 行", changed)
+        else:
+            logger.debug("[对账] is_incomplete 无需重算（0 行）")
+        return changed
+    except Exception as e:  # noqa: BLE001 对账失败绝不阻断启动
+        logger.warning("[对账] is_incomplete 重算失败（不阻断启动）: %s", e)
+        return 0
+
+
 def check_sku_conflicts(
     session: Session,
     sku_codes: list[str],
@@ -127,12 +200,13 @@ def check_sku_conflicts(
 
 
 def sync_mapping_to_sku(session: Session, mapping: ProductMapping) -> int:
-    """product_mappings → factory_skus 单向回填（多 SKU：逐个回填列表中每个 SKU）。
+    """product_mappings → factory_skus 单向回填，**仅品名**（2026-09-08 收窄）。
 
-    SKU 列表取自 product_mapping_skus 子表（旧列 sku_code 兜底），
-    对每个 SKU 回填 factory_skus 的 name_cn/hs_code/inspection_required，
-    name_en 非空时也回填。返回更新的总行数（同一 SKU 多工厂行都算）。
-    仅回填，不删不改其他字段（unit_net_weight/unit_gross_weight 不动）。
+    用途收敛为「批量改名」：映射行品名 编织袋→编织袋A，绑定 SKU 的 name_cn
+    全部跟随（跳板改名，主数据跟跳板走）。税号/商检/英文名**不回填**——
+    这三项以 SKU 主数据为唯一权威源，杜绝改映射污染主库。
+    SKU 列表取自 product_mapping_skus 子表（旧列 sku_code 兜底）。
+    返回更新的总行数（同一 SKU 多工厂行都算）。
     """
     codes = _mapping_sku_codes(mapping)
     if not codes:
@@ -144,10 +218,6 @@ def sync_mapping_to_sku(session: Session, mapping: ProductMapping) -> int:
     )
     for sku in rows:
         sku.name_cn = mapping.product_name_cn
-        sku.hs_code = mapping.hs_code
-        sku.inspection_required = mapping.inspection_required
-        if mapping.name_en is not None:
-            sku.name_en = mapping.name_en
     session.flush()
     return len(rows)
 
@@ -266,7 +336,8 @@ def attach_sku_to_mapping(
             inspection_required=bool(inspection_required),
             name_en=(name_en or "").strip() or None,
             unit_code=None,  # 计量单位代码无源可继承，留空待人工补
-            is_incomplete=True,  # 新语义 = unit_code 为空；新建行 unit_code 必空
+            # 待完善统一口径：unit_code 空且非组源品名（组源品名豁免）
+            is_incomplete=is_mapping_incomplete(session, name, None),
         )
         session.add(mapping)
         session.flush()  # 拿到 mapping.id 供子表挂接
@@ -276,8 +347,9 @@ def attach_sku_to_mapping(
         session.flush()
         logger.info(
             "[sync] 挂接：工厂「%s」SKU %s 品名「%s」→ 新建品名级映射行 "
-            "(id=%s, hs_code=%s, is_incomplete=True)",
+            "(id=%s, hs_code=%s, is_incomplete=%s)",
             factory_name, sku_code, name, mapping.id, mapping.hs_code,
+            mapping.is_incomplete,
         )
         return "created"
 

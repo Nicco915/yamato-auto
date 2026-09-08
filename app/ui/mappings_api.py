@@ -53,7 +53,12 @@ from app.db.models import (
     SkuMasterAudit,
 )
 from app.db.session import get_session
-from app.db.sync import check_sku_conflicts, relink_sku_to_name, sync_mapping_to_sku
+from app.db.sync import (
+    check_sku_conflicts,
+    is_mapping_incomplete,
+    relink_sku_to_name,
+    sync_mapping_to_sku,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -297,7 +302,7 @@ def lookup_product_by_name(name: str = Query(default="")):
 
 @router.post("/products", status_code=201)
 def create_product(req: ProductUpsert):
-    """新增映射（多 SKU：写子表）。单位代码（unit_code）缺失时自动标待完善。
+    """新增映射（多 SKU：写子表）。待完善统一口径：unit_code 空且品名非品名组源品名。
 
     冲突拦截：任一 SKU 已被其他映射行占用 → 409，整体不落库（先全量校验再写入）。
     """
@@ -314,8 +319,8 @@ def create_product(req: ProductUpsert):
             name_en=(req.name_en or "").strip() or None,
             unit_code=(req.unit_code or "").strip() or None,
             factory_id=req.factory_id,
-            is_incomplete=_blank(req.unit_code),
         )
+        m.is_incomplete = is_mapping_incomplete(s, m.product_name_cn, m.unit_code)
         _replace_sku_links(s, m, sku_codes)
         s.add(m)
         s.commit()
@@ -325,10 +330,14 @@ def create_product(req: ProductUpsert):
 
 @router.put("/products/{product_id}")
 def update_product(product_id: int, req: ProductUpsert):
-    """编辑映射（多 SKU：子表整体替换）：保存后调 sync_mapping_to_sku 逐 SKU 回填 factory_skus。
+    """编辑映射（多 SKU：子表整体替换）：保存后调 sync_mapping_to_sku 批量回填 SKU 的 name_cn。
 
     冲突拦截：任一 SKU 已被其他映射行占用 → 409（排除本行），整体不落库。
-    人工补全单位代码后自动清除待完善标记。返回 synced_skus 便于前端提示。
+    待完善统一口径：unit_code 空且品名非品名组源品名（is_mapping_incomplete）。
+    联动 3：品名改名（strip 后有变化）时，同事务同步 product_groups.source_name_cn
+    与 product_group_members.product_name_cn 里的旧品名 → 新品名，响应带
+    renamed_groups / renamed_members（0 也返回，前端据此拼提示）。
+    返回 synced_skus 便于前端提示。
     """
     if _blank(req.product_name_cn):
         raise HTTPException(status_code=400, detail="中文品名不能为空")
@@ -338,6 +347,7 @@ def update_product(product_id: int, req: ProductUpsert):
         if m is None:
             raise HTTPException(status_code=404, detail=f"映射不存在: id={product_id}")
         _raise_if_sku_conflict(s, sku_codes, exclude_id=product_id)
+        old_name = (m.product_name_cn or "").strip()
         m.product_name_cn = req.product_name_cn.strip()
         m.hs_code = (req.hs_code or "").strip() or None
         m.supplier_name = (req.supplier_name or "").strip() or None
@@ -345,12 +355,43 @@ def update_product(product_id: int, req: ProductUpsert):
         m.name_en = (req.name_en or "").strip() or None
         m.unit_code = (req.unit_code or "").strip() or None
         m.factory_id = req.factory_id
-        m.is_incomplete = _blank(m.unit_code)
+        # 联动 3：品名改名 → 品名组三表同步（组源品名 + 组员品名），同一事务
+        renamed_groups = 0
+        renamed_members = 0
+        if old_name != m.product_name_cn:
+            renamed_groups = (
+                s.query(ProductGroup)
+                .filter(ProductGroup.source_name_cn == old_name)
+                .update(
+                    {ProductGroup.source_name_cn: m.product_name_cn},
+                    synchronize_session=False,
+                )
+            )
+            renamed_members = (
+                s.query(ProductGroupMember)
+                .filter(ProductGroupMember.product_name_cn == old_name)
+                .update(
+                    {ProductGroupMember.product_name_cn: m.product_name_cn},
+                    synchronize_session=False,
+                )
+            )
+            if renamed_groups or renamed_members:
+                logger.info(
+                    "[品名组联动] 映射行改名「%s」→「%s」：同步组源 %d 行、组员 %d 行",
+                    old_name, m.product_name_cn, renamed_groups, renamed_members,
+                )
+        # 待完善重算放在改名同步之后：新品名可能因此成为组源（豁免待完善）
+        m.is_incomplete = is_mapping_incomplete(s, m.product_name_cn, m.unit_code)
         _replace_sku_links(s, m, sku_codes)
         synced = sync_mapping_to_sku(s, m)
         s.commit()
         s.refresh(m)
-        return {**_product_dict(m), "synced_skus": synced}
+        return {
+            **_product_dict(m),
+            "synced_skus": synced,
+            "renamed_groups": renamed_groups,
+            "renamed_members": renamed_members,
+        }
 
 
 @router.delete("/products/{product_id}")
@@ -448,6 +489,66 @@ def _load_group(s, group_id: int) -> ProductGroup:
     return g
 
 
+def _ensure_member_mappings(s, member_names: list[str]) -> list[str]:
+    """联动 2 组员兜底：组员品名在 product_mappings 无行 → 自动建品名级行。
+
+    入参先 strip/去空/去重；新建行除品名外全部留空/默认，
+    is_incomplete 走统一口径 is_mapping_incomplete（unit_code 必为空，
+    组员品名一般非组源 → True，待补单位代码）。
+    返回本次新建的品名列表（供响应 created_member_mappings）。
+    """
+    names: list[str] = []
+    seen: set[str] = set()
+    for n in member_names:
+        n = (n or "").strip()
+        if n and n not in seen:
+            seen.add(n)
+            names.append(n)
+    created: list[str] = []
+    for name in names:
+        exists = (
+            s.query(ProductMapping)
+            .filter(ProductMapping.product_name_cn == name)
+            .first()
+        )
+        if exists is not None:
+            continue
+        s.add(ProductMapping(
+            product_name_cn=name,
+            is_incomplete=is_mapping_incomplete(s, name, None),
+        ))
+        created.append(name)
+    if created:
+        s.flush()
+        logger.info("[品名组联动] 组员兜底自动建映射行 %d 条: %s", len(created), created)
+    return created
+
+
+def _recalc_source_incomplete(s, source_name_cn: Optional[str]) -> None:
+    """联动 2 组源行待完善重算：品名 == source_name_cn 的映射行按统一口径重算。
+
+    成为组源（建组/改组源）后 unit_code 空也豁免待完善；
+    脱离组源身份（改组源/删组）后 unit_code 空要重新标待完善。
+    调用方保证组表变更已 flush（查询能见到最新组源身份）。
+    """
+    name = (source_name_cn or "").strip()
+    if not name:
+        return
+    rows = (
+        s.query(ProductMapping)
+        .filter(ProductMapping.product_name_cn == name)
+        .all()
+    )
+    for m in rows:
+        want = is_mapping_incomplete(s, m.product_name_cn, m.unit_code)
+        if bool(m.is_incomplete) != want:
+            m.is_incomplete = want
+            logger.info(
+                "[品名组联动] 组源行待完善重算: 品名「%s」is_incomplete → %s",
+                name, want,
+            )
+
+
 @router.get("/groups")
 def list_groups():
     """品名组列表（含成员，按 display_order 排序）。"""
@@ -467,7 +568,12 @@ def list_groups():
 
 @router.post("/groups", status_code=201)
 def create_group(req: GroupUpsert):
-    """新增品名组（含成员）。"""
+    """新增品名组（含成员）。
+
+    联动 2（同事务）：组员品名在 product_mappings 无行 → 自动补建品名级行
+    （响应带 created_member_mappings）；组源品名对应映射行按统一口径重算
+    待完善（成为组源后 unit_code 空也豁免）。
+    """
     _validate_group(req)
     with get_session() as s:
         g = ProductGroup(
@@ -478,6 +584,8 @@ def create_group(req: GroupUpsert):
         s.add(g)
         s.flush()
         _insert_members(s, g.id, req.members)
+        created = _ensure_member_mappings(s, [mb.product_name_cn for mb in req.members])
+        _recalc_source_incomplete(s, g.source_name_cn)
         s.commit()
         members = (
             s.query(ProductGroupMember)
@@ -485,15 +593,22 @@ def create_group(req: GroupUpsert):
             .order_by(ProductGroupMember.display_order, ProductGroupMember.id)
             .all()
         )
-        return _group_dict(g, members)
+        return {**_group_dict(g, members), "created_member_mappings": created}
 
 
 @router.put("/groups/{group_id}")
 def update_group(group_id: int, req: GroupUpsert):
-    """编辑品名组：成员整体替换（先删旧成员再插入）。"""
+    """编辑品名组：成员整体替换（先删旧成员再插入）。
+
+    联动 2（同事务）：组员兜底补建映射行；新/旧组源品名对应映射行都按
+    统一口径重算待完善（旧组源脱离身份后 unit_code 空要重新标待完善）。
+    注意：品名组 Tab 改 source_name_cn/组员品名**不**反向改映射行品名
+    （反方向改名同步仅「映射行 → 品名组」，见 update_product）。
+    """
     _validate_group(req)
     with get_session() as s:
         g = _load_group(s, group_id)
+        old_source = (g.source_name_cn or "").strip()
         g.name = req.name.strip()
         g.group_type = req.group_type
         g.source_name_cn = req.source_name_cn.strip()
@@ -501,6 +616,10 @@ def update_group(group_id: int, req: GroupUpsert):
             ProductGroupMember.group_id == group_id
         ).delete()
         _insert_members(s, group_id, req.members)
+        created = _ensure_member_mappings(s, [mb.product_name_cn for mb in req.members])
+        _recalc_source_incomplete(s, g.source_name_cn)
+        if old_source != g.source_name_cn:
+            _recalc_source_incomplete(s, old_source)
         s.commit()
         members = (
             s.query(ProductGroupMember)
@@ -508,18 +627,25 @@ def update_group(group_id: int, req: GroupUpsert):
             .order_by(ProductGroupMember.display_order, ProductGroupMember.id)
             .all()
         )
-        return _group_dict(g, members)
+        return {**_group_dict(g, members), "created_member_mappings": created}
 
 
 @router.delete("/groups/{group_id}")
 def delete_group(group_id: int):
-    """删除品名组及其成员。"""
+    """删除品名组及其成员。
+
+    联动 2（同事务）：被删组的 source_name_cn 对应映射行按统一口径重算
+    待完善（脱离组源身份后 unit_code 空重新标待完善）。
+    """
     with get_session() as s:
         g = _load_group(s, group_id)
+        source_name = g.source_name_cn
         s.query(ProductGroupMember).filter(
             ProductGroupMember.group_id == group_id
         ).delete()
         s.delete(g)
+        s.flush()  # 先落删除，重算时组源身份已解除
+        _recalc_source_incomplete(s, source_name)
         s.commit()
         return {"deleted": group_id}
 

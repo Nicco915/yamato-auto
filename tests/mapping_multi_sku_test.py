@@ -198,6 +198,8 @@ def test_conflict_409_on_update_and_self_excluded():
 # ---------------------------------------------------------------------------
 
 def test_forward_sync_fills_every_sku_in_list():
+    """正向回填收窄后（2026-09-08）：仅 name_cn 跟随映射行批量改名；
+    税号/商检/英文名以 SKU 主数据为唯一权威源，**不被回填**。"""
     a, b = _sku(), _sku()
     with get_session() as s:
         f = Factory(factory_name=f"多SKU工厂-{a}", short_name="テ")
@@ -231,10 +233,10 @@ def test_forward_sync_fills_every_sku_in_list():
     with get_session() as s:
         for code in (a, b):
             k = s.query(FactorySKU).filter(FactorySKU.sku_code == code).one()
-            assert k.name_cn == "正向联动品名"
-            assert k.hs_code == "9404909000"
-            assert k.inspection_required is True
-            assert k.name_en == "FORWARD SYNC ITEM"
+            assert k.name_cn == "正向联动品名"          # 仅品名跟随
+            assert k.hs_code == "0000000000"          # 税号不回填：主数据原值不动
+            assert k.inspection_required is False     # 商检不回填
+            assert k.name_en is None                  # 英文名不回填
 
 
 # ---------------------------------------------------------------------------

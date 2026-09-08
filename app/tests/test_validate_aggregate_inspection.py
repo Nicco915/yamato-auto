@@ -178,9 +178,10 @@ class TestDetailRowInspectionAny:
         assert res.rows[0].inspection is True
         assert any("未命中产品映射" in w for w in res.warnings)
 
-    def test_group_member_keeps_mapping_lookup(self):
-        """品名组组件行保持按组件品名映射 lookup 的旧口径：
-        源行 inspection=True 不外溢到组件行。"""
+    def test_group_member_inherits_source_sku_inspection(self):
+        """品名组组件行商检继承源行 SKU 级 any() 口径（2026-09-08 起），
+        与组件映射行的 inspection_required 彻底解耦：
+        源行 True → 全部组件行 True（即使映射行 False）。"""
         groups = [{
             "name": "两件套组",
             "group_type": "set_split",
@@ -199,5 +200,5 @@ class TestDetailRowInspectionAny:
         rows = [_row("A厂", "SKU-1", "两件套", inspection=True)]
         res = aggregate_ticket(rows, groups, idx)
         by_name = {r.name_cn: r for r in res.rows}
-        assert by_name["组件甲"].inspection is False  # 映射 False，不吃源行 True
-        assert by_name["组件乙"].inspection is True   # 映射 True
+        assert by_name["组件甲"].inspection is True   # 继承源行，不吃映射 False
+        assert by_name["组件乙"].inspection is True   # 继承源行，不吃映射 True

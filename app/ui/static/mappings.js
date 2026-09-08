@@ -326,7 +326,11 @@ async function saveProduct() {
         }
         var msg = "已保存";
         if (result && result.synced_skus) {
-            msg += "，已回填 " + result.synced_skus + " 条 SKU 主数据";
+            msg += "，已回填 " + result.synced_skus + " 条 SKU 主数据品名";
+        }
+        if (result && (result.renamed_groups || result.renamed_members)) {
+            msg += "；品名组已同步改名（组源 " + (result.renamed_groups || 0)
+                + " 处、组员 " + (result.renamed_members || 0) + " 处）";
         }
         toast(msg);
         closeProductModal();
@@ -544,16 +548,23 @@ async function saveGroup() {
     btn.disabled = true;
     btn.textContent = "保存中…";
     try {
+        var result;
         if (editingGroupId) {
-            await api("/api/v1/mappings/groups/" + editingGroupId, {
+            result = await api("/api/v1/mappings/groups/" + editingGroupId, {
                 method: "PUT", body: body
             });
         } else {
-            await api("/api/v1/mappings/groups", {
+            result = await api("/api/v1/mappings/groups", {
                 method: "POST", body: body
             });
         }
-        toast("已保存");
+        var msg = "已保存";
+        if (result && result.created_member_mappings
+                && result.created_member_mappings.length > 0) {
+            msg += "；已为 " + result.created_member_mappings.length
+                + " 个组员补建映射行（单位代码待补）";
+        }
+        toast(msg);
         closeGroupModal();
         loadGroups();
     } catch (e) {

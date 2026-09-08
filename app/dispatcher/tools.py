@@ -2700,7 +2700,8 @@ def _exec_upsert_product_mapping(
 
         from app.db.models import ProductMapping, ProductMappingSku
         from app.db.session import get_session
-        from app.db.sync import check_sku_conflicts, sync_mapping_to_sku
+        from app.db.sync import (check_sku_conflicts, is_mapping_incomplete,
+                                 sync_mapping_to_sku)
 
         updatable = ("hs_code", "supplier_name", "inspection_required",
                      "name_en", "unit_code")
@@ -2746,8 +2747,10 @@ def _exec_upsert_product_mapping(
                     ProductMappingSku(sku_code=c) for c in sku_codes)
                 mapping.sku_code = sku_codes[0] if sku_codes else None
 
-            # 待完善标记口径（2026-09-08 起）：单位代码 unit_code 为空即待完善
-            mapping.is_incomplete = not bool((mapping.unit_code or "").strip())
+            # 待完善标记口径（2026-09-08 起）：unit_code 空且非组源品名即待完善
+            #（与 mappings_api / 启动对账共用 is_mapping_incomplete 统一判定）
+            mapping.is_incomplete = is_mapping_incomplete(
+                sess, mapping.product_name_cn, mapping.unit_code)
 
             sess.flush()
             synced = sync_mapping_to_sku(sess, mapping)

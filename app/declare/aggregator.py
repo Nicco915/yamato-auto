@@ -30,8 +30,9 @@
 报关单 I 列（inspection）口径：
 - 普通明细行 = 该品名贡献源行中任一行 inspection==True（any 语义，
   SKU 级，上游 resolve_inspection 已含品名级回退与默认 False）；
-- 品名组组件行（set_split/box_share 的 members）= 按组件品名 lookup
-  产品映射的 inspection_required（组件品名是拆分后的虚拟品名，无源行对应）；
+- 品名组组件行（set_split/box_share 的 members）= 与普通行同一口径，
+  继承源品名对应的 SKU 级 any(inspection)，与 product_mappings
+  .inspection_required 彻底解耦（该字段只用于审核页失焦带出）；
 - 映射 lookup 同时负责 unit_code 与「未命中产品映射」warning（原样保留）。
 """
 
@@ -240,8 +241,8 @@ def aggregate_ticket(
         命中空行、「未命中产品映射」告警消失，空单位代码会静默写进
         报关单，必须单独告警兜底。
 
-        inspection 的最终口径由调用方决定：普通行随后被覆盖为源行
-        any(inspection)（SKU 级）；品名组组件行保留此处的映射 lookup 值。
+        inspection 的最终口径由调用方决定：所有行随后都被覆盖为源行
+        SKU 级 any(inspection)，此处的映射 lookup 值只是暂置。
         """
         m = lookup(mapping_index, sku="", name_cn=row.name_cn)
         if m is None:
@@ -311,6 +312,8 @@ def aggregate_ticket(
                     gross=a.gross if i == 0 else None,
                 )
                 _enrich(row, name)
+                # 组件行商检继承源行 SKU 级口径，与映射行 inspection_required 解耦
+                row.inspection = a.has_inspection
                 block.append(row)
         elif g["group_type"] == "box_share":
             # 金额等分；cartons/net/gross 仅首行
@@ -326,6 +329,8 @@ def aggregate_ticket(
                     gross=a.gross if i == 0 else None,
                 )
                 _enrich(row, name)
+                # 组件行商检继承源行 SKU 级口径，与映射行 inspection_required 解耦
+                row.inspection = a.has_inspection
                 block.append(row)
         else:
             result.warnings.append(

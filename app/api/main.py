@@ -39,10 +39,12 @@ async def lifespan(app: FastAPI):
     # 之后才用自带 dictConfig 重配 uvicorn 系列 logger，把接管结果覆盖掉；
     # startup 阶段再接管一次，确保 uvicorn 日志统一走 root 的 handler/格式
     _takeover_uvicorn()
-    # 启动幂等迁移：product_mappings.sku_code 旧列 → product_mapping_skus 子表
-    # （函数内部已兜底：失败只记 warning，绝不阻断启动）
-    from app.db.sync import ensure_mapping_skus_migrated
+    # 启动幂等迁移：product_mappings.sku_code 旧列 → product_mapping_skus 子表；
+    # 启动幂等对账：is_incomplete 按「unit_code 空且非组源品名」全量重算
+    # （函数内部均已兜底：失败只记 warning，绝不阻断启动）
+    from app.db.sync import ensure_mapping_skus_migrated, reconcile_incomplete_flags
     ensure_mapping_skus_migrated()
+    reconcile_incomplete_flags()
     yield
 
 
@@ -205,6 +207,7 @@ class UndoAliasRequest(BaseModel):
 class WatchMarkDoneRequest(BaseModel):
     """看板：把未执行候选文件夹标记为已完成。"""
     folder_name: str
+    thread_id: Optional[str] = None             # 关联到已有已完成批次；缺省为纯标记
 
 
 class WatchStartRequest(BaseModel):
@@ -316,10 +319,15 @@ async def watch_board():
 
 @app.post("/api/v1/watch/mark-done")
 async def watch_mark_done(request: WatchMarkDoneRequest):
-    """看板：把未执行候选文件夹标记为已完成（仅 未执行→已完成 一个方向）。"""
+    """看板：把未执行候选文件夹标记为已完成（仅 未执行→已完成 一个方向）。
+
+    thread_id 提供时把文件夹绑定到该已有已完成批次（之后详情/对话跳该批次）；
+    缺省时维持纯标记合成行（无 checkpoint，详情不可看）。
+    """
     from app.orchestrator import board
     try:
-        return await asyncio.to_thread(board.mark_done, request.folder_name)
+        return await asyncio.to_thread(
+            board.mark_done, request.folder_name, request.thread_id)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except FileExistsError as e:
