@@ -26,6 +26,13 @@
   split_price × 套数。
 - 净重不按组件拆（业务决定，组件单重字段存在但不用）：cartons/net/gross
   仅首组件行有值（=源行总箱数/总净重/总毛重），其余组件行 None（留空）。
+
+报关单 I 列（inspection）口径：
+- 普通明细行 = 该品名贡献源行中任一行 inspection==True（any 语义，
+  SKU 级，上游 resolve_inspection 已含品名级回退与默认 False）；
+- 品名组组件行（set_split/box_share 的 members）= 按组件品名 lookup
+  产品映射的 inspection_required（组件品名是拆分后的虚拟品名，无源行对应）；
+- 映射 lookup 同时负责 unit_code 与「未命中产品映射」warning（原样保留）。
 """
 
 from __future__ import annotations
@@ -186,7 +193,7 @@ def aggregate_ticket(
     # ---- 1. 按中文品名聚合（保持首行出现顺序） ----
     class _Agg:
         __slots__ = ("name", "first_idx", "cartons", "pieces", "amount",
-                     "net", "gross", "currency")
+                     "net", "gross", "currency", "has_inspection")
 
         def __init__(self, name: str, first_idx: int, currency: str):
             self.name = name
@@ -197,6 +204,8 @@ def aggregate_ticket(
             self.net = 0.0
             self.gross = 0.0
             self.currency = currency
+            # 该品名下是否有源行 inspection==True（报关 I 列 any 口径）
+            self.has_inspection = False
 
     agg_order: list[str] = []
     agg: dict[str, _Agg] = {}
@@ -213,6 +222,8 @@ def aggregate_ticket(
         a.gross += r.gross_weight or 0.0
         if r.currency:
             a.currency = r.currency
+        if r.inspection:
+            a.has_inspection = True
 
     # ---- 2/3. 品名组拆分 + 生成明细行（组块 / 普通行分开收集） ----
     group_blocks: list[tuple[int, list[DetailRow]]] = []  # (首行出现序号, 组件行)
@@ -222,12 +233,15 @@ def aggregate_ticket(
     has_set_split = False
 
     def _enrich(row: DetailRow, src_rows_name: str) -> None:
-        """映射查询：带出 inspection / unit_code；未命中记 warning 不阻断。
+        """映射查询：带出 unit_code（并暂置 inspection）；未命中记 warning 不阻断。
 
         命中但 unit_code 为空（None/空串/纯空白）也记 warning：后续会有
         功能自动创建「品名存在但 unit_code 为空」的映射行，届时 lookup
         命中空行、「未命中产品映射」告警消失，空单位代码会静默写进
         报关单，必须单独告警兜底。
+
+        inspection 的最终口径由调用方决定：普通行随后被覆盖为源行
+        any(inspection)（SKU 级）；品名组组件行保留此处的映射 lookup 值。
         """
         m = lookup(mapping_index, sku="", name_cn=row.name_cn)
         if m is None:
@@ -246,7 +260,7 @@ def aggregate_ticket(
         a = agg[name]
         g = group_by_source.get(name)
         if g is None:
-            # 普通行：全列有值
+            # 普通行：全列有值；I 列 inspection 取源行 SKU 级 any()
             row = DetailRow(
                 name_cn=name,
                 cartons=a.cartons,
@@ -257,6 +271,7 @@ def aggregate_ticket(
                 gross=a.gross,
             )
             _enrich(row, name)
+            row.inspection = a.has_inspection
             normal_rows.append(row)
             continue
 
@@ -269,6 +284,7 @@ def aggregate_ticket(
                 currency=a.currency, amount=a.amount, net=a.net, gross=a.gross,
             )
             _enrich(row, name)
+            row.inspection = a.has_inspection
             normal_rows.append(row)
             continue
 
@@ -320,6 +336,7 @@ def aggregate_ticket(
                 currency=a.currency, amount=a.amount, net=a.net, gross=a.gross,
             )
             _enrich(row, name)
+            row.inspection = a.has_inspection
             normal_rows.append(row)
             continue
         group_blocks.append((a.first_idx, block))
