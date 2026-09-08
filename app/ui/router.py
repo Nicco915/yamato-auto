@@ -110,6 +110,12 @@ async def mappings_page() -> HTMLResponse:
     return _read_page("mappings.html")
 
 
+@router.get("/board", response_class=HTMLResponse)
+async def board_page() -> HTMLResponse:
+    """监控目录看板页（已完成 / 执行中 / 未执行三档 + 一键启动/标记完成）。"""
+    return _read_page("board.html")
+
+
 # ---------- UI 专用 API ----------
 
 

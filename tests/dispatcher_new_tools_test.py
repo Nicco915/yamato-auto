@@ -66,6 +66,22 @@ from app.config import get_settings  # noqa: E402
 assert get_settings().upstream_root == str(UPSTREAM)
 
 
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _upstream_root_guard():
+    """混跑保险：settings 是全局单例，同进程后导入的测试文件（fastpath 等）
+    各自的 isolate_to_tmp 会覆盖 UPSTREAM_ROOT 并 cache_clear——每个用例前
+    钉回本文件的上游根，结束还原。"""
+    original = get_settings().upstream_root
+    get_settings().upstream_root = str(UPSTREAM)
+    try:
+        yield
+    finally:
+        get_settings().upstream_root = original
+
+
 # ---------------------------------------------------------------------------
 # create_factory_alias
 # ---------------------------------------------------------------------------

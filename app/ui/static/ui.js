@@ -81,6 +81,7 @@ function renderTopbar(active) {
   bar.className = "topbar";
   const links = [
     { key: "dashboard", text: "工作台", href: "/dashboard" },
+    { key: "board", text: "监控看板", href: "/board" },
     { key: "chat", text: "Agent对话", href: "/chat" },
     { key: "mappings", text: "主数据维护", href: "/mappings" },
   ];

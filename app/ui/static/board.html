@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>监控看板 - 雅玛多单证自动化</title>
+<link rel="stylesheet" href="/ui/static/ui.css">
+<style>
+  .board-page { max-width: 1280px; margin: 0 auto; padding: 0 16px 40px; }
+  .board-header { display: flex; align-items: center; gap: 12px; margin: 18px 0 14px; flex-wrap: wrap; }
+  .board-header h2 { font-size: 17px; font-weight: 700; margin: 0; }
+  .board-header .watch-dir { font-size: 12px; color: var(--muted); word-break: break-all; }
+  .board-header .spacer { flex: 1; }
+  .board-cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; align-items: start; }
+  @media (max-width: 900px) { .board-cols { grid-template-columns: 1fr; } }
+  .board-col { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; min-height: 120px; }
+  .board-col h3 { font-size: 14px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+  .board-col h3 .count { font-size: 12px; color: var(--muted); font-weight: 400; }
+  .board-col.col-todo h3 { color: #b45309; }
+  .board-col.col-running h3 { color: #1d4ed8; }
+  .board-col.col-done h3 { color: #15803d; }
+  .b-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+  .b-card .b-name { font-weight: 600; font-size: 13px; word-break: break-all; }
+  .b-card .b-meta { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.7; }
+  .b-card .b-actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .b-empty { font-size: 12px; color: var(--muted); text-align: center; padding: 18px 0; }
+  .start-modal .field { margin-bottom: 12px; }
+  .start-modal .field label { display: block; font-size: 12px; color: #4b5563; margin-bottom: 4px; }
+  .start-modal .field input, .start-modal .field select { width: 100%; box-sizing: border-box; }
+  .start-modal .hint { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 0 0 12px; }
+  .refresh-note { font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="page board-page">
+  <div class="board-header">
+    <h2>监控看板</h2>
+    <span class="watch-dir" id="watch-dir"></span>
+    <span class="spacer"></span>
+    <span class="refresh-note" id="refresh-note">每 10 秒自动刷新</span>
+    <button class="btn btn-sm" id="refresh-btn" onclick="loadBoard(true)">刷新</button>
+  </div>
+  <div class="board-cols">
+    <div class="board-col col-todo">
+      <h3>未执行 <span class="count" id="count-todo"></span></h3>
+      <div id="col-todo"></div>
+    </div>
+    <div class="board-col col-running">
+      <h3>执行中 <span class="count" id="count-running"></span></h3>
+      <div id="col-running"></div>
+    </div>
+    <div class="board-col col-done">
+      <h3>已完成 <span class="count" id="count-done"></span></h3>
+      <div id="col-done"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 启动批次确认弹窗（确认门：看板内确认后直接启动） -->
+<div id="start-mask" class="modal-mask" onclick="if (event.target === this) closeStartModal()">
+  <div class="modal start-modal">
+    <h3 id="start-title">启动批次</h3>
+    <p class="hint">确认后立即开始提取流水线，跳转到对话页跟踪进度。</p>
+    <div class="field">
+      <label>批次号（thread_id）</label>
+      <input type="text" id="start-thread-id">
+    </div>
+    <div class="field" id="start-downstream-field" style="display:none">
+      <label>下游装箱单（发现多个，请选择一个）</label>
+      <select id="start-downstream"></select>
+    </div>
+    <div class="field" id="start-downstream-single" style="display:none">
+      <label>下游装箱单</label>
+      <input type="text" id="start-downstream-ro" readonly>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeStartModal()">取消</button>
+      <button class="btn btn-primary" id="start-confirm-btn" onclick="confirmStart()">确认启动</button>
+    </div>
+  </div>
+</div>
+
+<script src="/ui/static/ui.js"></script>
+<script>
+renderTopbar("board");
+
+var _board = null;          // 最近一次 board_state 响应
+var _pollTimer = null;
+var _starting = false;
+
+var PHASE_TEXT = {
+  "init": "初始化",
+  "scan": "扫描单据",
+  "extracting": "提取中",
+  "human_review": "待人工审核",
+  "pending_review": "待人工审核",
+  "merging": "合并汇总",
+  "export_done": "提取完成",
+  "splitting": "分票中",
+  "split_review": "待分票审核",
+  "split_done": "分票完成",
+};
+function phaseText(p) {
+  if (!p) return "-";
+  return PHASE_TEXT[p] || p;
+}
+
+function statusBadge(status) {
+  switch (status) {
+    case "pending_review":
+    case "split_review":
+      return '<span class="badge badge-err">待审核</span>';
+    case "running":
+      return '<span class="badge badge-warn">进行中</span>';
+    case "completed":
+      return '<span class="badge badge-ok">已完成</span>';
+    case "error":
+      return '<span class="badge badge-muted">异常</span>';
+    default:
+      return '<span class="badge badge-muted">' + esc(status || "未知") + '</span>';
+  }
+}
+
+async function loadBoard(manual) {
+  var btn = $("refresh-btn");
+  if (manual) { btn.disabled = true; btn.textContent = "刷新中…"; }
+  try {
+    var data = await api("/api/v1/watch/board");
+    _board = data;
+    renderBoard(data);
+    $("refresh-note").textContent = "每 10 秒自动刷新 · 上次 " + fmtTime(Date.now() / 1000);
+  } catch (e) {
+    $("refresh-note").textContent = "刷新失败：" + e.message;
+    if (manual) toast("刷新失败：" + e.message, 3500);
+  } finally {
+    if (manual) { btn.disabled = false; btn.textContent = "刷新"; }
+  }
+}
+
+function renderBoard(data) {
+  $("watch-dir").textContent = "监控目录：" + (data.watch_dir || "未配置");
+  renderTodo(data.candidates || []);
+  renderRunning(data.in_progress || []);
+  renderDone(data.done || []);
+  $("count-todo").textContent = (data.candidates || []).length + " 个";
+  $("count-running").textContent = (data.in_progress || []).length + " 个";
+  $("count-done").textContent = (data.done || []).length + " 个";
+}
+
+function renderTodo(list) {
+  var el = $("col-todo");
+  if (!list.length) { el.innerHTML = '<div class="b-empty">暂无待执行文件夹</div>'; return; }
+  el.innerHTML = list.map(function (c, i) {
+    var meta = [];
+    meta.push(c.has_content
+      ? '<span class="badge badge-ok">已发现装箱单</span>'
+      : '<span class="badge badge-muted">未发现装箱单</span>');
+    if (c.mx2_count > 0) meta.push("MX2 × " + c.mx2_count);
+    return '<div class="b-card">' +
+      '<div class="b-name">' + esc(c.folder_name) + '</div>' +
+      '<div class="b-meta">' + meta.join(" · ") + '</div>' +
+      '<div class="b-actions">' +
+      '<button class="btn btn-sm btn-primary" ' + (c.has_content ? "" : "disabled") +
+        ' onclick="openStartModal(' + i + ')">开始批次</button>' +
+      '<button class="btn btn-sm" onclick="markDone(' + i + ')">标记完成</button>' +
+      '</div></div>';
+  }).join("");
+}
+
+function renderRunning(list) {
+  var el = $("col-running");
+  if (!list.length) { el.innerHTML = '<div class="b-empty">暂无执行中的批次</div>'; return; }
+  el.innerHTML = list.map(function (b) {
+    var total = (b.done_factories || 0) + (b.pending_factories || 0) + (b.current_factory ? 1 : 0);
+    var prog = total > 0
+      ? "工厂进度 " + (b.done_factories || 0) + "/" + total + (b.current_factory ? " · 当前：" + esc(b.current_factory) : "")
+      : "";
+    return '<div class="b-card">' +
+      '<div class="b-name">' + esc(b.folder_name) + '</div>' +
+      '<div class="b-meta">' + statusBadge(b.status) + ' · ' + esc(phaseText(b.current_phase)) +
+        (prog ? '<br>' + prog : '') +
+        '<br>批次号：' + esc(b.thread_id) + '</div>' +
+      '<div class="b-actions">' +
+      '<a class="btn btn-sm btn-primary" href="/chat?thread_id=' + encodeURIComponent(b.thread_id) + '">对话</a>' +
+      '<a class="btn btn-sm" href="/batch/' + encodeURIComponent(b.thread_id) + '">详情</a>' +
+      '</div></div>';
+  }).join("");
+}
+
+function renderDone(list) {
+  var el = $("col-done");
+  if (!list.length) { el.innerHTML = '<div class="b-empty">暂无已完成批次</div>'; return; }
+  el.innerHTML = list.map(function (b) {
+    return '<div class="b-card">' +
+      '<div class="b-name">' + esc(b.folder_name) + '</div>' +
+      '<div class="b-meta">完成于 ' + esc(fmtTime(b.completed_at)) +
+        '<br>批次号：' + esc(b.thread_id) + '</div>' +
+      '<div class="b-actions">' +
+      '<a class="btn btn-sm" href="/batch/' + encodeURIComponent(b.thread_id) + '">详情</a>' +
+      '<a class="btn btn-sm btn-ghost" href="/chat?thread_id=' + encodeURIComponent(b.thread_id) + '">对话</a>' +
+      '</div></div>';
+  }).join("");
+}
+
+/* ---------- 标记完成 ---------- */
+async function markDone(idx) {
+  var c = (_board && _board.candidates || [])[idx];
+  if (!c) return;
+  var folderName = c.folder_name;
+  if (!confirm("确认把「" + folderName + "」标记为已完成？\n标记后扫描新批次不再列出该文件夹。")) return;
+  try {
+    var r = await api("/api/v1/watch/mark-done", { method: "POST", body: { folder_name: folderName } });
+    toast(r.message || "已标记完成");
+    loadBoard(false);
+  } catch (e) {
+    toast("标记失败：" + e.message, 4000);
+  }
+}
+
+/* ---------- 启动批次 ---------- */
+var _startCandidate = null;
+
+function openStartModal(idx) {
+  var c = (_board && _board.candidates || [])[idx];
+  if (!c) return;
+  _startCandidate = c;
+  $("start-title").textContent = "启动批次：" + c.folder_name;
+  $("start-thread-id").value = c.default_thread_id || c.folder_name;
+  var downs = c.downstream_candidates || [];
+  if (downs.length > 1) {
+    $("start-downstream-field").style.display = "";
+    $("start-downstream-single").style.display = "none";
+    $("start-downstream").innerHTML = downs.map(function (p) {
+      var name = p.split(/[\\/]/).pop();
+      return '<option value="' + esc(p) + '">' + esc(name) + '</option>';
+    }).join("");
+  } else {
+    $("start-downstream-field").style.display = "none";
+    $("start-downstream-single").style.display = "";
+    $("start-downstream-ro").value = downs.length === 1 ? downs[0].split(/[\\/]/).pop() : "（自动探测）";
+  }
+  $("start-confirm-btn").disabled = false;
+  $("start-confirm-btn").textContent = "确认启动";
+  $("start-mask").classList.add("show");
+}
+
+function closeStartModal() {
+  $("start-mask").classList.remove("show");
+  _startCandidate = null;
+}
+
+async function confirmStart() {
+  if (!_startCandidate || _starting) return;
+  var tid = $("start-thread-id").value.trim();
+  if (!tid) { toast("批次号不能为空"); return; }
+  var downs = _startCandidate.downstream_candidates || [];
+  var body = { folder_name: _startCandidate.folder_name, thread_id: tid };
+  if (downs.length > 1) body.downstream_file_path = $("start-downstream").value;
+
+  _starting = true;
+  var btn = $("start-confirm-btn");
+  btn.disabled = true;
+  btn.textContent = "启动中…";
+  try {
+    var r = await api("/api/v1/watch/start", { method: "POST", body: body });
+    toast(r.message || "批次已启动");
+    closeStartModal();
+    // 跳转对话页跟踪进度（会话由对话页自动创建绑定）
+    location.href = "/chat?thread_id=" + encodeURIComponent(r.thread_id || tid);
+  } catch (e) {
+    toast("启动失败：" + e.message, 4000);
+    btn.disabled = false;
+    btn.textContent = "确认启动";
+  } finally {
+    _starting = false;
+  }
+}
+
+/* ---------- 轮询 ---------- */
+loadBoard(false);
+_pollTimer = setInterval(function () {
+  // 启动确认弹窗打开时暂停轮询，避免重绘打断输入
+  if ($("start-mask").classList.contains("show")) return;
+  loadBoard(false);
+}, 10000);
+</script>
+</body>
+</html>

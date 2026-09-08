@@ -202,6 +202,18 @@ class UndoAliasRequest(BaseModel):
     folder_name: str
 
 
+class WatchMarkDoneRequest(BaseModel):
+    """看板：把未执行候选文件夹标记为已完成。"""
+    folder_name: str
+
+
+class WatchStartRequest(BaseModel):
+    """看板：从文件夹一键启动批次（确认动作由看板弹窗承担）。"""
+    folder_name: str
+    thread_id: Optional[str] = None             # 可覆盖默认 thread_id
+    downstream_file_path: Optional[str] = None  # 多个装箱单时由人工选定
+
+
 # ---------- 路由 ----------
 
 @app.post("/api/v1/orders/process")
@@ -287,6 +299,56 @@ async def batch_pipeline_state(thread_id: str):
     """查询批次端到端流水线状态，供 Agent 对话页顶部状态图使用。"""
     from app.orchestrator import pipeline_state
     return await asyncio.to_thread(pipeline_state.get_pipeline_state, thread_id)
+
+
+# ---------- 监控目录看板（/board 页）----------
+
+
+@app.get("/api/v1/watch/board")
+async def watch_board():
+    """看板三档数据：已完成 / 执行中（含流水线进度）/ 未执行候选。"""
+    from app.orchestrator import board
+    try:
+        return await asyncio.to_thread(board.board_state)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@app.post("/api/v1/watch/mark-done")
+async def watch_mark_done(request: WatchMarkDoneRequest):
+    """看板：把未执行候选文件夹标记为已完成（仅 未执行→已完成 一个方向）。"""
+    from app.orchestrator import board
+    try:
+        return await asyncio.to_thread(board.mark_done, request.folder_name)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@app.post("/api/v1/watch/start")
+async def watch_start(request: WatchStartRequest):
+    """看板：一键启动批次——预写 running 行后后台线程跑提取，立即返回。
+
+    确认门由看板确认弹窗承担（一次一确认）；前端拿到 thread_id 后
+    跳转 /chat?thread_id= 由对话页跟踪进度。
+    """
+    from app.orchestrator import board
+    try:
+        return await asyncio.to_thread(
+            board.start_from_board,
+            request.folder_name,
+            request.thread_id,
+            request.downstream_file_path,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
 
 
 @app.post("/api/v1/batches/{thread_id}/advance")
