@@ -273,4 +273,4 @@ def start_from_board(
                      name=f"board-start-{tid}").start()
     logger.info("看板启动批次 | folder=%s | thread_id=%s", folder_name, tid)
     return {"ok": True, "thread_id": tid,
-            "message": f"批次 {tid} 已启动，跳转到对话页跟踪进度"}
+            "message": f"批次 {tid} 已启动，可在执行中卡片打开对话跟踪进度"}

@@ -64,7 +64,7 @@
 <div id="start-mask" class="modal-mask" onclick="if (event.target === this) closeStartModal()">
   <div class="modal start-modal">
     <h3 id="start-title">启动批次</h3>
-    <p class="hint">确认后立即开始提取流水线，跳转到对话页跟踪进度。</p>
+    <p class="hint">确认后立即开始提取流水线，可在执行中卡片点「对话」新标签页跟踪进度。</p>
     <div class="field">
       <label>批次号（thread_id）</label>
       <input type="text" id="start-thread-id">
@@ -464,8 +464,8 @@ async function confirmStart() {
     var r = await api("/api/v1/watch/start", { method: "POST", body: body });
     toast(r.message || "批次已启动");
     closeStartModal();
-    // 跳转对话页跟踪进度（会话由对话页自动创建绑定）
-    location.href = "/chat?thread_id=" + encodeURIComponent(r.thread_id || tid);
+    // 停留看板页：立即刷新，让卡片从「未执行」挪到「执行中」
+    loadBoard(false);
   } catch (e) {
     toast("启动失败：" + e.message, 4000);
     btn.disabled = false;

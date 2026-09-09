@@ -1907,8 +1907,11 @@ $("session-search").addEventListener("input", () => {
   _searchTimer = setTimeout(() => loadSessionList($("session-search").value), 300);
 });
 
-async function switchSession(sid) {
-  if (sid === sessionId) return;
+/* force=true：强制完整重载（清屏 + loadHistory + 列表 + 轮询），
+   用于 URL 深链复用同 sid 会话的场景——此时虽无需"切换"，
+   但历史渲染、pinned 状态与批次轮询都必须重建（幂等重载）。 */
+async function switchSession(sid, force) {
+  if (sid === sessionId && !force) return;
   stopBatchPoll(true);
   sessionId = sid;
   localStorage.setItem("yamato_chat_sid", sid);
@@ -2185,8 +2188,11 @@ async function maybePinFromUrl() {
       if (existing.length > 0) {
         const sid = existing[0].session_id;
         if (sid) {
-          await switchSession(sid);
-          await renderPinnedBatchProgress(tid);
+          /* force=true：localStorage 里的 sid 可能恰好等于要复用的会话，
+             不强制会短路导致历史/进度气泡/轮询全部不加载。 */
+          await switchSession(sid, true);
+          /* 进度气泡已由 switchSession 内部的 loadHistory（回填
+             sessionPinnedThreadId）+ resumeBatchPolling 覆盖，无需重复渲染。 */
           return true;
         }
       }
