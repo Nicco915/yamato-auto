@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 
 from langgraph.types import interrupt
 
+from app.config import get_settings
 from app.db.models import Container, Declaration, ProductMapping
 from app.db.session import get_session
 from app.declare.mapping import build_mapping_index
@@ -148,7 +149,19 @@ def propose_split(state: dict) -> dict:
     raw_items = [RawItem(**d) for d in state["raw_items"]]
     sj_map = state["sj_map"]
 
-    proposal = propose(raw_items, sj_map)
+    # 不商检拆分模式：state 优先（start 时由请求/配置写入），配置兜底
+    mode = (state.get("non_inspection_mode") or "").strip().lower()
+    if mode not in ("merge", "per_factory"):
+        mode = get_settings().split_non_inspection_mode
+
+    try:
+        proposal = propose(raw_items, sj_map, non_inspection_mode=mode)
+    except TypeError:
+        # TODO(engine 兼容): engine.propose 的 non_inspection_mode 参数合入后移除此回退
+        logger.warning(
+            "propose_split: engine.propose 尚无 non_inspection_mode 参数，按旧签名调用"
+        )
+        proposal = propose(raw_items, sj_map)
     proposal.split_thread_id = state["split_thread_id"]
     proposal.source_file = state.get("source_file_path", "")
 

@@ -1,10 +1,13 @@
 """全局配置：pydantic-settings 读取 .env，集中管理路径与模型参数。"""
 from functools import lru_cache
+import logging
 import re
 from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 # 项目根目录（app/ 的上一级中的 app 包所在目录）
 # 本文件位于 <project>/app/app/config.py，项目根 = parents[1]
@@ -79,6 +82,10 @@ class Settings(BaseSettings):
         description="商检工厂兜底名单"
     )
 
+    # 分票不商检拆分模式：merge=所有不商检品合并一票（默认）；
+    # per_factory=每家商检工厂的不商检品各自成半票。仅影响多商检柜。
+    SPLIT_NON_INSPECTION_MODE: str = "merge"
+
     # 工厂名归一化映射
     # env FACTORY_NORMALIZE_MAP JSON 字符串，如 '{"青島貝来国際貿易有限公司":"青島貝来","上海億鑽五金工具有限公司（青島）":"上海億鑽五金工具（青島）"}'
     FACTORY_NORMALIZE_MAP: dict[str, str] = Field(
@@ -102,6 +109,18 @@ class Settings(BaseSettings):
         """把相对路径解析为基于项目根的绝对路径。"""
         path = Path(p)
         return path if path.is_absolute() else (PROJECT_ROOT / path)
+
+    @property
+    def split_non_inspection_mode(self) -> str:
+        """SPLIT_NON_INSPECTION_MODE 校验兜底：非法值记 warning 并按 merge。"""
+        v = (self.SPLIT_NON_INSPECTION_MODE or "merge").strip().lower()
+        if v not in ("merge", "per_factory"):
+            logger.warning(
+                "SPLIT_NON_INSPECTION_MODE=%r 非法（仅支持 merge/per_factory），按 merge 处理",
+                self.SPLIT_NON_INSPECTION_MODE,
+            )
+            return "merge"
+        return v
 
     @property
     def master_db_abs(self) -> Path:

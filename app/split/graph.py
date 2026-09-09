@@ -34,6 +34,7 @@ class SplitState(TypedDict, total=False):
     split_thread_id: str          # 分票图 thread_id，建议 "split-{批次thread_id}"
     batch_id: str                 # 父批次 thread_id，报关单输出路径 {output}/{batch_id}/declarations/
     source_file_path: str         # 批次 filled Excel 的 final_output_path
+    non_inspection_mode: str      # 不商检拆分模式 merge/per_factory，缺省 merge（start 时写入）
 
     # ---- Node 1 产物 ----
     raw_items: list[dict]         # RawItem.model_dump() 列表

@@ -40,6 +40,7 @@ router = APIRouter(prefix="/api/v1/split", tags=["split"])
 class StartSplitRequest(BaseModel):
     thread_id: str
     source_file_path: Optional[str] = None
+    non_inspection_mode: Optional[str] = None  # merge/per_factory，缺省读配置
 
 
 class StartSplitResponse(BaseModel):
@@ -87,6 +88,17 @@ def start_split(req: StartSplitRequest):
     if not req.source_file_path:
         raise HTTPException(status_code=400, detail="source_file_path 不能为空")
 
+    # 不商检拆分模式：请求优先（校验合法性），缺省读配置
+    if req.non_inspection_mode:
+        mode = req.non_inspection_mode.strip().lower()
+        if mode not in ("merge", "per_factory"):
+            raise HTTPException(
+                status_code=400,
+                detail="non_inspection_mode 仅支持 merge/per_factory",
+            )
+    else:
+        mode = get_settings().split_non_inspection_mode
+
     split_thread_id = f"split-{req.thread_id}"
     graph = get_split_graph()
     cfg = _config(split_thread_id)
@@ -104,6 +116,7 @@ def start_split(req: StartSplitRequest):
     initial_state = {
         "source_file_path": req.source_file_path,
         "split_thread_id": split_thread_id,
+        "non_inspection_mode": mode,
     }
     initial_state["batch_id"] = req.thread_id  # 父批次 ID
 

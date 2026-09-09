@@ -2025,6 +2025,15 @@ def _exec_start_split(
 
         split_thread_id = f"split-{thread_id}"
 
+        # 不商检拆分模式：参数优先（校验合法性），缺省读配置
+        mode_arg = (args.get("non_inspection_mode") or "").strip().lower()
+        if mode_arg:
+            if mode_arg not in ("merge", "per_factory"):
+                return {"error": "non_inspection_mode 仅支持 merge/per_factory"}
+            mode = mode_arg
+        else:
+            mode = get_settings().split_non_inspection_mode
+
         from app.split.graph import get_split_graph
         graph = get_split_graph()
         config = {"configurable": {"thread_id": split_thread_id}}
@@ -2032,6 +2041,7 @@ def _exec_start_split(
         initial = {
             "split_thread_id": split_thread_id,
             "source_file_path": str(p),
+            "non_inspection_mode": mode,
         }
 
         # 跑图直到 interrupt（human_review 挂起）
@@ -4087,6 +4097,13 @@ TOOLS: dict[str, Tool] = {
                     "type": "string",
                     "description": "可选，批次 filled Excel 的绝对路径；"
                                    "缺省时从上游批次 state 取 final_output_path",
+                },
+                "non_inspection_mode": {
+                    "type": "string",
+                    "enum": ["merge", "per_factory"],
+                    "description": "可选，不商检拆分模式：merge=所有不商检品合并一票"
+                                   "（默认）；per_factory=每家商检工厂的不商检品各自"
+                                   "成半票。仅影响多商检柜。",
                 },
             },
             "required": ["thread_id"],
