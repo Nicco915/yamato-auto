@@ -7,7 +7,8 @@
 
 /* ---------- 商检工厂判定（数据驱动，不再硬编码工厂名单） ----------
    是否商检工厂由后端数据决定：票级看 ticket.sj_factories 成员资格，
-   行级看 item.inspection_filter（true=商检半票 / false=不商检合并票）。
+   行级看 item.inspection_filter（true=商检半票；false 搭配 factory_exclude=
+   不商检合并票，false 搭配 factory_filter=F 厂不商检半票，只含该厂不商检行）。
    sj_factories 元素兼容 dict（{factory_name, ...}）与 str 两种形态。 */
 function sjName(f) {
     if (f && typeof f === 'object') return f.factory_name || '';
@@ -324,6 +325,12 @@ function buildContainerMap(portData) {
                 map[k].factories[item.factory_filter] = true;
                 map[k].sj_factories[item.factory_filter] = true;
                 map[k].partial_count++;
+            } else if (item.inspection_filter === false && hasFilter) {
+                // F 厂不商检半票（per_factory 模式）：只含该厂的不商检行；
+                // 该厂仍是商检工厂，计入 factories 与 sj_factories 点亮柜级徽标
+                map[k].factories[item.factory_filter] = true;
+                map[k].sj_factories[item.factory_filter] = true;
+                map[k].partial_count++;
             } else if (item.inspection_filter === false && hasExclude) {
                 // 不商检合并票：柜内不商检行（含商检厂的不商检品）合并成票；
                 // 被排除的工厂即该柜的商检工厂，徽标据此点亮
@@ -514,6 +521,10 @@ function renderTickets() {
                         // SKU 级商检半票：只含该厂的商检行
                         partialNote = ' <span class="item-partial-note" title="商检半票：只含该厂的商检品">（'
                             + esc(item.factory_filter) + '商检部分）</span>';
+                    } else if (item.inspection_filter === false && item.factory_filter) {
+                        // F 厂不商检半票（per_factory 模式）：只含该厂的不商检行
+                        partialNote = ' <span class="item-partial-note" title="不商检半票：只含该厂的不商检品">（'
+                            + esc(item.factory_filter) + '厂不商检部分）</span>';
                     } else if (item.inspection_filter === false) {
                         // 不商检合并票：柜内不商检行（含商检工厂的不商检品）
                         partialNote = ' <span class="item-partial-note" title="不商检合并票：柜内不商检行（含商检工厂的不商检品）">（不商检部分）</span>';
@@ -690,14 +701,19 @@ function validateTicket(ticket) {
         w.push({ rule: 'over_3_full', message: '票内整柜超过 3 个：' + ticket.full_containers });
     }
     // mixed_sj 口径与后端对齐：商检工厂 = 票内 inspection_filter=true
-    // 半票的 factory_filter 集合；整柜/旧语义条目无行级商检数据，
-    // 前端无法展开重算，降级为并入 ticket.sj_factories 名单判定（注明）。
+    // 半票的 factory_filter 集合；F 厂不商检半票（false+factory_filter）
+    // 与其商检半票同属一家工厂，计入同一 sj 工厂（同名去重，不额外触发
+    // mixed_sj）；整柜/旧语义条目无行级商检数据，前端无法展开重算，
+    // 降级为并入 ticket.sj_factories 名单判定（注明）。
     var sjSet = {};
     var degraded = false;
     var items = ticket.items || [];
     for (var j = 0; j < items.length; j++) {
         var it = items[j];
         if (it.inspection_filter === true && it.factory_filter) {
+            sjSet[it.factory_filter] = true;
+        } else if (it.inspection_filter === false && it.factory_filter) {
+            // F 厂不商检半票：仍属该商检工厂（同一 factory_filter 去重）
             sjSet[it.factory_filter] = true;
         } else if (it.inspection_filter !== false) {
             // 整柜（过滤字段均空）或旧语义半票：依赖票级名单
@@ -833,9 +849,13 @@ function recalcTicket(ticket) {
         if (item.is_partial) {
             // 半票不计整柜。商检归属按新口径：
             // inspection_filter=true 的半票明确归属该商检工厂；
-            // inspection_filter=false 的不商检合并票不含商检工厂；
+            // F 厂不商检半票（false+factory_filter）仍是该厂的一部分，
+            // 其工厂保留在 sj_factories；
+            // inspection_filter=false 的不商检合并票（factory_exclude）不含商检工厂；
             // 旧语义半票（inspection_filter 空）无法判定，走旧名单保留。
             if (item.inspection_filter === true && item.factory_filter) {
+                sjFactories[item.factory_filter] = true;
+            } else if (item.inspection_filter === false && item.factory_filter) {
                 sjFactories[item.factory_filter] = true;
             } else if (item.inspection_filter !== false) {
                 needKeepOld = true;
