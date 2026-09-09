@@ -154,14 +154,7 @@ def propose_split(state: dict) -> dict:
     if mode not in ("merge", "per_factory"):
         mode = get_settings().split_non_inspection_mode
 
-    try:
-        proposal = propose(raw_items, sj_map, non_inspection_mode=mode)
-    except TypeError:
-        # TODO(engine 兼容): engine.propose 的 non_inspection_mode 参数合入后移除此回退
-        logger.warning(
-            "propose_split: engine.propose 尚无 non_inspection_mode 参数，按旧签名调用"
-        )
-        proposal = propose(raw_items, sj_map)
+    proposal = propose(raw_items, sj_map, non_inspection_mode=mode)
     proposal.split_thread_id = state["split_thread_id"]
     proposal.source_file = state.get("source_file_path", "")
 
