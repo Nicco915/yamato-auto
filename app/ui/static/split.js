@@ -522,9 +522,19 @@ function renderTickets() {
                         partialNote = ' <span class="item-partial-note" title="商检半票：只含该厂的商检品">（'
                             + esc(item.factory_filter) + '商检部分）</span>';
                     } else if (item.inspection_filter === false && item.factory_filter) {
-                        // F 厂不商检半票（per_factory 模式）：只含该厂的不商检行
-                        partialNote = ' <span class="item-partial-note" title="不商检半票：只含该厂的不商检品">（'
-                            + esc(item.factory_filter) + '厂不商检部分）</span>';
+                        // factory_filter + inspection_filter=false 两种语义：
+                        // · 单 item 票（或票内仅一个此类 item）→ F 厂不商检半票
+                        // · 票内多个此类 item → per_factory 的不商检合并票
+                        //   （每非商检厂一个 item，只装非商检厂全部行）
+                        var niItems = items.filter(function(x){
+                            return x.inspection_filter === false && x.factory_filter;
+                        });
+                        if (niItems.length > 1) {
+                            partialNote = ' <span class="item-partial-note" title="不商检合并票：仅含非商检工厂全部行">（不商检合并）</span>';
+                        } else {
+                            partialNote = ' <span class="item-partial-note" title="不商检半票：只含该厂的不商检品">（'
+                                + esc(item.factory_filter) + '厂不商检部分）</span>';
+                        }
                     } else if (item.inspection_filter === false) {
                         // 不商检合并票：柜内不商检行（含商检工厂的不商检品）
                         partialNote = ' <span class="item-partial-note" title="不商检合并票：柜内不商检行（含商检工厂的不商检品）">（不商检部分）</span>';

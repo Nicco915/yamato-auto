@@ -470,3 +470,162 @@ class TestSkuLevelInspectionSplit:
                 assert id(r) not in seen, f"行被 {seen[id(r)]} 与 {no} 重复覆盖"
                 seen[id(r)] = no
         assert len(seen) == len(items)
+
+
+class TestPerFactoryNonInspectionMode:
+    """non_inspection_mode="per_factory"：商检厂的不商检行各自成半票，
+    非商检厂全部行合并一票。逐票展开互补、无交集、恰好覆盖全柜。"""
+
+    @staticmethod
+    def _assert_complementary_coverage(tickets, items):
+        """关键互补不变量：逐票 rows_for_ticket 展开无重复，合起来=全柜行。"""
+        from app.declare.aggregator import rows_for_ticket
+
+        seen: dict[int, str] = {}
+        rows_by_ticket = {}
+        for t in tickets:
+            rows = rows_for_ticket(t, items, {})
+            rows_by_ticket[t.ticket_no] = rows
+            for r in rows:
+                assert id(r) not in seen, (
+                    f"行 {r.sku} 被 {seen[id(r)]} 与 {t.ticket_no} 重复覆盖"
+                )
+                seen[id(r)] = t.ticket_no
+        assert len(seen) == len(items), "逐票展开合起来未覆盖全柜"
+        return rows_by_ticket
+
+    def test_per_factory_beilai_zhengda_other_end_to_end(self):
+        """贝来(软木板=商检+写字板=不商检)+正达(全商检)+其他厂(不商检) 同柜
+        → 票序列 [贝来商检, 贝来不商检, 正达商检, 合并票(仅其他厂)]；
+        正达无不商检行 → 不产正达不商检半票；逐票展开互补覆盖全柜。"""
+        items = [
+            _row("K001", "青島貝来", "SKU-软木板", inspection=True),
+            _row("K001", "青島貝来", "SKU-写字板", inspection=False),
+            _row("K001", "Ｃ．正達工芸品", "SKU-正达1", inspection=True),
+            _row("K001", "上海億鑽五金工具（青島）", "SKU-其他1", inspection=False),
+        ]
+        proposal = propose(items, {}, non_inspection_mode="per_factory")
+        tickets = _all_tickets(proposal)
+        assert len(tickets) == 4
+
+        # 票序列：按厂名排序，每家 sj 厂先商检半票、后不商检半票，合并票最后
+        seq = [
+            (t.items[0].factory_filter, t.items[0].inspection_filter)
+            for t in tickets
+        ]
+        assert seq == [
+            ("青島貝来", True),    # 贝来商检半票
+            ("青島貝来", False),   # 贝来不商检半票
+            ("Ｃ．正達工芸品", True),  # 正达商检半票（无不商检行→无不商检半票）
+            ("上海億鑽五金工具（青島）", False),  # 合并票（仅非商检厂）
+        ]
+        for t in tickets:
+            assert all(it.is_partial for it in t.items)
+        # 不商检半票与合并票 sj_factories 恒为空
+        assert tickets[1].sj_factories == []
+        assert tickets[3].sj_factories == []
+        # 合并票保留 non_sj_remainder 警告，message 区分模式
+        assert any(w.rule == "non_sj_remainder" for w in tickets[3].warnings)
+        assert any("per_factory" in w.message for w in tickets[3].warnings)
+
+        # 关键互补不变量：逐票展开互补、无交集、恰好覆盖全柜
+        rows_by_ticket = self._assert_complementary_coverage(tickets, items)
+        # sj 厂的不商检行只出现在其 F 厂不商检半票，不在合并票
+        assert [r.sku for r in rows_by_ticket[tickets[1].ticket_no]] == [
+            "SKU-写字板",
+        ]
+        # 非 sj 厂全部行只出现在合并票
+        assert [r.sku for r in rows_by_ticket[tickets[3].ticket_no]] == [
+            "SKU-其他1",
+        ]
+
+    def test_per_factory_sj_factory_all_inspection_no_half_ticket(self):
+        """某 sj 厂全部行商检（本柜无不商检行）→ 该厂不产不商检半票。"""
+        items = [
+            _row("K001", "A厂", "SKU-A1", inspection=True),
+            _row("K001", "B厂", "SKU-B1", inspection=True),
+            _row("K001", "B厂", "SKU-B2", inspection=False),
+        ]
+        tickets = _all_tickets(propose(items, {}, non_inspection_mode="per_factory"))
+        seq = [
+            (t.items[0].factory_filter, t.items[0].inspection_filter)
+            for t in tickets
+        ]
+        # A 厂全商检→只有商检半票；B 厂有不商检行→商检半票+不商检半票；
+        # 无非商检厂→无合并票
+        assert seq == [("A厂", True), ("B厂", True), ("B厂", False)]
+        self._assert_complementary_coverage(tickets, items)
+
+    def test_per_factory_no_non_sj_factory_no_merged_ticket(self):
+        """柜内无非 sj 厂（全部工厂都含商检品）→ 不产不商检合并票。"""
+        items = [
+            _row("K001", "A厂", "SKU-A1", inspection=True),
+            _row("K001", "A厂", "SKU-A2", inspection=False),
+            _row("K001", "B厂", "SKU-B1", inspection=True),
+        ]
+        tickets = _all_tickets(propose(items, {}, non_inspection_mode="per_factory"))
+        assert len(tickets) == 3
+        assert all(t.items[0].factory_filter is not None for t in tickets)
+        assert not any(
+            it.factory_exclude for t in tickets for it in t.items
+        ), "per_factory 且无非商检厂时不应产生合并票"
+        self._assert_complementary_coverage(tickets, items)
+
+    def test_per_factory_multiple_non_sj_factories_single_merged_ticket(self):
+        """多家非商检厂 → 合并为一票（每厂一个 item），互补覆盖全柜。"""
+        items = [
+            _row("K001", "A厂", "SKU-A1", inspection=True),
+            _row("K001", "B厂", "SKU-B1", inspection=True),
+            _row("K001", "C厂", "SKU-C1", inspection=False),
+            _row("K001", "D厂", "SKU-D1", inspection=False),
+        ]
+        tickets = _all_tickets(propose(items, {}, non_inspection_mode="per_factory"))
+        assert len(tickets) == 3
+        merged = tickets[-1]
+        assert [it.factory_filter for it in merged.items] == ["C厂", "D厂"]
+        assert all(it.inspection_filter is False for it in merged.items)
+        assert any(w.rule == "non_sj_remainder" for w in merged.warnings)
+        rows_by_ticket = self._assert_complementary_coverage(tickets, items)
+        assert sorted(r.sku for r in rows_by_ticket[merged.ticket_no]) == [
+            "SKU-C1", "SKU-D1",
+        ]
+
+    def test_invalid_mode_falls_back_to_merge(self):
+        """非法 non_inspection_mode 按 merge 处理（行为与默认一致）。"""
+        items = [
+            _row("K001", "A厂", "SKU-A1", inspection=True),
+            _row("K001", "A厂", "SKU-A2", inspection=False),
+            _row("K001", "B厂", "SKU-B1", inspection=True),
+            _row("K001", "C厂", "SKU-C1", inspection=False),
+        ]
+        fallback = _all_tickets(propose(items, {}, non_inspection_mode="bogus"))
+        default = _all_tickets(propose(items, {}))
+        assert len(fallback) == len(default) == 3
+        merged = fallback[-1]
+        # merge 语义：合并票 factory_exclude=全部 sj 厂，inspection_filter=False
+        assert merged.items[0].factory_exclude == ["A厂", "B厂"]
+        assert merged.items[0].inspection_filter is False
+        assert any(w.rule == "non_sj_remainder" for w in merged.warnings)
+        self._assert_complementary_coverage(fallback, items)
+
+    def test_merge_mode_unaffected_by_default(self):
+        """默认参数（merge）：同一输入票序列与 per_factory 不同、与旧行为一致。"""
+        items = [
+            _row("K001", "青島貝来", "SKU-软木板", inspection=True),
+            _row("K001", "青島貝来", "SKU-写字板", inspection=False),
+            _row("K001", "Ｃ．正達工芸品", "SKU-正达1", inspection=True),
+            _row("K001", "上海億鑽五金工具（青島）", "SKU-其他1", inspection=False),
+        ]
+        tickets = _all_tickets(propose(items, {}))
+        assert len(tickets) == 3
+        seq = [
+            (t.items[0].factory_filter, t.items[0].factory_exclude,
+             t.items[0].inspection_filter)
+            for t in tickets
+        ]
+        assert seq == [
+            ("青島貝来", None, True),
+            ("Ｃ．正達工芸品", None, True),
+            (None, ["青島貝来", "Ｃ．正達工芸品"], False),
+        ]
+        self._assert_complementary_coverage(tickets, items)
