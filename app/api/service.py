@@ -2270,6 +2270,30 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
     return detail
 
 
+def _delete_batch_state(thread_id: str) -> dict[str, Any]:
+    """纯删除批次主状态：checkpoints.db 的 checkpoints + writes 行 + batches 业务行。
+
+    不含防护校验、不含审计留痕——调用方各自负责（delete_batch 留
+    batch_deleted；看板退回未执行留 batch_reset）。
+    batches 行业务行一并删除（内部已兜底：失败只记 warning 不抛出），
+    避免已删批次留孤儿行被看板配对成死链接。
+    """
+    path = Path(get_settings().checkpoint_db_abs).resolve()
+    conn = sqlite3.connect(str(path))
+    try:
+        cur = conn.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
+        writes_removed = cur.rowcount
+        cur = conn.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
+        checkpoints_removed = cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+
+    batch_store.delete_batch(thread_id)
+    return {"checkpoints_removed": checkpoints_removed,
+            "writes_removed": writes_removed}
+
+
 def delete_batch(thread_id: str) -> dict[str, Any]:
     """删除过往批次：清掉 checkpoints.db 里该 thread_id 的全部状态（checkpoints + writes）。
 
@@ -2294,20 +2318,7 @@ def delete_batch(thread_id: str) -> dict[str, Any]:
 
     # L2 日志关联：删除动作及其审计留痕日志携带批次号
     with logging_context(thread_id=thread_id):
-        path = Path(get_settings().checkpoint_db_abs).resolve()
-        conn = sqlite3.connect(str(path))
-        try:
-            cur = conn.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))
-            writes_removed = cur.rowcount
-            cur = conn.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
-            checkpoints_removed = cur.rowcount
-            conn.commit()
-        finally:
-            conn.close()
-
-        # 同步删除 batches 业务行（内部已兜底：失败只记 warning 不抛出），
-        # 避免已删批次留孤儿行被看板配对成死链接
-        batch_store.delete_batch(thread_id)
+        removed = _delete_batch_state(thread_id)
 
         # 审计留痕（顺序：先删成功再留痕；失败只警告，不阻塞返回）
         try:
@@ -2329,8 +2340,8 @@ def delete_batch(thread_id: str) -> dict[str, Any]:
 
         return {
             "deleted": thread_id,
-            "checkpoints_removed": checkpoints_removed,
-            "writes_removed": writes_removed,
+            "checkpoints_removed": removed["checkpoints_removed"],
+            "writes_removed": removed["writes_removed"],
         }
 
 

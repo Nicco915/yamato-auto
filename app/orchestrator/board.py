@@ -8,13 +8,16 @@
 - mark_done：未执行候选 → 已完成（历史文件夹标记，扫描不再列出）；
 - start_from_board：看板一键启动批次——确认动作发生在看板弹窗
   （一次一确认的确认门由前端弹窗承担），这里预写 running 批次行后
-  后台线程跑 start_batch_from_scan，HTTP 立即返回不阻塞。
+  后台线程跑 start_batch_from_scan，HTTP 立即返回不阻塞；
+- reset_to_todo：退回未执行——把文件夹关联的批次从执行中(挂起/异常)/
+  已完成回退到未执行，清掉全部执行痕迹，看板重新把它列为候选。
 
 所有路径处理使用 pathlib.Path，兼容 macOS/Windows。
 """
 from __future__ import annotations
 
 import logging
+import shutil
 import sqlite3
 import threading
 from pathlib import Path
@@ -274,3 +277,157 @@ def start_from_board(
     logger.info("看板启动批次 | folder=%s | thread_id=%s", folder_name, tid)
     return {"ok": True, "thread_id": tid,
             "message": f"批次 {tid} 已启动，可在执行中卡片打开对话跟踪进度"}
+
+
+def _pre_extraction_alive(tid: str) -> bool:
+    """后台预提取是否仍在跑：进程级已知集合 + 线程名双重判定。"""
+    from app.api import service
+    if tid in service._known_running:
+        return True
+    return any(t.name == f"pre-extract-{tid}" and t.is_alive()
+               for t in threading.enumerate())
+
+
+def reset_to_todo(folder_name: str) -> dict[str, Any]:
+    """退回未执行：把文件夹关联的批次回退到未执行，清掉全部执行痕迹。
+
+    与 mark_done 对称的逆向操作。完成后看板重新把文件夹列为未执行候选，
+    可再次一键启动。
+
+    两条路径：
+    - 合成行（mark_done 纯标记，无 checkpoint）：只删 batches 业务行；
+    - 真批次：防护校验 → 清分票 checkpoint → 清提取缓存 → 清审核记录
+      （插 batch_reset 留痕）→ 解绑调度会话 → 删批次配置文件 →
+      删主状态（checkpoints/writes/batches 行）。
+
+    清理顺序铁律：主状态删除之前任何一步失败都抛出（不留下半清理状态）；
+    留痕失败只 warning 不阻塞（与 delete_batch 同哲学）。
+
+    异常契约（路由层转 HTTP）：
+    - 文件夹不存在 → FileNotFoundError；
+    - 文件夹无关联批次（已是未执行）→ ValueError；
+    - 批次活跑中（图 next 非空且无 interrupt）→ RuntimeError；
+    - 后台预提取线程仍在运行 → RuntimeError（消息含「预识别」）。
+    """
+    folder_name = (folder_name or "").strip()
+    if not folder_name:
+        raise ValueError("文件夹名不能为空")
+    watch = _watch_path()
+    folder = watch / folder_name
+    if not folder.is_dir():
+        raise FileNotFoundError(f"文件夹不存在: {folder_name}")
+
+    # 关联批次查找：与看板同源的三重匹配；无匹配 = 已是未执行
+    matched = discovery.match_watch_folders(watch)
+    rec = matched.get(folder_name)
+    if rec is None:
+        raise ValueError(f"「{folder_name}」已是未执行状态，无需退回")
+    tid = rec["thread_id"]
+
+    from app.api import service
+
+    # 合成行：无 checkpoint 的纯标记，删 batches 行即完成回退
+    if not service.get_order_state(tid).get("exists"):
+        batch_store.delete_batch(tid)
+        logger.info("看板退回未执行（合成行） | folder=%s | thread_id=%s",
+                    folder_name, tid)
+        return {"ok": True, "thread_id": tid,
+                "message": f"已把「{folder_name}」退回未执行（清除了完成标记），"
+                           f"可重新开始"}
+
+    # ---- 防护（与 service.delete_batch 同规则）----
+    graph = service.get_graph()
+    snap = graph.get_state(service._config(tid))
+    if not any(t.interrupts for t in snap.tasks) and snap.next:
+        raise RuntimeError(f"批次正在运行，禁止退回: {tid}")
+    if _pre_extraction_alive(tid):
+        raise RuntimeError("后台预识别仍在运行，请稍后重试")
+
+    cleaned: list[str] = []
+    settings = get_settings()
+
+    # ---- ① 清分票状态：同一 checkpoints.db 中 split-{tid} 的
+    # checkpoints + writes 行（独立 rw 连接，不存在则跳过）----
+    split_tid = f"split-{tid}"
+    ckpt_path = Path(settings.checkpoint_db_abs).resolve()
+    if ckpt_path.exists():
+        conn = sqlite3.connect(str(ckpt_path))
+        try:
+            cur = conn.execute("DELETE FROM writes WHERE thread_id = ?",
+                               (split_tid,))
+            w = cur.rowcount
+            cur = conn.execute("DELETE FROM checkpoints WHERE thread_id = ?",
+                               (split_tid,))
+            c = cur.rowcount
+            conn.commit()
+        finally:
+            conn.close()
+        if w or c:
+            cleaned.append("分票记录")
+
+    # ---- ② 清提取缓存：批次 session 目录 + 预提取进度文件
+    # （不清则重跑命中旧缓存，跳过重新提取）----
+    batch_session_dir = service.SESSIONS_DIR / settings.safe_path_tag(tid)
+    if batch_session_dir.is_dir():
+        shutil.rmtree(batch_session_dir)
+        cleaned.append("提取缓存")
+    progress_path = service._preextract_progress_path(tid)
+    if progress_path.is_file():
+        progress_path.unlink()
+        cleaned.append("预识别进度")
+
+    # ---- ③ 清审核记录 + 插 batch_reset 留痕
+    # （不清则重跑时已审核工厂被 audited 档全部 skip，批次空跑）----
+    from app.db.models import ChatSession, ReviewAudit
+    from app.db.session import get_session
+    with get_session() as session:
+        removed = (session.query(ReviewAudit)
+                   .filter(ReviewAudit.thread_id == tid)
+                   .delete(synchronize_session=False))
+        session.commit()
+    if removed:
+        cleaned.append("审核记录")
+    try:
+        with get_session() as session:
+            session.add(ReviewAudit(
+                thread_id=tid,
+                factory_name=None,
+                approved=False,
+                edited_count=0,
+                changes_json="[]",
+                new_skus_json="[]",
+                result_status="batch_reset",
+            ))
+            session.commit()
+    except Exception as e:  # noqa: BLE001 与 delete_batch 同哲学：留痕失败不阻塞
+        logger.warning("⚠️⚠️ [审计落库失败] thread=%s "
+                       "批次已退回，但 batch_reset 留痕写入失败：%s: %s",
+                       tid, type(e).__name__, e)
+
+    # ---- ④ 解绑调度会话：pinned_thread_id 置 NULL（会话与历史保留）----
+    with get_session() as session:
+        unpinned = (session.query(ChatSession)
+                    .filter(ChatSession.pinned_thread_id == tid)
+                    .update({"pinned_thread_id": None},
+                            synchronize_session=False))
+        session.commit()
+    if unpinned:
+        cleaned.append("会话绑定")
+
+    # ---- ⑤ 删批次配置文件（output/{tid}/batch_config.json；产物目录不动）----
+    config_path = settings.batch_output_dir(tid) / "batch_config.json"
+    if config_path.is_file():
+        config_path.unlink()
+        cleaned.append("批次配置")
+
+    # ---- ⑥ 删主状态：checkpoints/writes/batches 行（纯删除，不留痕，
+    # 本函数已在 ③ 留过 batch_reset，避免 batch_deleted 双留痕）----
+    service._delete_batch_state(tid)
+    cleaned.append("执行状态")
+
+    logger.info("看板退回未执行 | folder=%s | thread_id=%s | 清理=%s",
+                folder_name, tid, "/".join(cleaned))
+    detail = ("、".join(cleaned)) if cleaned else "批次标记"
+    return {"ok": True, "thread_id": tid,
+            "message": f"已把「{folder_name}」退回未执行"
+                       f"（清理了{detail}），可重新开始"}

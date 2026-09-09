@@ -248,6 +248,10 @@ function runningActions(b, i) {
     encodeURIComponent(tid) + '">对话</a>' +
     '<a class="btn btn-sm" target="_blank" rel="noopener" href="/batch/' +
     encodeURIComponent(tid) + '">详情</a>';
+  // 退回未执行：运行中置灰防误触，挂起/异常可回退（残留行走到上面 return，无此按钮）
+  h += (b.status === "running")
+    ? '<button class="btn btn-sm btn-ghost" disabled title="批次正在执行，请等到审核挂起点后再退回">退回未执行</button>'
+    : '<button class="btn btn-sm btn-ghost" onclick="boardResetToTodo(\'r\', ' + i + ', this)">退回未执行</button>';
   return h;
 }
 
@@ -281,6 +285,7 @@ function renderDone(list) {
         ? '<button class="btn btn-sm" disabled>详情</button>'
         : '<a class="btn btn-sm" target="_blank" rel="noopener" href="/batch/' + encodeURIComponent(b.thread_id) + '">详情</a>') +
       '<a class="btn btn-sm btn-ghost" target="_blank" rel="noopener" href="/chat?thread_id=' + encodeURIComponent(b.thread_id) + '">对话</a>' +
+      '<button class="btn btn-sm btn-ghost" onclick="boardResetToTodo(\'d\', ' + i + ', this)">退回未执行</button>' +
       '</div></div>';
   }).join("");
 }
@@ -311,8 +316,28 @@ async function boardAddFactories(tier, i, btn) {
   }
 }
 
-/* 开始分票：确认后启动分票流水线，新标签页打开分票页 */
-async function boardStartSplit(tier, i, btn) {
+/* 退回未执行：把批次回退到未执行（清运行状态/提取缓存/审核记录），确认门一次一确认 */
+async function boardResetToTodo(tier, i, btn) {
+  var b = _cardAt(tier, i);
+  if (!b || (btn && btn.disabled)) return;
+  if (!confirm("确定把「" + b.folder_name + "」退回未执行？\n将清除该批次的运行状态、提取缓存和审核记录，之后可以重新开始。\n已写入的装箱单文件和工厂别名不受影响。")) return;
+  btn.disabled = true;
+  btn.textContent = "退回中…";
+  try {
+    var r = await api("/api/v1/watch/reset", { method: "POST", body: { folder_name: b.folder_name } });
+    toast((r && r.message) || "已退回未执行");
+    loadBoard(false);
+  } catch (e) {
+    toast(e.status === 409
+      ? "退回失败：" + e.message + "（请等到审核挂起点后再退回）"
+      : "退回未执行失败：" + e.message, 4000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "退回未执行";
+  }
+}
+
+/* 开始分票：确认后启动分票流水线，新标签页打开分票页 */async function boardStartSplit(tier, i, btn) {
   var b = _cardAt(tier, i);
   if (!b || (btn && btn.disabled)) return;
   if (!confirm("对批次「" + b.folder_name + "」开始分票？\n将按规则引擎生成拆票方案并打开分票页。")) return;

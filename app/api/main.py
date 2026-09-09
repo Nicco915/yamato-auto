@@ -210,6 +210,11 @@ class WatchMarkDoneRequest(BaseModel):
     thread_id: Optional[str] = None             # 关联到已有已完成批次；缺省为纯标记
 
 
+class WatchResetRequest(BaseModel):
+    """看板：把文件夹关联批次退回未执行。"""
+    folder_name: str
+
+
 class WatchStartRequest(BaseModel):
     """看板：从文件夹一键启动批次（确认动作由看板弹窗承担）。"""
     folder_name: str
@@ -334,6 +339,25 @@ async def watch_mark_done(request: WatchMarkDoneRequest):
         raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@app.post("/api/v1/watch/reset")
+async def watch_reset(request: WatchResetRequest):
+    """看板：把文件夹关联批次从 执行中(挂起/异常)/已完成 回退到 未执行。
+
+    清除该批次的 checkpoint、分票状态、提取缓存、审核记录与会话绑定，
+    之后可以从看板重新一键启动。运行中的批次（running/后台预识别进行中）
+    拒绝回退，需等到审核挂起点后再操作。已写入的装箱单文件和工厂别名不受影响。
+    """
+    from app.orchestrator import board
+    try:
+        return await asyncio.to_thread(board.reset_to_todo, request.folder_name)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
 
 
 @app.post("/api/v1/watch/start")

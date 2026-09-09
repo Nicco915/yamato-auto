@@ -290,3 +290,165 @@ def test_start_from_board_rejects_duplicates(watch, monkeypatch):
 def test_start_from_board_missing_folder(watch):
     with pytest.raises(FileNotFoundError):
         board.start_from_board("不存在")
+
+
+# ---------- reset_to_todo ----------
+
+def _audit_rows(tid):
+    from app.db.models import ReviewAudit
+    from app.db.session import get_session
+    with get_session() as s:
+        return (s.query(ReviewAudit)
+                .filter(ReviewAudit.thread_id == tid)
+                .order_by(ReviewAudit.audit_id)
+                .all())
+
+
+def test_reset_to_todo_synthetic_row(watch):
+    """合成行（mark_done 纯标记，无 checkpoint）：删 batches 行即完成回退。"""
+    (watch / "历史文件夹").mkdir()
+    board.mark_done("历史文件夹")
+    assert batch_store.get_batch("历史文件夹") is not None
+
+    r = board.reset_to_todo("历史文件夹")
+    assert r["ok"] is True
+    assert r["thread_id"] == "历史文件夹"
+
+    # 行被删，看板重新列为未执行候选
+    assert batch_store.get_batch("历史文件夹") is None
+    state = board.board_state()
+    assert _names(state["candidates"]) == {"历史文件夹"}
+    assert _names(state["done"]) == set()
+
+
+def test_reset_to_todo_suspended_batch_full_cleanup(watch):
+    """挂起批次回退：checkpoint/session缓存/预提取进度/审核记录/会话绑定
+    /批次配置/batches 行全清，且只留 batch_reset 留痕（无 batch_deleted）。"""
+    from app.db.models import ChatSession, ReviewAudit
+    from app.db.session import get_session
+    from app.graph import NODE7, get_graph
+
+    tid = "rst-1"
+    (watch / "退回批次").mkdir()
+    batch_store.upsert_batch(tid, watch_dir=str(watch),
+                             folder_name="退回批次", status="pending_review")
+
+    # 有 checkpoint 的真批次（NODE7 之后 next 为空 → 非活跑，允许回退）
+    graph = get_graph()
+    cfg = {"configurable": {"thread_id": tid}}
+    graph.update_state(cfg, {"final_output_path": "/tmp/o.xlsx"}, as_node=NODE7)
+    # 分票 checkpoint（同一库，thread_id=split-{tid}）
+    split_cfg = {"configurable": {"thread_id": f"split-{tid}"}}
+    graph.update_state(split_cfg, {"final_output_path": "/tmp/s.xlsx"},
+                       as_node=NODE7)
+
+    # 提取缓存：批次 session 目录 + 预提取进度文件
+    settings = get_settings()
+    sess_dir = service.SESSIONS_DIR / settings.safe_path_tag(tid)
+    sess_dir.mkdir(parents=True)
+    (sess_dir / "厂A.json").write_text("{}", encoding="utf-8")
+    progress_path = service._preextract_progress_path(tid)
+    progress_path.write_text("{}", encoding="utf-8")
+
+    # 审核记录 + 批次配置文件 + 调度会话绑定
+    with get_session() as s:
+        s.add(ReviewAudit(thread_id=tid, factory_name="厂A", approved=True,
+                          edited_count=1, changes_json="[]",
+                          new_skus_json="[]", result_status="approved"))
+        s.add(ChatSession(session_id="sess-rst", pinned_thread_id=tid))
+        s.commit()
+    service._write_batch_config(tid, {"thread_id": tid})
+    config_path = settings.batch_output_dir(tid) / "batch_config.json"
+    assert config_path.is_file()
+
+    r = board.reset_to_todo("退回批次")
+    assert r["ok"] is True
+    assert r["thread_id"] == tid
+    assert "退回未执行" in r["message"]
+
+    # 主状态：batches 行 + checkpoints/writes（含分票）全清
+    assert batch_store.get_batch(tid) is None
+    assert not graph.get_state(cfg).values
+    assert not graph.get_state(split_cfg).values
+    # 提取缓存全清
+    assert not sess_dir.exists()
+    assert not progress_path.exists()
+    # 审核记录清空，只剩一条 batch_reset 留痕，无 batch_deleted 双留痕
+    audits = _audit_rows(tid)
+    assert len(audits) == 1
+    assert audits[0].result_status == "batch_reset"
+    assert audits[0].factory_name is None
+    assert audits[0].approved is False
+    # 调度会话解绑但保留
+    with get_session() as s:
+        sess = s.get(ChatSession, "sess-rst")
+        assert sess is not None
+        assert sess.pinned_thread_id is None
+    # 批次配置文件删除
+    assert not config_path.exists()
+    # 看板重新列为候选
+    state = board.board_state()
+    assert _names(state["candidates"]) == {"退回批次"}
+
+
+def test_reset_to_todo_running_batch_rejected(watch):
+    """活跑防护：snap.next 非空且无 interrupt → RuntimeError，状态不动。"""
+    from langgraph.graph import START
+    from app.graph import get_graph
+
+    tid = "rst-run"
+    (watch / "活跑批次").mkdir()
+    batch_store.upsert_batch(tid, watch_dir=str(watch),
+                             folder_name="活跑批次", status="running")
+    graph = get_graph()
+    cfg = {"configurable": {"thread_id": tid}}
+    # as_node=START：next 指向首个节点（非空）且无 interrupt → 活跑语义
+    graph.update_state(cfg, {"downstream_file_path": "/tmp/m.xlsx"},
+                       as_node=START)
+
+    with pytest.raises(RuntimeError, match="正在运行"):
+        board.reset_to_todo("活跑批次")
+
+    # 防护失败不留下半清理状态
+    assert batch_store.get_batch(tid) is not None
+    assert graph.get_state(cfg).values
+
+
+def test_reset_to_todo_pre_extraction_rejected(watch):
+    """预提取防护：pre-extract-{tid} 线程仍在跑 → RuntimeError（含预识别）。"""
+    from app.graph import NODE7, get_graph
+
+    tid = "rst-pre"
+    (watch / "预识别批次").mkdir()
+    batch_store.upsert_batch(tid, watch_dir=str(watch),
+                             folder_name="预识别批次", status="pending_review")
+    graph = get_graph()
+    cfg = {"configurable": {"thread_id": tid}}
+    graph.update_state(cfg, {"final_output_path": "/tmp/o.xlsx"}, as_node=NODE7)
+
+    stop = threading.Event()
+    t = threading.Thread(target=stop.wait, name=f"pre-extract-{tid}",
+                         daemon=True)
+    t.start()
+    try:
+        with pytest.raises(RuntimeError, match="预识别"):
+            board.reset_to_todo("预识别批次")
+    finally:
+        stop.set()
+        t.join(timeout=5)
+
+    # 防护失败不留下半清理状态
+    assert batch_store.get_batch(tid) is not None
+    assert graph.get_state(cfg).values
+
+
+def test_reset_to_todo_validation(watch):
+    """文件夹不存在 → FileNotFoundError；无关联批次（已是未执行）→ ValueError。"""
+    with pytest.raises(FileNotFoundError):
+        board.reset_to_todo("不存在")
+    with pytest.raises(ValueError):
+        board.reset_to_todo("  ")
+
+    (watch / "纯候选").mkdir()
+    with pytest.raises(ValueError, match="已是未执行"):
+        board.reset_to_todo("纯候选")
