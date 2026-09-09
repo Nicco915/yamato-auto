@@ -41,6 +41,8 @@ class TicketItem(BaseModel):
     3. SKU 级商检半票/合并票（inspection_filter 非 None）：
        - inspection_filter=True 搭配 factory_filter=F：柜内 maker==F
          且 inspection==True 的行（商检半票）；
+       - inspection_filter=False 搭配 factory_filter=F：柜内 maker==F
+         且 inspection==False 的行（F 厂不商检半票，per_factory 模式）；
        - inspection_filter=False 搭配 factory_exclude=[...]：柜内
          (maker 不在排除集) 或 (maker 在排除集但 inspection==False) 的行
          （不商检合并票，与各商检半票互补、合起来恰好覆盖全柜）。
@@ -54,7 +56,8 @@ class TicketItem(BaseModel):
     is_partial: bool = False
     # SKU 级商检维度过滤：None=旧语义（见类 docstring 形态 2）；
     # True=商检半票（须搭配 factory_filter）；
-    # False=不商检合并票（须搭配 factory_exclude）。
+    # False=不商检票：搭配 factory_filter=F 为 F 厂不商检半票（per_factory 模式），
+    # 搭配 factory_exclude=[...] 为不商检合并票。
     inspection_filter: Optional[bool] = None
 
     @model_validator(mode="after")
@@ -70,10 +73,12 @@ class TicketItem(BaseModel):
                 f"柜 {self.kanri_no}：inspection_filter=True（商检半票）"
                 "必须搭配 factory_filter 指定商检工厂"
             )
-        if self.inspection_filter is False and not self.factory_exclude:
+        if (self.inspection_filter is False
+                and not (self.factory_exclude or self.factory_filter)):
             raise ValueError(
-                f"柜 {self.kanri_no}：inspection_filter=False（不商检合并票）"
-                "必须搭配 factory_exclude 指定被拆出的商检工厂集合"
+                f"柜 {self.kanri_no}：inspection_filter=False（不商检票）"
+                "必须搭配 factory_exclude（不商检合并票）或 factory_filter"
+                "（F 厂不商检半票）"
             )
         return self
 

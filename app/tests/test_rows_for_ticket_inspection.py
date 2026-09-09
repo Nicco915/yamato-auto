@@ -164,12 +164,12 @@ class TestSchemaValidator:
         with pytest.raises(ValueError, match="必须搭配 factory_exclude"):
             TicketItem(kanri_no="K001", is_partial=True, inspection_filter=False)
 
-    def test_false_with_factory_filter(self):
-        with pytest.raises(ValueError):
-            TicketItem(
-                kanri_no="K001", is_partial=True,
-                factory_filter="A厂", inspection_filter=False,
-            )
+    def test_false_with_factory_filter_legal(self):
+        """F 厂不商检半票：factory_filter + inspection_filter=False 合法。"""
+        TicketItem(
+            kanri_no="K001", is_partial=True,
+            factory_filter="A厂", inspection_filter=False,
+        )
 
     def test_mutex_still_enforced(self):
         """旧互斥规则维持：filter 与 exclude 不得同时设置。"""
@@ -187,3 +187,29 @@ class TestSchemaValidator:
         TicketItem(kanri_no="K001", is_partial=True, factory_filter="A厂")
         TicketItem(kanri_no="K001", is_partial=True, factory_exclude=["A厂"])
         TicketItem(kanri_no="K001")
+
+
+class TestFactoryNonInspectionHalfTicket:
+    """F 厂不商检半票：factory_filter + inspection_filter=False（per_factory 模式）。"""
+
+    def test_only_factory_non_inspection_rows(self):
+        t = _ticket([
+            TicketItem(
+                kanri_no="K001", is_partial=True,
+                factory_filter="A厂", inspection_filter=False,
+            ),
+        ])
+        rows = rows_for_ticket(t, ITEMS, {})
+        # 只含 A 厂 SKU-A2，不含该厂商检行 SKU-A1，不含别厂行
+        assert sorted(r.sku for r in rows) == ["SKU-A2"]
+
+    def test_factory_all_inspection_yields_empty(self):
+        """B 厂全商检：其不商检半票展开为空（该厂无不商检行）。"""
+        t = _ticket([
+            TicketItem(
+                kanri_no="K001", is_partial=True,
+                factory_filter="B厂", inspection_filter=False,
+            ),
+        ])
+        rows = rows_for_ticket(t, ITEMS, {})
+        assert rows == []

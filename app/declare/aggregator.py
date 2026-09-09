@@ -118,6 +118,12 @@ def rows_for_ticket(
             f = ti.factory_filter
             rows.extend(r for r in cont_rows if r.maker == f and r.inspection)
             continue
+        if ti.inspection_filter is False and ti.factory_filter:
+            # F 厂不商检半票（per_factory 模式）：仅 maker==factory_filter
+            # 且 inspection==False 的行；该厂商检行由商检半票承载
+            f = ti.factory_filter
+            rows.extend(r for r in cont_rows if r.maker == f and not r.inspection)
+            continue
         if ti.inspection_filter is False:
             # 不商检合并票：柜内 (maker 不在排除集) 或
             # (maker 在排除集但 inspection==False) 的行。
