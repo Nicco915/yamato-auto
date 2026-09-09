@@ -215,6 +215,10 @@ def test_board_state_has_checkpoint_and_orphan(watch):
     done = {d["folder_name"]: d for d in state["done"]}
     prog = {d["folder_name"]: d for d in state["in_progress"]}
     assert done["真完成"]["has_checkpoint"] is True
+    # 卡片操作字段透传（checkpoint 里造的 final_output_path）
+    assert done["真完成"]["final_output_path"] == "/tmp/o.xlsx"
+    assert done["真完成"]["split_thread_id"] is None
+    assert done["真完成"]["declarations_ready"] is False
     assert prog["残留"]["has_checkpoint"] is False
     # 残留行跳过自愈：状态不被误标 running，数据库行也不被回写
     assert prog["残留"]["status"] == "pending_review"

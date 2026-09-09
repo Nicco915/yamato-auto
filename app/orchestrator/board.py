@@ -68,8 +68,9 @@ def board_state() -> dict[str, Any]:
     """看板三档数据：done / in_progress / candidates。
 
     - 配对：discovery.match_watch_folders（thread_id / folder_name / 路径归属）；
-    - 执行中档：逐批 get_pipeline_state（顺带自愈回写滞留状态），
-      附 current_phase 与工厂进度 done/total；
+    - 有 checkpoint 的行逐批 get_pipeline_state（非 completed 顺带自愈回写
+      滞留状态），附 current_phase、工厂进度 done/total，以及卡片操作字段
+      final_output_path / split_thread_id / declarations_ready；
     - 候选档：附装箱单/ MX2 探测结果（供启动确认弹窗预填与按钮置灰）。
     """
     watch = _watch_path()
@@ -85,30 +86,38 @@ def board_state() -> dict[str, Any]:
         rec = matched.get(child.name)
         if rec is not None:
             rec["_has_checkpoint"] = _has_checkpoint(rec["thread_id"])
-        if (rec is not None and rec.get("status") != "completed"
-                and rec["_has_checkpoint"]):
-            # 自愈：以 checkpoint 为权威源校正滞留状态 + 取流水线进度。
-            # 无 checkpoint 的行（已删除批次的残留行）跳过——没有可推导
-            # 的执行态，自愈只会把它误标成 running
+        if rec is not None and rec["_has_checkpoint"]:
+            # 以 checkpoint 为权威源取执行态：非 completed 行顺带自愈回写
+            # 滞留状态；所有活批次透传卡片操作字段（输出路径/分票信息）。
+            # 无 checkpoint 的残留行跳过——没有可推导的执行态，自愈只会
+            # 把它误标成 running
             try:
                 from app.orchestrator.pipeline_state import get_pipeline_state
                 state = get_pipeline_state(rec["thread_id"])
-                fresh = state.get("batch") or {}
-                if fresh.get("status") and fresh["status"] != rec.get("status"):
-                    rec = batch_store.get_batch(rec["thread_id"]) or fresh
-                    matched[child.name] = rec
+                if rec.get("status") != "completed":
+                    fresh = state.get("batch") or {}
+                    if fresh.get("status") and fresh["status"] != rec.get("status"):
+                        rec = batch_store.get_batch(rec["thread_id"]) or fresh
+                        matched[child.name] = rec
                 extract = state.get("extract") or {}
+                split = state.get("split") or {}
                 rec["_phase"] = state.get("current_phase")
                 rec["_done_factories"] = len(extract.get("done_factories") or [])
                 rec["_pending_factories"] = len(extract.get("pending_factories") or [])
                 rec["_current_factory"] = extract.get("current_factory")
-            except Exception:  # noqa: BLE001 自愈失败不阻塞看板
+                rec["_final_output_path"] = extract.get("final_output_path")
+                rec["_split_thread_id"] = split.get("split_thread_id")
+                rec["_declarations_ready"] = split.get("declarations_ready", False)
+            except Exception:  # noqa: BLE001 自愈/取数失败不阻塞看板
                 pass
         if rec is not None and rec.get("status") == "completed":
             done.append({"folder_name": child.name,
                          "thread_id": rec["thread_id"],
                          "completed_at": rec.get("completed_at"),
-                         "has_checkpoint": rec.get("_has_checkpoint", True)})
+                         "has_checkpoint": rec.get("_has_checkpoint", True),
+                         "final_output_path": rec.get("_final_output_path"),
+                         "split_thread_id": rec.get("_split_thread_id"),
+                         "declarations_ready": rec.get("_declarations_ready", False)})
         elif rec is not None:
             in_progress.append({
                 "folder_name": child.name,
@@ -119,6 +128,9 @@ def board_state() -> dict[str, Any]:
                 "pending_factories": rec.get("_pending_factories", 0),
                 "current_factory": rec.get("_current_factory"),
                 "has_checkpoint": rec.get("_has_checkpoint", True),
+                "final_output_path": rec.get("_final_output_path"),
+                "split_thread_id": rec.get("_split_thread_id"),
+                "declarations_ready": rec.get("_declarations_ready", False),
             })
         else:
             downstream = discovery.discover_downstream_files(child)

@@ -201,7 +201,7 @@ function renderTodo(list) {
 function renderRunning(list) {
   var el = $("col-running");
   if (!list.length) { el.innerHTML = '<div class="b-empty">暂无执行中的批次</div>'; return; }
-  el.innerHTML = list.map(function (b) {
+  el.innerHTML = list.map(function (b, i) {
     var total = (b.done_factories || 0) + (b.pending_factories || 0) + (b.current_factory ? 1 : 0);
     var prog = total > 0
       ? "工厂进度 " + (b.done_factories || 0) + "/" + total + (b.current_factory ? " · 当前：" + esc(b.current_factory) : "")
@@ -212,31 +212,160 @@ function renderRunning(list) {
         (prog ? '<br>' + prog : '') +
         // 无对应批次（残留行）时批次号留空，不拿文件夹名冒充批次号
         '<br>批次号：' + (b.has_checkpoint === false ? '' : esc(b.thread_id)) + '</div>' +
-      '<div class="b-actions">' +
-      '<a class="btn btn-sm btn-primary" href="/chat?thread_id=' + encodeURIComponent(b.thread_id) + '">对话</a>' +
-      (b.has_checkpoint === false
-        ? '<button class="btn btn-sm" disabled>详情</button>'
-        : '<a class="btn btn-sm" href="/batch/' + encodeURIComponent(b.thread_id) + '">详情</a>') +
-      '</div></div>';
+      '<div class="b-actions">' + runningActions(b, i) + '</div></div>';
   }).join("");
+}
+
+/* 执行中卡片操作组（规则照抄对话页状态栏 renderSessionHeader）；
+   所有跳转新标签页打开，看板现场不被覆盖 */
+function runningActions(b, i) {
+  var tid = b.thread_id;
+  var noCp = b.has_checkpoint === false;
+  var h = "";
+  if (noCp) {
+    // 残留行：只有对话入口（详情无数据可看）
+    return '<a class="btn btn-sm btn-primary" target="_blank" rel="noopener" href="/chat?thread_id=' +
+      encodeURIComponent(tid) + '">对话</a>' +
+      '<button class="btn btn-sm" disabled>详情</button>';
+  }
+  if (b.status === "pending_review") {
+    h += '<a class="btn btn-sm btn-primary" target="_blank" rel="noopener" href="/review?thread_id=' +
+      encodeURIComponent(tid) + '">去审核</a>';
+  }
+  if (b.status === "completed" || b.status === "pending_review") {
+    h += '<button class="btn btn-sm" onclick="boardAddFactories(\'r\', ' + i + ', this)">补充工厂</button>';
+  } else if (b.status === "running") {
+    h += '<button class="btn btn-sm" disabled>补充工厂</button>';
+  }
+  if (b.split_thread_id) {
+    h += '<a class="btn btn-sm btn-primary" target="_blank" rel="noopener" href="/split/' +
+      encodeURIComponent(b.split_thread_id) + '">查看分票</a>';
+  } else if (b.status === "completed") {
+    h += '<button class="btn btn-sm btn-primary" onclick="boardStartSplit(\'r\', ' + i + ', this)">开始分票</button>';
+  }
+  h += outputButtons(b, 'r', i);
+  h += '<a class="btn btn-sm btn-ghost" target="_blank" rel="noopener" href="/chat?thread_id=' +
+    encodeURIComponent(tid) + '">对话</a>' +
+    '<a class="btn btn-sm" target="_blank" rel="noopener" href="/batch/' +
+    encodeURIComponent(tid) + '">详情</a>';
+  return h;
+}
+
+/* 输出按钮组（执行中/已完成两档共用）：打开输出 Excel + 打开报关单目录 */
+function outputButtons(b, tier, i) {
+  var h = "";
+  if (b.final_output_path) {
+    h += '<button class="btn btn-sm" onclick="boardOpenOutput(\'' + tier + '\', ' + i + ', this)">打开输出 Excel</button>';
+  }
+  if (b.split_thread_id) {
+    h += b.declarations_ready
+      ? '<button class="btn btn-sm" onclick="boardOpenSplitDir(\'' + tier + '\', ' + i + ', this)">打开报关单目录</button>'
+      : '<button class="btn btn-sm" disabled>打开报关单目录</button>';
+  }
+  return h;
 }
 
 function renderDone(list) {
   var el = $("col-done");
   if (!list.length) { el.innerHTML = '<div class="b-empty">暂无已完成批次</div>'; return; }
-  el.innerHTML = list.map(function (b) {
+  el.innerHTML = list.map(function (b, i) {
+    var noCp = b.has_checkpoint === false;
     return '<div class="b-card">' +
       '<div class="b-name">' + esc(b.folder_name) + '</div>' +
       '<div class="b-meta">完成于 ' + esc(fmtTime(b.completed_at)) +
         // 纯标记记录（无对应批次）批次号留空
-        '<br>批次号：' + (b.has_checkpoint === false ? '' : esc(b.thread_id)) + '</div>' +
+        '<br>批次号：' + (noCp ? '' : esc(b.thread_id)) + '</div>' +
       '<div class="b-actions">' +
-      (b.has_checkpoint === false
+      (noCp ? '' : outputButtons(b, 'd', i)) +
+      (noCp
         ? '<button class="btn btn-sm" disabled>详情</button>'
-        : '<a class="btn btn-sm" href="/batch/' + encodeURIComponent(b.thread_id) + '">详情</a>') +
-      '<a class="btn btn-sm btn-ghost" href="/chat?thread_id=' + encodeURIComponent(b.thread_id) + '">对话</a>' +
+        : '<a class="btn btn-sm" target="_blank" rel="noopener" href="/batch/' + encodeURIComponent(b.thread_id) + '">详情</a>') +
+      '<a class="btn btn-sm btn-ghost" target="_blank" rel="noopener" href="/chat?thread_id=' + encodeURIComponent(b.thread_id) + '">对话</a>' +
       '</div></div>';
   }).join("");
+}
+
+/* ---------- 卡片动作（端点全部复用对话页同款；写操作带确认门） ---------- */
+function _cardAt(tier, i) {
+  var list = tier === "r" ? (_board && _board.in_progress) : (_board && _board.done);
+  return (list || [])[i];
+}
+
+/* 补充工厂：重解析装箱单把未处理工厂补进批次（可能跑数十秒） */
+async function boardAddFactories(tier, i, btn) {
+  var b = _cardAt(tier, i);
+  if (!b || (btn && btn.disabled)) return;
+  if (!confirm("批次「" + b.folder_name + "」将重新解析装箱单，把未处理的工厂补进批次。\n确认执行？")) return;
+  btn.disabled = true;
+  btn.textContent = "补充中…";
+  try {
+    var r = await api("/api/v1/batches/" + encodeURIComponent(b.thread_id) + "/add-factories",
+                      { method: "POST", body: { thread_id: b.thread_id } });
+    toast(r.message || ("已补充 " + (r.added || 0) + " 家工厂"));
+    loadBoard(false);
+  } catch (e) {
+    toast("补充工厂失败：" + e.message, 4000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "补充工厂";
+  }
+}
+
+/* 开始分票：确认后启动分票流水线，新标签页打开分票页 */
+async function boardStartSplit(tier, i, btn) {
+  var b = _cardAt(tier, i);
+  if (!b || (btn && btn.disabled)) return;
+  if (!confirm("对批次「" + b.folder_name + "」开始分票？\n将按规则引擎生成拆票方案并打开分票页。")) return;
+  btn.disabled = true;
+  btn.textContent = "启动中…";
+  try {
+    var body = { thread_id: b.thread_id };
+    if (b.final_output_path) body.source_file_path = b.final_output_path;
+    var data = await api("/api/v1/split/start", { method: "POST", body: body });
+    window.open("/split/" + encodeURIComponent(data.split_thread_id), "_blank", "noopener");
+    loadBoard(false);
+  } catch (e) {
+    toast("启动分票失败：" + e.message, 4000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "开始分票";
+  }
+}
+
+/* 打开输出 Excel（本机默认程序；半成品也可打开，后续会继续写入） */
+async function boardOpenOutput(tier, i, btn) {
+  var b = _cardAt(tier, i);
+  if (!b || (btn && btn.disabled)) return;
+  btn.disabled = true;
+  btn.textContent = "打开中…";
+  try {
+    var data = await api("/api/v1/batches/" + encodeURIComponent(b.thread_id) + "/open",
+                         { method: "POST" });
+    if (data && data.ok) toast("已用 Excel 打开：" + String(data.path || "").split(/[\\/]/).pop());
+  } catch (e) {
+    toast("打开失败：" + e.message, 4000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "打开输出 Excel";
+  }
+}
+
+/* 打开报关单目录（系统文件管理器） */
+async function boardOpenSplitDir(tier, i, btn) {
+  var b = _cardAt(tier, i);
+  if (!b || !b.split_thread_id || (btn && btn.disabled)) return;
+  btn.disabled = true;
+  btn.textContent = "打开中…";
+  try {
+    var data = await api("/api/v1/split/" + encodeURIComponent(b.split_thread_id) + "/open",
+                         { method: "POST" });
+    if (data && data.ok) toast("已打开报关单目录");
+  } catch (e) {
+    toast("打开报关单目录失败：" + e.message, 4000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "打开报关单目录";
+  }
 }
 
 /* ---------- 标记完成（弹窗：可关联到已有已完成批次） ---------- */
