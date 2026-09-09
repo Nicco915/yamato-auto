@@ -2652,7 +2652,7 @@ def start_batch_from_scan(
 
     - 默认用 folder_name 作为 thread_id；
     - 默认在监控目录 folder_name 下查找 downstream 文件；
-    - 默认把监控目录下的 folder_name 子文件夹作为 upstream_root；
+    - 默认按装箱单实际所在目录推断 upstream_root（其下有「工厂」子目录则取它）；
     - on_progress：节点级进度回调，透传 create_batch（对话确认门执行时
       前端才有「正在提取工厂X」级进度，否则全程只有「正在执行…」）。
     """
@@ -2678,15 +2678,14 @@ def start_batch_from_scan(
         else:
             raise ValueError(f"子文件夹 {folder_name} 中未找到 ContentsOfTheContainer 文件")
 
-    # 上游根：用户显式指定 > 自动匹配装箱单所在目录（嵌套结构 XD…/93/ 下
-    # 装箱单与「工厂」目录同层）> 显式装箱单时退回子文件夹；
+    # 上游根：用户显式指定 > 按装箱单实际所在目录推断（自动探测与显式
+    # 选择 downstream_file_path 两条来源统一口径——装箱单常落在嵌套中间层
+    # XD…/93/ 下，与「工厂」目录同层，不能退回批次子文件夹找）；
     # pick_upstream_root 再按「工厂」子目录约定收敛（存在即取它）
     if upstream_root:
         upstream = upstream_root
-    elif not downstream_file_path:
-        upstream = str(discovery.pick_upstream_root(Path(downstream).parent))
     else:
-        upstream = str(discovery.pick_upstream_root(subfolder))
+        upstream = str(discovery.pick_upstream_root(Path(downstream).parent))
 
     tid = (thread_id or folder_name).strip()
     if not tid:

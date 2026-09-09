@@ -1151,15 +1151,19 @@ def _preview_start_scanned_batch(args: dict,
                 warnings.append(f"指定的上游工厂文件夹不存在或不是目录: {upstream}")
             lines.append(f"上游工厂文件夹: {upstream}（指定）")
         else:
-            # 与 service.start_batch_from_scan 同一推断：自动匹配时
-            # base=装箱单所在目录，显式装箱单时 base=子文件夹；
-            # base 下有「工厂」子目录则取它（结构约定）
-            base = auto_downstream.parent if auto_downstream is not None \
-                else subfolder
+            # 与 service.start_batch_from_scan 同一推断：base=装箱单实际所在
+            # 目录（自动匹配与显式指定统一口径——装箱单常落在嵌套中间层，
+            # 不能退回子文件夹找）；base 下有「工厂」子目录则取它（结构约定）
+            if auto_downstream is not None:
+                base = auto_downstream.parent
+            elif downstream:
+                base = Path(downstream).expanduser().parent
+            else:
+                base = subfolder
             up = discovery.pick_upstream_root(base)
             if up != base:
                 lines.append(f"上游工厂文件夹: {up}（默认=「工厂」子目录）")
-            elif auto_downstream is not None:
+            elif auto_downstream is not None or downstream:
                 lines.append(f"上游工厂文件夹: {up}（默认=装箱单所在目录）")
             else:
                 lines.append(f"上游工厂文件夹: {up}（默认=子文件夹本身）")

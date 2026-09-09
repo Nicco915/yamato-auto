@@ -207,6 +207,36 @@ def test_start_preview_no_downstream():
     assert "未找到下游装箱单" in p["summary"]
 
 
+def test_start_preview_explicit_downstream_nested():
+    """显式 downstream_file_path + 嵌套结构：确认卡预览与执行同口径，
+    上游默认按装箱单实际所在目录推断（不退回批次子文件夹）。"""
+    # 中间层下有「工厂」子目录 → 默认取它
+    sub = _WATCH / "START_NEST3"
+    mid = sub / "93"
+    (mid / "工厂").mkdir(parents=True)
+    picked = mid / "ContentsOfTheContainer.xlsx"
+    _make_xlsx(picked)
+    p = dispatcher_tools._preview_start_scanned_batch(
+        {"folder_name": "START_NEST3",
+         "downstream_file_path": str(picked)})
+    assert not p.get("blocked"), f"不应 blocked: {p}"
+    assert f"上游工厂文件夹: {mid / '工厂'}（默认=「工厂」子目录）" \
+        in "\n".join(p["lines"])
+
+    # 中间层下无「工厂」子目录 → 默认=装箱单所在目录（中间层本身）
+    sub2 = _WATCH / "START_NEST4"
+    mid2 = sub2 / "84"
+    mid2.mkdir(parents=True)
+    picked2 = mid2 / "ContentsOfTheContainer.xlsx"
+    _make_xlsx(picked2)
+    p2 = dispatcher_tools._preview_start_scanned_batch(
+        {"folder_name": "START_NEST4",
+         "downstream_file_path": str(picked2)})
+    assert not p2.get("blocked"), f"不应 blocked: {p2}"
+    assert f"上游工厂文件夹: {mid2}（默认=装箱单所在目录）" \
+        in "\n".join(p2["lines"])
+
+
 # ---------------------------------------------------------------------------
 # 3. start_scanned_batch execute
 # ---------------------------------------------------------------------------
@@ -269,6 +299,32 @@ def test_start_exec_real_run(monkeypatch):
     names = {c["folder_name"]
              for c in dispatcher_tools._fn_scan_new_batches({})["candidates"]}
     assert "START_REAL1" not in names  # 已建批，扫描跳过
+
+
+def test_start_exec_explicit_downstream_nested(monkeypatch):
+    """显式 downstream_file_path + 嵌套结构（生产 bug 回归）：
+    装箱单在中间层、多候选用户手选时，上游根仍按装箱单实际所在目录
+    推断（mid/工厂），不退回批次子文件夹——否则 pre-scan 匹配不到
+    任何工厂文件夹直接报错。"""
+    _force_mock_extraction(monkeypatch)
+    sub = _WATCH / "START_REAL2"
+    mid = sub / "93"
+    (mid / "工厂" / "工厂A").mkdir(parents=True)
+    picked = mid / "ContentsOfTheContainer_b.xlsx"
+    _make_xlsx(mid / "ContentsOfTheContainer_a.xlsx",
+               [("工厂A", "SKU-A1", "测试品A", 10)])
+    _make_xlsx(picked, [("工厂A", "SKU-B1", "测试品B", 5)])
+
+    r = dispatcher_tools._exec_start_scanned_batch(
+        {"folder_name": "START_REAL2",
+         "downstream_file_path": str(picked)})
+    assert "error" not in r, f"执行失败: {r}"
+    assert r["status"] == "pending_human_review"
+
+    rec = batch_store.get_batch("START_REAL2")
+    assert rec is not None
+    assert rec["downstream_file_path"] == str(picked)
+    assert rec["upstream_root"] == str(mid / "工厂")  # 装箱单所在目录下的「工厂」
 
 
 # ---------------------------------------------------------------------------
