@@ -210,7 +210,8 @@ function renderRunning(list) {
       '<div class="b-name">' + esc(b.folder_name) + '</div>' +
       '<div class="b-meta">' + statusBadge(b.status) + ' · ' + esc(phaseText(b.current_phase)) +
         (prog ? '<br>' + prog : '') +
-        '<br>批次号：' + esc(b.thread_id) + '</div>' +
+        // 无对应批次（残留行）时批次号留空，不拿文件夹名冒充批次号
+        '<br>批次号：' + (b.has_checkpoint === false ? '' : esc(b.thread_id)) + '</div>' +
       '<div class="b-actions">' +
       '<a class="btn btn-sm btn-primary" href="/chat?thread_id=' + encodeURIComponent(b.thread_id) + '">对话</a>' +
       (b.has_checkpoint === false
@@ -227,7 +228,8 @@ function renderDone(list) {
     return '<div class="b-card">' +
       '<div class="b-name">' + esc(b.folder_name) + '</div>' +
       '<div class="b-meta">完成于 ' + esc(fmtTime(b.completed_at)) +
-        '<br>批次号：' + esc(b.thread_id) + '</div>' +
+        // 纯标记记录（无对应批次）批次号留空
+        '<br>批次号：' + (b.has_checkpoint === false ? '' : esc(b.thread_id)) + '</div>' +
       '<div class="b-actions">' +
       (b.has_checkpoint === false
         ? '<button class="btn btn-sm" disabled>详情</button>'
