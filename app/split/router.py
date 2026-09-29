@@ -7,6 +7,9 @@
 - POST /api/v1/split/{id}/confirm     确认方案，Command(resume=...) 唤醒图落库
 - POST /api/v1/split/{id}/reset       推翻已确认方案，清理后从 START 重跑推荐
 - POST /api/v1/split/{id}/open        本机文件管理器打开报关单输出目录（仅本机）
+- POST /api/v1/split/{id}/export-stats 生成「截单信息-分体积」统计 Excel
+                                       （404 无提案 / 409 装箱单不存在）
+- GET  /api/v1/split/{id}/stats/download 下载最新统计文件（404 未导出过）
 """
 
 from __future__ import annotations
@@ -22,8 +25,9 @@ from langgraph.graph import START
 from langgraph.types import Command
 from pydantic import BaseModel
 
-from app.config import get_settings
+from app.config import batch_stats_dir, get_settings
 from app.declare.service import declarations_dir, generate_declarations
+from app.export.stats import generate_split_stats
 from app.split.graph import get_split_graph
 from app.split.validate import renumber_tickets, validate_confirmed_proposal
 from app.ui.open_file import OpenFileError, open_with_default_app
@@ -414,3 +418,61 @@ def download(split_thread_id: str, filename: str):
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"文件不存在: {filename}")
     return FileResponse(path, filename=filename)
+
+
+# ---------------------------------------------------------------------------
+# 截单信息-分体积 统计导出（F2）
+# ---------------------------------------------------------------------------
+
+# 透视/统计导出文件统一媒体类型（Windows 注册表缺 xlsx 映射时 mimetypes 会猜错）
+_XLSX_MEDIA_TYPE = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+
+@router.post("/{split_thread_id}/export-stats")
+def export_stats(split_thread_id: str):
+    """生成「截单信息-分体积」统计 Excel：按最新分票提案统计 票×管理号。
+
+    200 {ok, file_path, warnings}；404 无分票提案；409 装箱单不存在。
+    服务层抛出的中文消息直接作为 detail 透传给前端。
+    """
+    try:
+        result = generate_split_stats(split_thread_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001 兜底：记日志，给前端通用中文提示
+        logger.exception(
+            "export_stats: split_thread_id=%s 统计导出失败", split_thread_id
+        )
+        raise HTTPException(
+            status_code=500, detail="分体积统计导出失败，请查看服务端日志"
+        ) from e
+    return {"ok": True, "file_path": result["file_path"],
+            "warnings": result["warnings"]}
+
+
+@router.get("/{split_thread_id}/stats/download")
+def download_stats(split_thread_id: str):
+    """下载该分票任务最新一次「截单信息-分体积」统计文件；从未导出过 → 404。
+
+    路径安全：目录由 config helper（batch_stats_dir）给出，只在该目录内
+    glob 截单信息-分体积_*.xlsx 取 mtime 最新者，不接受用户传入的文件名。
+    batch_id = split_thread_id 去掉 "split-" 前缀（与服务层口径一致）。
+    """
+    batch_id = split_thread_id.removeprefix("split-")
+    stats_dir = batch_stats_dir(batch_id)
+    candidates = (
+        [p for p in stats_dir.glob("截单信息-分体积_*.xlsx") if p.is_file()]
+        if stats_dir.is_dir() else []
+    )
+    if not candidates:
+        raise HTTPException(
+            status_code=404, detail="尚未导出分体积统计文件，请先生成"
+        )
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+    return FileResponse(
+        latest, media_type=_XLSX_MEDIA_TYPE, filename=latest.name
+    )

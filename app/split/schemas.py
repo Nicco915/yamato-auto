@@ -28,6 +28,16 @@ class RawItem(BaseModel):
     # SKU 级商检标志：由上游从 factory_skus/product_mappings 解析后标注；
     # 默认 False = 不商检。追加式字段，旧数据无此键即 False，向后兼容。
     inspection: bool = False
+    # MX 货物标志：PURCHASE_ORDER 以 "MX" 开头（形如 MX2-268510-001）的
+    # 手动加货行，分票时需特殊处理；由 loader 读取 filled Excel 时标注。
+    # 追加式字段，旧数据无此键即 False，向后兼容。
+    is_mx: bool = False
+    # 外箱尺寸（cm，供分体积公式 Σ件×宽×深×高÷10⁶ 计算）：
+    # SOTOBAKO_HABA / SOTOBAKO_OKUYUKI / SOTOBAKO_TAKASA。
+    # 追加式可选字段，loader 存在对应列才读，缺失/非法值为 None。
+    carton_width: float | None = None   # SOTOBAKO_HABA 外箱宽 cm
+    carton_depth: float | None = None   # SOTOBAKO_OKUYUKI 外箱深 cm
+    carton_height: float | None = None  # SOTOBAKO_TAKASA 外箱高 cm
 
 
 class TicketItem(BaseModel):

@@ -389,6 +389,13 @@ function rowActions(b) {
   }
   html += '<a class="btn btn-sm" href="/batch/' + id + '">详情</a>';
   html += '<a class="btn btn-sm" href="/chat?thread_id=' + id + '">对话</a>';
+  html +=
+    '<button class="btn btn-sm" onclick="exportPivot(' +
+    esc(JSON.stringify(String(b.thread_id))) +
+    ', this)">导出透视</button>';
+  if (_pivotExported[b.thread_id]) {
+    html += '<a class="btn btn-sm" href="/api/v1/batches/' + id + '/pivot/download">下载</a>';
+  }
   if (b.status === "running") {
     html +=
       '<button class="btn btn-sm btn-danger-ghost" disabled title="运行中的批次不能删除">删除</button>';
@@ -456,6 +463,39 @@ function autoRefresh() {
     return;
   }
   refreshList(false);
+}
+
+/* ================= 导出透视 ================= */
+let _pivotExported = {}; // thread_id → 本次会话内已导出透视（决定「下载」链接显隐）
+
+async function exportPivot(threadId, btn) {
+  if (btn && btn.disabled) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "导出中…";
+  }
+  try {
+    const r = await api("/api/v1/batches/" + encodeURIComponent(threadId) + "/export-pivot", {
+      method: "POST",
+    });
+    const warns = (r && r.warnings) || [];
+    let msg = "透视表已导出";
+    if (warns.length) msg += "（" + warns.length + " 条警告：" + warns.join("；") + "）";
+    toast(msg, warns.length ? 6000 : 2600);
+    _pivotExported[threadId] = true;
+    refreshList(false);
+  } catch (e) {
+    if (e.status === 409) {
+      toast("该批次还没有装箱单，请先完成提取", 4000);
+    } else {
+      toast("导出透视失败：" + e.message, 4000);
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "导出透视";
+    }
+  }
 }
 
 /* ================= 删除批次 ================= */

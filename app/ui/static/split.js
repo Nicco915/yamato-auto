@@ -44,6 +44,7 @@ var originalProposal = null;  // 深拷贝初始方案，备用
 var activePort = "";          // 当前选中港口
 var dragSrc = null;           // {ticketIdx: number, itemIdx: number} 拖拽源
 var declFiles = [];           // 已生成的报关单文件列表（/files）
+var statsExported = false;    // 本次会话内是否已导出统计 Excel（决定「下载」链接显隐）
 
 /* ---------- 初始化 ---------- */
 async function init() {
@@ -140,6 +141,38 @@ async function generateDeclarations() {
         toast('生成失败：' + e.message, 4000);
         btn.disabled = false;
         btn.textContent = '生成报关单';
+    }
+}
+
+/* 导出统计 Excel：提案存在即可导出（pending/confirmed 均可） */
+async function exportStats() {
+    var btn = document.getElementById('btn-export-stats');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = '导出中…';
+    try {
+        var data = await api('/api/v1/split/' + encodeURIComponent(splitThreadId) + '/export-stats', {
+            method: 'POST'
+        });
+        var warns = (data && data.warnings) || [];
+        var msg = '统计 Excel 已导出';
+        if (warns.length) msg += '（' + warns.length + ' 条警告：' + warns.join('；') + '）';
+        toast(msg, warns.length ? 6000 : 2600);
+        statsExported = true;
+        // 顺带刷新文件列表（统计文件可能进入 /files 列表）
+        try {
+            var f = await api('/api/v1/split/' + encodeURIComponent(splitThreadId) + '/files');
+            declFiles = (f && f.files) || [];
+        } catch(e) { /* 文件列表刷新失败不阻塞 */ }
+        render();
+        return;
+    } catch(e) {
+        if (e.status === 404) toast('请先生成分票提案', 4000);
+        else if (e.status === 409) toast('该批次还没有装箱单，请先完成提取', 4000);
+        else toast('导出统计失败：' + e.message, 4000);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '导出统计 Excel';
     }
 }
 
@@ -611,6 +644,17 @@ function renderSplitView() {
 function renderActions() {
     var totalWarnings = countTotalWarnings();
     updateWarningSummary(totalWarnings);
+
+    // 统计 Excel 下载链接：导出成功后常显（reset 等中间态也不收回）
+    var dl = document.getElementById('stats-download');
+    if (dl) {
+        if (statsExported) {
+            dl.href = '/api/v1/split/' + encodeURIComponent(splitThreadId) + '/stats/download';
+            dl.style.display = '';
+        } else {
+            dl.style.display = 'none';
+        }
+    }
 
     var invoiceInput = document.getElementById('invoice-input');
     var btnConfirm = document.getElementById('btn-confirm');

@@ -16,6 +16,17 @@
   （逐 factory_filter=F + inspection_filter=False 的 item 合并成一票）。
   互补不变量：sj 厂的不商检行只出现在 F 厂不商检半票；非 sj 厂全部行
   只出现在合并票；逐票展开合起来恰好覆盖全柜、无重复。
+
+普通柜合票（Rule 6）"先 2 后 3"：同港口同柜型兼容柜贪心分组——
+剩余柜数 > 3 时取 2 个/票；剩余 ≤ 3 时全部取走。
+效果：2→(2)、3→(3)、4→(2,2)、5→(2,3)、6→(2,2,2)、7→(2,2,3)。
+
+MX 柜分支（柜内任一行 is_mx=True 即 MX 柜，PURCHASE_ORDER 以 MX
+开头的行由 loader 标注）：MX 柜与普通柜完全隔离——不参与 Rule 6
+合票、不参与商检拆票规则（Rule 4-5），按 MAKER_MEI_KJ 一厂一票
+（factory_filter=厂名、inspection_filter=None 整厂全包、跳过商检
+判断）。混柜（同柜 MX 行+普通行）记 mixed_mx 警告，整柜按 MX 逻辑
+处理。MX 票与普通票统一按港口顺序编号（Rule 7）。
 """
 
 from __future__ import annotations
@@ -49,7 +60,7 @@ def _collect_container_info(
         List of container info dicts, sorted by (port, container_type, kanri_no).
         Each dict: kanri_no, port, container_type, makers, sj_factories,
                    has_non_inspection, non_inspection_makers, row_count,
-                   maker_row_counts.
+                   maker_row_counts, is_mx, mixed_mx.
     """
     raw_containers: dict[str, dict] = {}
     for item in items:
@@ -65,11 +76,19 @@ def _collect_container_info(
                 non_inspection_makers=set(),
                 row_count=0,
                 maker_row_counts=defaultdict(int),
+                mx_makers=set(),      # 柜内含 MX 行的工厂
+                non_mx_makers=set(),  # 柜内含非 MX 行的工厂
                 m3=item.m3,          # 柜级属性，每行重复，取首行
                 pcs_total=0,         # 箱数合计（SOTOBAKO_D_HACCHU_SU）
             )
         c = raw_containers[k]
         c["makers"].add(item.maker)
+        # MX 行级标记：任一行 is_mx=True → 整柜走 MX 逻辑；
+        # 同时存在 MX 与非 MX 行 → 混柜（mixed_mx），记警告
+        if item.is_mx:
+            c["mx_makers"].add(item.maker)
+        else:
+            c["non_mx_makers"].add(item.maker)
         # 行级商检判定：任一行 inspection=True → 该厂计入本柜商检工厂集；
         # 任一行 inspection=False → 本柜存在不商检行，且该厂计入本柜
         # 不商检工厂集（per_factory 模式的 F 厂不商检半票判定依据）
@@ -99,6 +118,10 @@ def _collect_container_info(
         raw_containers.values(),
         key=lambda c: (c["port"], c["container_type"], c["kanri_no"]),
     )
+    # 柜级 MX 判定：柜内任一 is_mx 行 → MX 柜；MX 与非 MX 行并存 → 混柜
+    for c in result:
+        c["is_mx"] = bool(c["mx_makers"])
+        c["mixed_mx"] = bool(c["mx_makers"] and c["non_mx_makers"])
     return result
 
 
@@ -111,6 +134,9 @@ def _propose_tickets(
     non_inspection_mode：不商检行承载方式，仅影响 ≥2 家商检厂柜的拆分：
     "merge"=不商检行合并一票（默认）；"per_factory"=商检厂的不商检行
     各自成 F 厂不商检半票，非商检厂全部行合并一票。
+
+    MX 柜（柜内任一行 is_mx=True）与普通柜完全隔离：不参与商检拆票
+    与 Rule 6 合票，按工厂一厂一票（inspection_filter=None 整厂全包）。
     """
     tickets: list[Ticket] = []
 
@@ -131,10 +157,14 @@ def _propose_tickets(
         groups.append((current_key, current_group))
 
     for (port, ctype), group in groups:
+        # MX 柜与普通柜完全隔离：普通柜走商检拆分+合票，MX 柜一厂一票
+        normal_group = [c for c in group if not c["is_mx"]]
+        mx_group = [c for c in group if c["is_mx"]]
+
         pending_whole: list[dict] = []  # 待合并的整柜
         pending_sj: set[str] = set()  # 当前待合并票的商检工厂集
 
-        for c in group:
+        for c in normal_group:
             sj_set = c["sj_factories"]
 
             # Rule 4: 柜内实际含商检品的工厂 ≥2 家 → 每家一张商检半票；
@@ -142,11 +172,7 @@ def _propose_tickets(
             if len(sj_set) >= 2:
                 # Flush pending whole containers first
                 if pending_whole:
-                    tickets.append(
-                        _build_whole_ticket(
-                            pending_whole, port, ctype, ""
-                        )
-                    )
+                    _emit_whole_tickets(tickets, pending_whole, port, ctype)
                     pending_whole = []
                     pending_sj = set()
 
@@ -237,29 +263,39 @@ def _propose_tickets(
             # SJ conflict check: both have SJ AND they differ
             if pending_sj and container_sj and pending_sj != container_sj:
                 # Flush current pending ticket
-                tickets.append(
-                    _build_whole_ticket(pending_whole, port, ctype, "")
-                )
+                _emit_whole_tickets(tickets, pending_whole, port, ctype)
                 pending_whole = [c]
                 pending_sj = container_sj
             else:
                 pending_whole.append(c)
                 if container_sj:
                     pending_sj = pending_sj | container_sj
-
-                # Rule 6: cap at 3 containers per ticket
-                if len(pending_whole) >= 3:
-                    tickets.append(
-                        _build_whole_ticket(pending_whole, port, ctype, "")
-                    )
-                    pending_whole = []
-                    pending_sj = set()
+                # Rule 6 不再中途按 3 截断：整段兼容跑在 flush 时
+                # 由 _emit_whole_tickets 按「先 2 后 3」分组
 
         # Flush remaining whole containers
         if pending_whole:
-            tickets.append(
-                _build_whole_ticket(pending_whole, port, ctype, "")
-            )
+            _emit_whole_tickets(tickets, pending_whole, port, ctype)
+
+        # ---- MX 柜：一厂一票（不参与商检拆分与合票，整厂全包不过滤商检） ----
+        for c in mx_group:
+            for maker in sorted(c["makers"]):
+                t = _build_mx_ticket(
+                    kanri_no=c["kanri_no"],
+                    port=port,
+                    container_type=ctype,
+                    factory_filter=maker,
+                    ticket_no="",  # to be numbered later
+                )
+                if c["mixed_mx"]:
+                    t.warnings.append(Warning(
+                        rule="mixed_mx",
+                        message=(
+                            f"管理号 {c['kanri_no']} 同时包含 MX 与普通货物，"
+                            "已按 MX 逻辑整柜处理"
+                        ),
+                    ))
+                tickets.append(t)
 
     # ---- Ticket numbering (rule 7): per port, sequential ----
     port_counter: dict[str, int] = defaultdict(int)
@@ -269,6 +305,9 @@ def _propose_tickets(
 
     # ---- Soft warnings (rule 8) ----
     for t in tickets:
+        # Rule 6「先 2 后 3」下整柜票至多 3 柜（3 柜一票是合法规则，
+        # 不警告）；>3 在新逻辑下结构性不可能，此处仅作防御性兜底
+        # （validate.py 对人工改后的方案仍保留 over_3_full 软警告）。
         if t.full_containers > 3:
             t.warnings.append(Warning(
                 rule="over_3_full",
@@ -296,6 +335,27 @@ def _propose_tickets(
     return tickets
 
 
+def _emit_whole_tickets(
+    tickets: list[Ticket],
+    containers: list[dict],
+    port: str,
+    container_type: str,
+) -> None:
+    """Rule 6：把一段商检兼容的整柜按「先 2 后 3」分组合票并追加到 tickets。
+
+    贪心：剩余柜数 > 3 时取 2 个/票；剩余 ≤ 3 时全部取走。
+    效果：2→(2)、3→(3)、4→(2,2)、5→(2,3)、6→(2,2,2)、7→(2,2,3)。
+    """
+    i = 0
+    n = len(containers)
+    while i < n:
+        take = 2 if n - i > 3 else n - i
+        tickets.append(
+            _build_whole_ticket(containers[i:i + take], port, container_type, "")
+        )
+        i += take
+
+
 def _build_whole_ticket(
     containers: list[dict],
     port: str,
@@ -320,6 +380,35 @@ def _build_whole_ticket(
         items=items,
         sj_factories=sorted(sj_factories),
         full_containers=len(items),
+    )
+
+
+def _build_mx_ticket(
+    kanri_no: str,
+    port: str,
+    container_type: str,
+    factory_filter: str,
+    ticket_no: str,
+) -> Ticket:
+    """Build 一张 MX 柜一厂一票。
+
+    factory_filter=厂名 + inspection_filter=None（旧语义=柜内该厂全部行，
+    不区分商检与否）——MX 货物跳过商检判断，整厂全包。
+    构造方式参照 _build_partial_ticket；商检不参与，sj_factories 恒为空。
+    一柜只有 1 个工厂时就是一厂一票（整柜该厂全包）。
+    """
+    return Ticket(
+        ticket_no=ticket_no,
+        port=port,
+        container_type=container_type,
+        items=[TicketItem(
+            kanri_no=kanri_no,
+            factory_filter=factory_filter,
+            is_partial=True,
+            inspection_filter=None,
+        )],
+        sj_factories=[],
+        full_containers=0,
     )
 
 
@@ -467,13 +556,18 @@ def propose(
     Rules applied in order:
         1. 归一化（若提供 normalize_map）
         2. 商检判定（行级 RawItem.inspection，上游预标注）
-        3. 收集柜的工厂全集与实际含商检品的工厂
-        4. 拆分（≥2 家实际含商检品工厂 → N 张商检半票 + 不商检票，
-           不商检票的形态由 non_inspection_mode 决定，见模块 docstring）
+        3. 收集柜的工厂全集与实际含商检品的工厂（含 MX 柜判定：
+           柜内任一行 is_mx=True → MX 柜）
+        4. 拆分（普通柜：≥2 家实际含商检品工厂 → N 张商检半票 +
+           不商检票，不商检票的形态由 non_inspection_mode 决定，
+           见模块 docstring；MX 柜不参与商检拆分）
         5. 按港口→箱型→柜号排序分组
-        6. 合票（至多 3 整柜，至多 1 种实际含商检品的工厂）
-        7. 票号
-        8. 软校验
+        6. 合票（普通柜「先 2 后 3」：剩余 >3 取 2 个/票、≤3 全取，
+           至多 1 种实际含商检品的工厂；MX 柜完全隔离，不参与合票，
+           按工厂一厂一票，inspection_filter=None 整厂全包）
+        7. 票号（MX 票与普通票统一按港口顺序编号）
+        8. 软校验（3 柜一票为合法规则不警告；over_3_full 仅防御性
+           兜底；混 MX 柜记 mixed_mx 警告）
         9. 单柜端口
     """
     # 模式兜底：非法值按 merge 处理（与 config.split_non_inspection_mode 同口径）

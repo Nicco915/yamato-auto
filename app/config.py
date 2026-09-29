@@ -171,6 +171,14 @@ class Settings(BaseSettings):
         """报关单输出目录：{output_dir}/{batch_id}/declarations/"""
         return self.batch_output_dir(batch_id) / "declarations"
 
+    def batch_pivot_dir(self, batch_id: str) -> Path:
+        """透视表输出目录：{output_dir}/{batch_id}/pivot/"""
+        return self.batch_output_dir(batch_id) / "pivot"
+
+    def batch_stats_dir(self, batch_id: str) -> Path:
+        """统计报表输出目录：{output_dir}/{batch_id}/stats/"""
+        return self.batch_output_dir(batch_id) / "stats"
+
     def history_output_dir(self, batch_id: str) -> Path:
         """批次历史 output 归档目录：output/_history/{safe(batch_id)}/
 
@@ -188,3 +196,13 @@ def get_settings() -> Settings:
     s.checkpoint_db_abs.parent.mkdir(parents=True, exist_ok=True)
     s.output_dir_abs.mkdir(parents=True, exist_ok=True)
     return s
+
+
+def batch_pivot_dir(batch_id: str) -> Path:
+    """透视表输出目录：{output_dir}/{safe(batch_id)}/pivot/（模块级便捷入口）"""
+    return get_settings().batch_pivot_dir(batch_id)
+
+
+def batch_stats_dir(batch_id: str) -> Path:
+    """统计报表输出目录：{output_dir}/{safe(batch_id)}/stats/（模块级便捷入口）"""
+    return get_settings().batch_stats_dir(batch_id)

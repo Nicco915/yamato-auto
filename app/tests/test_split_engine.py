@@ -179,15 +179,18 @@ class TestInvariants:
 
     def test_all_containers_covered(self, proposal, raw_items):
         """不变量 5：全部 27 柜无遗漏无重复；拆分柜出现次数 = 商检半票数
-        （柜内存在不商检行时 +1 不商检合并票）。"""
+        （柜内存在不商检行时 +1 不商检合并票）；MX 柜与普通柜隔离，
+        一厂一票，出现次数 = 柜内工厂数。"""
         # All unique containers in data
         all_kanri = {item.kanri_no for item in raw_items}
         assert len(all_kanri) == 27, (
             f"预期 27 柜，实际 {len(all_kanri)}"
         )
 
-        dual_containers = _count_dual_sj_containers(raw_items)
-        non_dual = all_kanri - dual_containers
+        # MX 柜（任一行 is_mx=True）与普通柜完全隔离，不参与商检拆票
+        mx_containers = {item.kanri_no for item in raw_items if item.is_mx}
+        dual_containers = _count_dual_sj_containers(raw_items) - mx_containers
+        non_dual = all_kanri - dual_containers - mx_containers
 
         # Collect all TicketItem appearances
         appearances: Counter[str] = Counter()
@@ -207,6 +210,14 @@ class TestInvariants:
         for k in non_dual:
             assert appearances.get(k, 0) == 1, (
                 f"非拆分柜 {k} 预期出现 1 次，实际 {appearances.get(k, 0)}"
+            )
+
+        # Check MX 柜：一厂一票，出现次数 = 柜内工厂数
+        for k in mx_containers:
+            expected = len({i.maker for i in raw_items if i.kanri_no == k})
+            assert appearances.get(k, 0) == expected, (
+                f"MX 柜 {k} 预期出现 {expected} 次（一厂一票），"
+                f"实际 {appearances.get(k, 0)}"
             )
 
         # No missing containers

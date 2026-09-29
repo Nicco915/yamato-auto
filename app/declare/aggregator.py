@@ -8,6 +8,8 @@
 - 普通整柜票 = 柜内全部行；
 - 旧语义半票（inspection_filter=None，向后兼容）：
   - factory_filter=F = 柜内 maker==F 的全部行（不分商检与否）；
+    None 即「不过滤商检」——MX 柜一厂一票（engine._build_mx_ticket）
+    正是走本分支，整厂全包；
   - factory_exclude=[...] = 柜内 maker 不在排除集内的全部行。
 - SKU 级商检半票（is_partial, inspection_filter=True, factory_filter=F）
   = 柜内 maker==F 且 inspection==True 的行；

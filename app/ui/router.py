@@ -17,6 +17,8 @@ API（路由极薄，逻辑全在 app.api.service；全部 asyncio.to_thread 防
 - PATCH /api/v1/batches/{thread_id}/paths  更新批次路径配置（404 不存在）
 - POST /api/v1/batches/{thread_id}/rerun   完全重跑批次（404 不存在）
 - POST /api/v1/batches/{thread_id}/add-factories  补充工厂（400 失败）
+- POST /api/v1/batches/{batch_id}/export-pivot   生成 XD 透视导出（404 批次不存在 / 409 装箱单不存在）
+- GET  /api/v1/batches/{batch_id}/pivot/download 下载最新 XD 透视文件（404 未导出过）
 - GET  /api/v1/usage                全局 LLM 用量（scope=process_lifetime）
 - GET  /api/v1/config/defaults      路径默认值 + 单重预警阈值
 - POST /api/v1/batches/{thread_id}/open  本机打开最终输出 Excel（仅 127.0.0.1）
@@ -24,6 +26,7 @@ API（路由极薄，逻辑全在 app.api.service；全部 asyncio.to_thread 防
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from pathlib import Path
 from typing import Optional
@@ -33,9 +36,12 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from app.api import service
-from app.config import get_settings
+from app.config import batch_pivot_dir, get_settings
+from app.export.pivot import generate_pivot
 from app.ui.last_paths import load_last_paths, save_last_paths
 from app.ui.open_file import OpenFileError, open_with_default_app
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -400,6 +406,56 @@ async def add_factories_endpoint(thread_id: str):
         raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+# 透视/统计导出文件统一媒体类型（Windows 注册表缺 xlsx 映射时 mimetypes 会猜错）
+_XLSX_MEDIA_TYPE = (
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+
+@router.post("/api/v1/batches/{batch_id}/export-pivot")
+async def export_batch_pivot(batch_id: str):
+    """生成 XD 透视导出 Excel（F1）：装箱单按 港口→管理号 聚合。
+
+    200 {ok, file_path, warnings}；404 批次不存在；409 装箱单不存在。
+    服务层抛出的中文消息直接作为 detail 透传给前端。
+    """
+    try:
+        result = await asyncio.to_thread(generate_pivot, batch_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except Exception as e:  # noqa: BLE001 兜底：记日志，给前端通用中文提示
+        logger.exception("[XD透视] 导出失败 batch_id=%s", batch_id)
+        raise HTTPException(
+            status_code=500, detail="XD 透视导出失败，请查看服务端日志"
+        ) from e
+    return {"ok": True, "file_path": result["file_path"],
+            "warnings": result["warnings"]}
+
+
+@router.get("/api/v1/batches/{batch_id}/pivot/download")
+async def download_batch_pivot(batch_id: str):
+    """下载该批次最新一次 XD 透视导出文件；从未导出过 → 404。
+
+    路径安全：目录由 config helper（batch_pivot_dir）给出，只在该目录内
+    glob XD透视_*.xlsx 取 mtime 最新者，不接受用户传入的文件名。
+    """
+    pivot_dir = batch_pivot_dir(batch_id)
+    candidates = (
+        [p for p in pivot_dir.glob("XD透视_*.xlsx") if p.is_file()]
+        if pivot_dir.is_dir() else []
+    )
+    if not candidates:
+        raise HTTPException(
+            status_code=404, detail="尚未导出 XD 透视文件，请先生成"
+        )
+    latest = max(candidates, key=lambda p: p.stat().st_mtime)
+    return FileResponse(
+        latest, media_type=_XLSX_MEDIA_TYPE, filename=latest.name
+    )
 
 
 @router.get("/api/v1/usage")

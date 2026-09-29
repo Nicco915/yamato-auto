@@ -108,6 +108,7 @@ renderTopbar("board");
 var _board = null;          // 最近一次 board_state 响应
 var _pollTimer = null;
 var _starting = false;
+var _pivotExported = {};    // thread_id → 本次会话内已导出透视（决定「下载」链接显隐）
 
 var PHASE_TEXT = {
   "init": "初始化",
@@ -255,7 +256,7 @@ function runningActions(b, i) {
   return h;
 }
 
-/* 输出按钮组（执行中/已完成两档共用）：打开输出 Excel + 打开报关单目录 */
+/* 输出按钮组（执行中/已完成两档共用）：打开输出 Excel + 打开报关单目录 + 导出透视 */
 function outputButtons(b, tier, i) {
   var h = "";
   if (b.final_output_path) {
@@ -265,6 +266,11 @@ function outputButtons(b, tier, i) {
     h += b.declarations_ready
       ? '<button class="btn btn-sm" onclick="boardOpenSplitDir(\'' + tier + '\', ' + i + ', this)">打开报关单目录</button>'
       : '<button class="btn btn-sm" disabled>打开报关单目录</button>';
+  }
+  h += '<button class="btn btn-sm" onclick="boardExportPivot(\'' + tier + '\', ' + i + ', this)">导出透视</button>';
+  if (_pivotExported[b.thread_id]) {
+    h += '<a class="btn btn-sm" href="/api/v1/batches/' + encodeURIComponent(b.thread_id) +
+      '/pivot/download">下载</a>';
   }
   return h;
 }
@@ -372,6 +378,33 @@ async function boardOpenOutput(tier, i, btn) {
   } finally {
     btn.disabled = false;
     btn.textContent = "打开输出 Excel";
+  }
+}
+
+/* 导出透视：调用批次透视导出端点，成功后出现「下载」链接 */
+async function boardExportPivot(tier, i, btn) {
+  var b = _cardAt(tier, i);
+  if (!b || (btn && btn.disabled)) return;
+  btn.disabled = true;
+  btn.textContent = "导出中…";
+  try {
+    var r = await api("/api/v1/batches/" + encodeURIComponent(b.thread_id) + "/export-pivot",
+                      { method: "POST" });
+    var warns = (r && r.warnings) || [];
+    var msg = "透视表已导出";
+    if (warns.length) msg += "（" + warns.length + " 条警告：" + warns.join("；") + "）";
+    toast(msg, warns.length ? 6000 : 2600);
+    _pivotExported[b.thread_id] = true;
+    loadBoard(false);
+  } catch (e) {
+    if (e.status === 409) {
+      toast("该批次还没有装箱单，请先完成提取", 4000);
+    } else {
+      toast("导出透视失败：" + e.message, 4000);
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "导出透视";
   }
 }
 

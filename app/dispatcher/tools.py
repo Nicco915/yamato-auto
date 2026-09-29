@@ -2475,6 +2475,161 @@ def _exec_generate_declarations(
 
 
 # ---------------------------------------------------------------------------
+# export_pivot / export_split_stats（导出类写工具：调 app.export 服务生成 Excel）
+# ---------------------------------------------------------------------------
+
+def _preview_export_pivot(args: dict, session_id: str | None = None) -> dict:
+    """export_pivot 预览：说明导出目标 + 探测数据源是否就绪。"""
+    try:
+        batch_id = (args.get("batch_id") or "").strip()
+
+        warnings: list[str] = []
+        if not batch_id:
+            warnings.append("batch_id 为空")
+
+        lines = [f"批次: {batch_id}",
+                 "内容: 装箱单按港口 → 管理号汇总件数（含柜型/体积）",
+                 "输出: 批次文件夹下的 pivot 目录，同名文件将被覆盖"]
+
+        if batch_id:
+            containers_dir = get_settings().batch_containers_dir(batch_id)
+            has_filled = containers_dir.is_dir() and any(
+                containers_dir.glob("*_filled.xlsx"))
+            if has_filled:
+                lines.append("数据源: 批次已生成的装箱单")
+            else:
+                batch = batch_store.get_batch(batch_id)
+                if batch is None:
+                    warnings.append(f"批次不存在: {batch_id}")
+                elif not batch.get("downstream_file_path"):
+                    warnings.append("该批次还没有装箱单，请先完成提取")
+                else:
+                    lines.append("数据源: 批次登记的下游装箱单原件")
+
+        summary = (f"确认为批次 {batch_id} 导出装箱单透视表"
+                   "（按港口/管理号汇总件数）？")
+        return _preview(summary, lines, warnings)
+    except Exception as e:
+        return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
+
+
+def _exec_export_pivot(
+    args: dict,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """export_pivot 执行：调 app.export.pivot.generate_pivot 生成透视 Excel。"""
+    batch_id = ""
+    try:
+        batch_id = (args.get("batch_id") or "").strip()
+        if not batch_id:
+            return {"error": "batch_id 为空"}
+
+        from app.export.pivot import generate_pivot
+        result = generate_pivot(batch_id)
+
+        warnings = result.get("warnings") or []
+        lines = [
+            f"批次 {batch_id} 的装箱单透视表已导出，"
+            "文件已保存到批次文件夹下的 pivot 目录（同名旧文件已覆盖）。",
+        ]
+        if warnings:
+            lines.append(f"共 {len(warnings)} 条警告：")
+            lines.extend(f"- {w}" for w in warnings)
+        return {
+            "status": "exported",
+            "batch_id": batch_id,
+            "warnings": warnings,
+            "message": "\n".join(lines),
+        }
+    except ValueError as e:
+        if "批次不存在" in str(e):
+            return {"error": f"批次不存在: {batch_id}，请核对批次 ID"}
+        return {"error": str(e)}
+    except FileNotFoundError:
+        return {"error": f"批次 {batch_id} 还没有装箱单，"
+                         "请先完成提取后再导出透视表"}
+    except Exception as e:
+        return _err(e)
+
+
+def _preview_export_split_stats(args: dict,
+                                session_id: str | None = None) -> dict:
+    """export_split_stats 预览：说明导出目标 + 校验分票提案已生成。"""
+    try:
+        batch_id = (args.get("batch_id") or "").strip()
+
+        warnings: list[str] = []
+        if not batch_id:
+            warnings.append("batch_id 为空")
+
+        lines = [f"批次: {batch_id}",
+                 "内容: 分票后每票 × 管理号的件数/净重/毛重/体积汇总"
+                 "（按港口分 sheet）",
+                 "输出: 批次文件夹下的 stats 目录，同名文件将被覆盖"]
+
+        if batch_id:
+            split_thread_id = f"split-{batch_id}"
+            from app.db.models import Declaration
+            from app.db.session import get_session
+            with get_session() as sess:
+                tickets = sess.query(Declaration).filter(
+                    Declaration.split_thread_id == split_thread_id,
+                    Declaration.status.in_(["pending", "confirmed"]),
+                ).count()
+            if tickets == 0:
+                warnings.append("该批次还没有分票提案，请先生成分票提案")
+            else:
+                lines.append(f"提案票数: {tickets}")
+
+        summary = (f"确认为批次 {batch_id} 导出分票统计表"
+                   "（每票的件数/重量/体积汇总）？")
+        return _preview(summary, lines, warnings)
+    except Exception as e:
+        return _preview("预览生成失败", [], [f"{type(e).__name__}: {e}"])
+
+
+def _exec_export_split_stats(
+    args: dict,
+    on_progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """export_split_stats 执行：调 app.export.stats.generate_split_stats。"""
+    batch_id = ""
+    try:
+        batch_id = (args.get("batch_id") or "").strip()
+        if not batch_id:
+            return {"error": "batch_id 为空"}
+
+        split_thread_id = f"split-{batch_id}"
+        from app.export.stats import generate_split_stats
+        result = generate_split_stats(split_thread_id)
+
+        warnings = result.get("warnings") or []
+        lines = [
+            f"批次 {batch_id} 的分票统计表已导出，"
+            "文件已保存到批次文件夹下的 stats 目录（同名旧文件已覆盖）。",
+        ]
+        if warnings:
+            lines.append(f"共 {len(warnings)} 条警告：")
+            lines.extend(f"- {w}" for w in warnings)
+        return {
+            "status": "exported",
+            "batch_id": batch_id,
+            "warnings": warnings,
+            "message": "\n".join(lines),
+        }
+    except ValueError as e:
+        if "分票提案不存在" in str(e):
+            return {"error": f"批次 {batch_id} 还没有分票提案，"
+                             "请先生成分票提案后再导出统计表"}
+        return {"error": str(e)}
+    except FileNotFoundError:
+        return {"error": f"批次 {batch_id} 还没有装箱单，"
+                         "请先完成提取后再导出统计表"}
+    except Exception as e:
+        return _err(e)
+
+
+# ---------------------------------------------------------------------------
 # split_and_generate（剧本宏：一次确认跑完 分票 → 确认 → 生成报关单 全链）
 # ---------------------------------------------------------------------------
 
@@ -4187,6 +4342,50 @@ TOOLS: dict[str, Tool] = {
         risk="write",
         preview=_preview_generate_declarations,
         execute=_exec_generate_declarations,
+    ),
+
+    # ---- 导出工具（写）----
+    "export_pivot": Tool(
+        name="export_pivot",
+        description="导出装箱单透视表：按港口 → 管理号汇总件数（含柜型/体积），"
+                    "生成 Excel 保存到批次文件夹下的 pivot 目录，同名文件覆盖。"
+                    "操作员想按港口/管理号汇总件数、要装箱单透视表时使用。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "batch_id": {
+                    "type": "string",
+                    "description": "批次 ID（创建批次时由操作员指定）",
+                },
+            },
+            "required": ["batch_id"],
+        },
+        risk="write",
+        preview=_preview_export_pivot,
+        execute=_exec_export_pivot,
+    ),
+    "export_split_stats": Tool(
+        name="export_split_stats",
+        description="导出分票统计表（截单信息-分体积）：分票后每票 × 管理号的"
+                    "件数/净重/毛重/体积汇总，按港口分 sheet 生成 Excel，"
+                    "保存到批次文件夹下的 stats 目录，同名文件覆盖。"
+                    "操作员在分票后想看每票的件数/重量/体积汇总时使用；"
+                    "该批次须已生成分票提案，否则引导先分票。"
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。",
+        parameters={
+            "type": "object",
+            "properties": {
+                "batch_id": {
+                    "type": "string",
+                    "description": "批次 ID（创建批次时由操作员指定）",
+                },
+            },
+            "required": ["batch_id"],
+        },
+        risk="write",
+        preview=_preview_export_split_stats,
+        execute=_exec_export_split_stats,
     ),
     "split_and_generate": Tool(
         name="split_and_generate",

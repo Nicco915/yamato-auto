@@ -9,7 +9,10 @@
    - 中文品名 = 主数据 name_cn（新 SKU 经 Node5 人工补录）；
    - 写入单元格格式：字号 9 + 四周细边框（2026-08-04 用户定），
      字体族/加粗保留单元格原有设置；
-   - 表格格式严格不变：全程 openpyxl，禁止 pandas 写入。
+   - 表格格式严格不变：全程 openpyxl，禁止 pandas 写入；
+   - MX 货物（PURCHASE_ORDER 列形如 "MX2-268510-001" 的行）是人工手动
+     加进装箱单的，中文品名/净重/毛重三列已由人工填好并核对——写回与
+     reopen 清空均跳过 MX 行，绝不覆盖/清除人工值（2026-09-29）；
 2. 写数据库（Upsert）：
    - 新 SKU：INSERT 人工补录的多语言品名/HS 编码/单件重量；
    - 老 SKU：人工微调过重量时 UPDATE 刷新历史重量。
@@ -44,6 +47,17 @@ _FILE_LOCK_ERRNOS = frozenset({errno.EACCES, errno.EBUSY, errno.EPERM, errno.ETX
 # 待添加的三列（插入到 SHOHIN_MEI_E 之后，与既有填好文件布局一致）
 NEW_COL_NAMES = ("中文品名", "净重", "毛重")
 INSERT_AFTER_COL = "SHOHIN_MEI_E"
+
+# MX 人工行识别列：PO 值以 "MX" 开头的行（如 "MX2-268510-001"）为人工手动
+# 加进装箱单的货物，三列已由人工填好，写回/清空均跳过；该列缺失视为无 MX
+PO_COL_NAME = "PURCHASE_ORDER"
+
+
+def _is_mx_po(value) -> bool:
+    """判断 PURCHASE_ORDER 单元格值是否属于 MX 人工行。"""
+    if value is None:
+        return False
+    return str(value).strip().upper().startswith("MX")
 
 # 写入单元格格式（2026-08-04 用户定）：字号 9 + 四周细边框
 WRITE_FONT_SIZE = 9
@@ -161,8 +175,11 @@ def _write_excel(state: AgentState, out_path: Path) -> int:
     col_gross = header.index(settings.col_gross) + 1
     col_cn = header.index(settings.col_name_cn) + 1
     col_qty = header.index(settings.col_qty) + 1
+    # MX 人工行识别列：无 PURCHASE_ORDER 列视为无 MX，全部照常写
+    col_po = header.index(PO_COL_NAME) + 1 if PO_COL_NAME in header else None
 
     written = 0
+    skipped_mx = 0
     for item in cur.get("calculated_items") or []:
         calc = item.get("calculation") or {}
         unit_net = calc.get("calculated_unit_net")
@@ -171,6 +188,11 @@ def _write_excel(state: AgentState, out_path: Path) -> int:
         if unit_net is None and unit_gross is None and not name_cn:
             continue  # Error 项无有效单重，留给人工线下处理
         for excel_row in row_map.get(str(item.get("sku")), []):
+            if col_po is not None and _is_mx_po(
+                    ws.cell(row=excel_row, column=col_po).value):
+                # MX 行三列是人工已填并核对好的值，绝不覆盖
+                skipped_mx += 1
+                continue
             qty = ws.cell(row=excel_row, column=col_qty).value
             qty = float(qty) if isinstance(qty, (int, float)) else 0.0
             if name_cn:
@@ -183,6 +205,8 @@ def _write_excel(state: AgentState, out_path: Path) -> int:
                 cell = ws.cell(row=excel_row, column=col_gross, value=round(unit_gross * qty, 2))
                 _apply_write_format(cell)
             written += 1
+    if skipped_mx:
+        logger.info("[Node6] 跳过 MX 行写回 %d 行（人工已填值）", skipped_mx)
     # 落盘前可写探测：让 Excel 独占锁导致的失败尽早冒泡，避免做完耗时写操作才报错
     _probe_writable(out_path)
     try:
@@ -199,6 +223,7 @@ def clear_sku_rows(state: AgentState, out_path: Path, skus: list[str]) -> int:
 
     用于 reopen 模式下人工删除条目：该 SKU 此前已写入输出 Excel，删除后
     需把已写值清空（三列本就是本系统追加的，清空即回到写前状态）。
+    MX 行（PURCHASE_ORDER 以 "MX" 开头）三列为人工填写，不在清空之列。
     主库历史单重记录不动（其他批次仍可能引用，删除主库记录不在此语义内）。
     """
     if not skus:
@@ -214,13 +239,23 @@ def clear_sku_rows(state: AgentState, out_path: Path, skus: list[str]) -> int:
     cols = [header.index(settings.col_name_cn) + 1,
             header.index(settings.col_net) + 1,
             header.index(settings.col_gross) + 1]
+    # MX 人工行识别列：三列是人工填的值（非本系统写入），reopen 删除不得清掉
+    col_po = header.index(PO_COL_NAME) + 1 if PO_COL_NAME in header else None
 
     cleared = 0
+    skipped_mx = 0
     for sku in skus:
         for excel_row in row_map.get(str(sku), []):
+            if col_po is not None and _is_mx_po(
+                    ws.cell(row=excel_row, column=col_po).value):
+                skipped_mx += 1
+                continue
             for col in cols:
                 ws.cell(row=excel_row, column=col).value = None
             cleared += 1
+    if skipped_mx:
+        logger.info("[Node6] reopen 删除条目：跳过 MX 行清空 %d 行（人工已填值）",
+                    skipped_mx)
     if cleared:
         _probe_writable(out_path)
         wb.save(out_path)
