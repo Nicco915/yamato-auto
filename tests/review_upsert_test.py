@@ -239,7 +239,10 @@ def test_upsert_old_sku_inspection_bool():
         "sku": "SKU-B1",
         "is_human_edited": True,
         "inspection_required": True,   # Node5 已归一化为真布尔
-        "calculation": {},
+        # 提取失败告警闭环（T2）：净重/毛重全 None 的占位行跳过落库；
+        # 真实人工编辑必带 calculation，fixture 补齐单重以过 writer 防线
+        "calculation": {"calculated_unit_net": 1.0,
+                        "calculated_unit_gross": 1.2},
     }
     inserted, updated = _upsert_db(_state_with_item(item))
     assert (inserted, updated) == (0, 1), (inserted, updated)

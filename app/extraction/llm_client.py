@@ -30,7 +30,9 @@ from openai import (
     APIConnectionError,
     APIError,
     APITimeoutError,
+    AuthenticationError,
     OpenAI,
+    PermissionDeniedError,
     RateLimitError,
 )
 
@@ -164,6 +166,11 @@ class MissingAPIKeyError(RuntimeError):
     """API key 缺失时的清晰报错。"""
 
 
+class FatalLLMError(Exception):
+    """LLM 致命错误：账号/配置级问题（403 无权限、401 未认证等），
+    重试无意义，应立即熔断整个批次而非按工厂降级为占位数据。"""
+
+
 @dataclass
 class UsageRecord:
     """单次 LLM 调用的 token 用量记录。"""
@@ -177,6 +184,9 @@ class UsageRecord:
     elapsed_sec: float = 0.0
     success: bool = True
     error: str = ""
+    # 失败分桶（success=True 时为空串）：
+    # "fatal"（FatalLLMError：403/401 账号级）/ "rate_limit"（429）/ "other"
+    error_kind: str = ""
 
 
 @dataclass
@@ -194,12 +204,21 @@ class UsageTracker:
         with self._lock:
             total_prompt = sum(r.prompt_tokens for r in self.records)
             total_completion = sum(r.completion_tokens for r in self.records)
+            failed = [r for r in self.records if not r.success]
+            failed_by_kind = {"fatal": 0, "rate_limit": 0, "other": 0}
+            for r in failed:
+                key = r.error_kind if r.error_kind in failed_by_kind else "other"
+                failed_by_kind[key] += 1
+            # 最近一条失败的原因摘要（截断 200 字符），无失败时为 None
+            last_error = (failed[-1].error or "")[:200] if failed else None
             return {
                 "calls": len(self.records),
-                "failed_calls": sum(1 for r in self.records if not r.success),
+                "failed_calls": len(failed),
                 "prompt_tokens": total_prompt,
                 "completion_tokens": total_completion,
                 "total_tokens": total_prompt + total_completion,
+                "failed_by_kind": failed_by_kind,
+                "last_error": last_error or None,
             }
 
     def reset(self) -> None:
@@ -338,6 +357,7 @@ def _create_with_retry(kwargs: dict, model: str, kind: str,
                     source_file=source_file,
                     success=False,
                     error=f"APITimeoutError: {str(e)[:200]}",
+                    error_kind="other",
                 )
             )
             if attempt < MAX_API_RETRIES:
@@ -356,6 +376,31 @@ def _create_with_retry(kwargs: dict, model: str, kind: str,
             )
             raise
         except APIError as e:
+            # 致命错误优先判定：403 无权限 / 401 未认证属账号/配置级问题，
+            # 重试无意义——记录用量后直接包装为 FatalLLMError 上抛（不重试），
+            # 由上层（session → node → service）熔断整个批次。
+            # 必须放在 response_format 降级与重试逻辑之前，且不进重试循环。
+            if isinstance(e, (PermissionDeniedError, AuthenticationError)):
+                elapsed = time.time() - t0
+                usage_tracker.add(
+                    UsageRecord(
+                        model=model,
+                        kind=kind,
+                        source_file=source_file,
+                        elapsed_sec=round(elapsed, 2),
+                        success=False,
+                        error=f"FatalLLMError[{type(e).__name__}]: {str(e)[:200]}",
+                        error_kind="fatal",
+                    )
+                )
+                logger.exception(
+                    "LLM 调用致命错误（%s，账号/配置级，不重试，触发批次熔断）| "
+                    "%s | model=%s | %s",
+                    type(e).__name__, label, model, str(e)[:200],
+                )
+                raise FatalLLMError(
+                    f"LLM 调用被拒绝（{type(e).__name__}）：{str(e)[:200]}"
+                ) from e
             # 部分模型不支持 response_format，降级一次后按正常重试流程走
             if "response_format" in kwargs and "response_format" in str(e).lower():
                 kwargs.pop("response_format", None)
@@ -367,6 +412,11 @@ def _create_with_retry(kwargs: dict, model: str, kind: str,
             last_exc = e
             elapsed = time.time() - t0
             retryable = _is_retryable(e) and attempt < MAX_API_RETRIES
+            # 失败分桶：429/RateLimitError → rate_limit；其余 → other
+            if isinstance(e, RateLimitError) or getattr(e, "status_code", None) == 429:
+                error_kind = "rate_limit"
+            else:
+                error_kind = "other"
             usage_tracker.add(
                 UsageRecord(
                     model=model,
@@ -375,6 +425,7 @@ def _create_with_retry(kwargs: dict, model: str, kind: str,
                     elapsed_sec=round(elapsed, 2),
                     success=False,
                     error=f"{type(e).__name__}: {str(e)[:200]}",
+                    error_kind=error_kind,
                 )
             )
             if retryable:

@@ -68,6 +68,15 @@
   /* 右屏卡片 */
   #missing-bar { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5;
                  border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px; }
+  /* 提取失败横幅（final_attempt / 占位数据）：与 missing-bar 同红色系，置顶更醒目 */
+  #failure-bar { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5;
+                 border-left: 5px solid #b91c1c; border-radius: 6px; padding: 8px 12px;
+                 margin-bottom: 10px; font-size: 13px; font-weight: 600; }
+  #failure-bar details { margin-top: 6px; font-weight: 400; }
+  #failure-bar summary { cursor: pointer; font-size: 12px; color: #991b1b; }
+  #failure-bar ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: #7f1d1d; }
+  /* 提交被拦截时的顶栏提示（深色顶栏用浅红） */
+  #submit-block-hint { font-size: 12px; color: #fca5a5; white-space: nowrap; }
   /* 工厂对照确认卡（alias_suggestion）：默认蓝色提示，conflict 时琥珀色警告 */
   #alias-bar { background: #eff6ff; color: #1e40af; border: 1px solid #93c5fd;
                border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: 13px;
@@ -188,6 +197,7 @@
   <button id="btn-skip" onclick="skipFactory()"
           title="本批次不处理该工厂：不写 Excel、不落库，批次照常完成">跳过本工厂</button>
   <button id="btn-submit" onclick="submitReview()">提交并继续</button>
+  <span id="submit-block-hint" style="display:none"></span>
 </div>
 
 <div id="main">
@@ -219,6 +229,7 @@
 
   <!-- 右屏：审核工作区 -->
   <div id="right">
+    <div id="failure-bar" style="display:none"></div>
     <div id="alias-bar" style="display:none"></div>
     <div id="missing-bar" style="display:none"></div>
     <div id="cards"></div>
@@ -343,6 +354,7 @@ async function loadPayload() {
   }
   $("done-view").style.display = "none";
   renderAliasBar();
+  renderFailureBar();
   renderMissingBar();
   renderCards();
   renderDocSelect();
@@ -541,6 +553,63 @@ function addAllMissingSkus() {
     !items.some((i) => !i._deleted && String(i.sku ?? "").trim() === String(s)));
   todo.forEach((s) => addMissingSku(s));
   if (todo.length) toast(`已补 ${todo.length} 张空卡，请逐项填数值与合规字段`, 3500);
+}
+
+/* ================= 提取失败安全阀（T3：占位数据防一键 approve） =================
+   后端二遍重试仍失败时挂起人工审核，payload 透传 final_attempt / failure_reason /
+   extraction_issues，items 为占位行（三数值全 null，source_file 是失败原因标记）。
+   这里做两件事：卡片区顶部红色横幅（含 extraction_issues 可折叠明细）+
+   「该厂全部数值为空」时禁用提交按钮（驳回/跳过不受影响）。 */
+const FAILURE_REASON_MAP = {
+  no_folder_matched: "未找到对应工厂文件夹",
+  no_items_extracted: "未识别到有效数据",
+  llm_fatal: "模型调用被拒绝",
+};
+
+function _isEmptyNum(v) { return v === null || v === undefined || v === ""; }
+
+/* 工厂级占位判定：全部未删除卡片的三个数值字段均为空（含零卡片的极端情况） */
+function factoryHasNoData() {
+  const active = items.filter((it) => !it._deleted);
+  if (!active.length) return true;
+  return active.every((it) => {
+    const ed = it.extracted_data || {};
+    return _isEmptyNum(ed.total_quantity)
+        && _isEmptyNum(ed.total_net_weight)
+        && _isEmptyNum(ed.total_gross_weight);
+  });
+}
+
+/* 人类可读失败原因：failure_reason 优先；缺省时从占位行 source_file 的失败标记推断 */
+function humanFailureReason() {
+  const raw = payload && payload.failure_reason;
+  if (raw) return FAILURE_REASON_MAP[raw] || String(raw);
+  const marker = items.map((it) => sourceFileOf(it))
+    .find((p) => DOC_PATH_MARKERS.has(p));
+  if (marker) return FAILURE_REASON_MAP[marker] || marker;
+  return "提取结果为空";
+}
+
+function renderFailureBar() {
+  const bar = $("failure-bar");
+  if (!bar) return;
+  const failed = !!(payload &&
+    (payload.final_attempt === true || payload.failure_reason || factoryHasNoData()));
+  if (!failed) { bar.style.display = "none"; bar.innerHTML = ""; return; }
+  let html = `⚠ 提取失败（${esc(humanFailureReason())}）：` +
+    "以下为占位数据，请人工补录数值，或确认放弃该工厂";
+  const issues = (payload && payload.extraction_issues) || [];
+  if (issues.length) {
+    const lis = issues.map((it) => {
+      const msg = (it && (it.message || it.msg)) || String(it);
+      const file = (it && it.file) ? `[${baseName(String(it.file))}] ` : "";
+      return `<li>${esc(file + msg)}</li>`;
+    }).join("");
+    html += `<details><summary>提取问题明细（${issues.length} 条）</summary>` +
+      `<ul>${lis}</ul></details>`;
+  }
+  bar.innerHTML = html;
+  bar.style.display = "block";
 }
 
 /* ================= 右屏卡片 ================= */
@@ -949,8 +1018,17 @@ function refreshSubmitState() {
     }
   });
   const skuErrs = validateSkuInputs();
-  $("btn-submit").disabled = skuErrs > 0;
-  $("btn-submit").title = skuErrs ? "请先修正 SKU 输入错误（13 位数字且不重复）" : "";
+  // T3 占位卡安全阀：该厂全部数值为空时禁用提交（驳回/跳过不受影响）；
+  // onNumEdit 等输入监听都会回到本函数，人工补录数值后按钮自动恢复可用
+  const noData = factoryHasNoData();
+  $("btn-submit").disabled = skuErrs > 0 || noData;
+  $("btn-submit").title = skuErrs ? "请先修正 SKU 输入错误（13 位数字且不重复）"
+    : noData ? "该工厂无有效数据，请补录数值后再提交（或选择跳过本工厂）" : "";
+  const blockHint = $("submit-block-hint");
+  if (blockHint) {
+    blockHint.style.display = (!skuErrs && noData) ? "" : "none";
+    blockHint.textContent = "该工厂无有效数据，请补录数值后再提交";
+  }
 }
 
 /* ================= 左屏查看器 ================= */
@@ -1787,7 +1865,7 @@ async function afterResumeSuccess(data, verb) {
     payload = data.review_data;
     initItems();
     $("tb-factory").textContent = "工厂: " + (payload.factory_name || "-");
-    renderAliasBar(); renderMissingBar(); renderCards(); renderDocSelect();
+    renderAliasBar(); renderFailureBar(); renderMissingBar(); renderCards(); renderDocSelect();
     selectCard(0);
     // 推进到下一工厂后恢复跳过按钮（skipFactory 成功路径只置 disabled，无人在此恢复）
     $("btn-skip").disabled = false;
@@ -1896,6 +1974,7 @@ function showDone(data) {
   $("done-path").textContent = data.final_output_path ? ("最终文件：" + data.final_output_path) : (data.message || "");
   $("cards").innerHTML = "";
   $("missing-bar").style.display = "none";
+  $("failure-bar").style.display = "none";
   toast(isReopen ? "重新提交完成" : "本批次全部完成");
 }
 

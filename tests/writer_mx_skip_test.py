@@ -105,8 +105,9 @@ def test_write_excel_skips_mx_rows():
     path = TMP / "mx_write.xlsx"
     _make_xlsx(path)
 
-    written = writer._write_excel(_state(), path)
+    written, skipped_placeholder = writer._write_excel(_state(), path)
     assert written == 1, f"返回值应只计普通行: {written}"
+    assert skipped_placeholder == 0  # 无占位行（提取失败告警闭环 T2 新契约）
 
     ws = load_workbook(path).active
     # MX 行：三列原样未动（人工值不被覆盖）
@@ -151,8 +152,9 @@ def test_write_excel_without_po_column():
     path = TMP / "no_po_col.xlsx"
     _make_xlsx(path, with_po_col=False)
 
-    written = writer._write_excel(_state(), path)
+    written, skipped_placeholder = writer._write_excel(_state(), path)
     assert written == 2, f"无 PO 列应全部照常写: {written}"
+    assert skipped_placeholder == 0  # 无占位行（提取失败告警闭环 T2 新契约）
 
     wb = load_workbook(path)
     ws = wb.active

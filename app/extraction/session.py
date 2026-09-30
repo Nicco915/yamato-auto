@@ -31,6 +31,7 @@ from pathlib import Path
 from app.config import get_settings
 from .agent import _route_extract
 from .excel_channel import UnsupportedFileError
+from .llm_client import FatalLLMError
 from .schemas import ExtractedItem
 from .target_identifier import (
     _NEGATIVE_NAME_SIGNALS,
@@ -349,6 +350,10 @@ def process_file(session: FactorySession, file_path: str) -> ProcessResult:
     # --- 通道提取 + 合并 ---
     try:
         res = _route_extract(file_path)
+    except FatalLLMError:
+        # LLM 致命错误（403/401 账号/配置级）：不吞掉、不登记占位、
+        # 直接上抛让上层熔断整个批次（重试无意义，后续文件不必再处理）。
+        raise
     except Exception as e:  # noqa: BLE001
         session._log("warning", "CHANNEL_ERROR", f"通道处理失败：{type(e).__name__}: {str(e)[:200]}",
                      file=file_path)
@@ -414,6 +419,9 @@ def force_extract(session: FactorySession, file_path: str,
         # 显式 force_vision 或 pages 非空 → 强制走视觉
         use_vision = bool(force_vision or pages)
         res = _route_extract(file_path, pages=pages, force_vision=use_vision)
+    except FatalLLMError:
+        # LLM 致命错误（403/401 账号/配置级）：不吞掉，直接上抛熔断批次
+        raise
     except Exception as e:  # noqa: BLE001
         session._log("blocking", "FORCE_EXTRACT_FAILED",
                      f"人工指定文件提取失败：{type(e).__name__}: {str(e)[:200]}", file=file_path)

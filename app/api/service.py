@@ -29,7 +29,7 @@ from app.config import get_settings
 from app.db import batch_store
 from app.db.models import ReviewAudit
 from app.db.session import get_session
-from app.extraction.llm_client import usage_tracker
+from app.extraction.llm_client import FatalLLMError, usage_tracker
 from app.orchestrator import discovery, factory_setup
 from app.extraction.session import SESSIONS_DIR
 from app.graph import NODE2, NODE4, NODE5, NODE6, NODE7, get_graph
@@ -746,7 +746,7 @@ def _pre_extract_factories(
     cutoff = get_settings().fuzzy_match_score_cutoff
     progress = _PreExtractProgress(thread_id, factories) if thread_id else None
 
-    for factory in factories:
+    for idx, factory in enumerate(factories):
         # 缓存已存在且新鲜（路径证据仍在当前批次 upstream_root 之下）则跳过；
         # 新鲜度校验是 rerun_with_paths 改路径重跑场景的兜底：旧根目录留下
         # 的缓存视为陈旧，照常重提，不误用上一批次数据
@@ -771,16 +771,44 @@ def _pre_extract_factories(
         if progress:
             progress.update(factory, "running")
         try:
-            _run_factory_session(thread_id, folder_path, factory, expected_skus)
-            logger.info("[预提取] 工厂「%s」：完成（%s，得分 %.1f）",
-                        factory, method, score)
+            session = _run_factory_session(thread_id, folder_path, factory, expected_skus)
+        except FatalLLMError as e:
+            # 熔断：LLM 致命错误（403/401 账号级）整批预提取终止，
+            # 该厂及剩余厂全部标 failed，不再烧无效 token
+            logger.error("[预提取] 工厂「%s」LLM 致命错误，终止整批预提取：%s",
+                         factory, e)
             if progress:
-                progress.update(factory, "done")
+                progress.update(factory, "failed", f"FatalLLMError: {e}"[:200])
+                for rest in factories[idx + 1:]:
+                    progress.update(rest, "failed",
+                                    "LLM 致命错误，整批预提取已终止")
+            return
         except Exception as e:
             logger.exception("[预提取] 工厂「%s」：异常 %s，跳过", factory, e)
             if progress:
                 progress.update(factory, "failed",
                                 f"{type(e).__name__}: {e}"[:200])
+            continue
+
+        # 预提取谎报修复：提取完成但 0 条 → 标 failed（原因「提取结果为空」），
+        # 且删掉刚落盘的空 session 缓存，防图内 Node3 命中空缓存直接出占位
+        if not session.items and not session.no_code_items:
+            logger.warning("[预提取] 工厂「%s」：提取结果为空，标记失败并清除空缓存",
+                           factory)
+            try:
+                from app.extraction.session import batch_session_path
+                batch_session_path(thread_id, factory).unlink(missing_ok=True)
+            except OSError as e:
+                logger.warning("[预提取] 工厂「%s」：清除空 session 缓存失败（%s: %s）",
+                               factory, type(e).__name__, e)
+            if progress:
+                progress.update(factory, "failed", "提取结果为空")
+            continue
+
+        logger.info("[预提取] 工厂「%s」：完成（%s，得分 %.1f）",
+                    factory, method, score)
+        if progress:
+            progress.update(factory, "done")
 
 
 # ---------------------------------------------------------------------------
@@ -805,6 +833,22 @@ def _ensure_batch_session_dir(thread_id: str) -> Path:
     batch_dir = SESSIONS_DIR / settings.safe_path_tag(thread_id)
     batch_dir.mkdir(parents=True, exist_ok=True)
     return batch_dir
+
+
+def _mark_batch_error(thread_id: str, exc: Exception) -> None:
+    """批次因异常终止时把原因落到 batches 表（看板卡片直出原因）。
+
+    LLM 致命错误（403/401 账号级，重试无意义）给固定中文指引；
+    其余异常留「类型: 摘要」（mark_error 内部截 500 字符）。
+    mark_error 内部自带 try/except，绝不抛出，不影响原异常上抛。
+    """
+    if isinstance(exc, FatalLLMError):
+        batch_store.mark_error(
+            thread_id,
+            "LLM 调用被拒绝：模型无访问权限或额度不足，"
+            "请检查百炼账号配置（403 AccessDenied）")
+    else:
+        batch_store.mark_error(thread_id, f"{type(exc).__name__}: {exc}"[:500])
 
 
 def run_until_interrupt(
@@ -863,6 +907,8 @@ def run_until_interrupt(
                     }
         except Exception as e:  # noqa: BLE001
             _write_batch_state(thread_id, "error", error=str(e))
+            # 熔断落状态：批次因异常终止，看板卡片必须能看到原因
+            _mark_batch_error(thread_id, e)
             raise
 
         final = graph.get_state(_config(thread_id))
@@ -920,6 +966,8 @@ def resume_order(thread_id: str, resume_data: dict,
                     return result
         except Exception as e:  # noqa: BLE001
             _write_batch_state(thread_id, "error", error=str(e))
+            # 与 run_until_interrupt 同一不变量：批次因异常终止必须落原因
+            _mark_batch_error(thread_id, e)
             raise
 
         final = graph.get_state(_config(thread_id))
@@ -1739,7 +1787,7 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
 
     with logging_context(thread_id=thread_id, factory=factory_name):
         out_path = writer_mod._ensure_output_copy(fake_state)
-        written = writer_mod._write_excel(fake_state, out_path)
+        written, _skipped_placeholder = writer_mod._write_excel(fake_state, out_path)
         inserted, updated = writer_mod._upsert_db(fake_state)
         # reopen 删除：清空已写入的三列单元格（主库历史单重不动）
         cleared = writer_mod.clear_sku_rows(fake_state, out_path, deleted_skus)
@@ -2188,6 +2236,10 @@ def _usage_with_scope() -> dict[str, Any]:
     summary = usage_tracker.summary()
     summary["scope"] = "process_lifetime"
     summary["note"] = "进程内累计，重启清零；无 thread 标签，为全局用量"
+    # 提取失败告警闭环（§3.3）：透出失败分桶与最近失败原因供前端渲染；
+    # setdefault 兜底旧版 tracker（summary 缺字段时不 500）
+    summary.setdefault("failed_by_kind", {"fatal": 0, "rate_limit": 0, "other": 0})
+    summary.setdefault("last_error", None)
     return summary
 
 
@@ -2232,31 +2284,46 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
         } for r in audit_rows]
 
     # 每厂最新一条审计（audit_id 升序遍历，后者覆盖前者；一次查询不 N+1）。
-    # 最新一条是 factory_skipped 即视为「已跳过」——若之后经「补充工厂」重审通过，
-    # 会更晚的 approved=true 行成为最新一条，角色自然回到 done
+    # 最新一条 approved=true 即视为「已通过」——若之前被跳过后经「补充工厂」
+    # 重审通过，更晚的 approved=true 行成为最新一条，角色自然回到 done
     latest_audit: dict[str, Any] = {}
     for r in audit_rows:
         if r.factory_name:
             latest_audit[r.factory_name] = r
 
+    # 提取失败告警闭环（§3.1）：role 推导增加失败维度。
+    # 失败口径与 export_node 的 factories_failed 一致（requirements 全集 −
+    # factory_outputs；只有 Approved 工厂才进快照），再排除还会跑的
+    # pending/current/暂缓（deferred 等待二遍重试，尚未定论）：
+    #   - 在快照里 → done（可 reopen）；
+    #   - 不在快照但最新审计 approved（老批次/历史数据无快照）→ done 且
+    #     can_reopen=False（前端据此不渲染「重新打开」，堵 reopen 404）；
+    #   - 其余（提取失败耗尽重试/占位挂起被驳回/被跳过）→ failed，
+    #     前端显示「提取失败待补录」，不再一律「已完成」。
+    outputs = values.get("factory_outputs") or {}
+    deferred_names = {
+        d.get("factory_name") for d in (values.get("deferred_factories") or [])
+    }
     factories = []
     for name in sorted(total_set):
         if name == current and snap.next:
             role = "current"
-        elif name in pending:
+        elif name in pending or name in deferred_names:
+            # 主队列待处理 / 暂缓待二遍重试：还没定论，不算失败
             role = "pending"
+        elif name in outputs:
+            role = "done"
         else:
             last = latest_audit.get(name)
-            if (last is not None and last.result_status == "factory_skipped"
-                    and not last.approved):
-                role = "skipped"
-            else:
-                role = "done"
-        factories.append({
+            role = "done" if (last is not None and last.approved) else "failed"
+        entry = {
             "factory": name,
             "role": role,
             "session": _load_factory_session(thread_id, name),
-        })
+        }
+        if role == "done" and name not in outputs:
+            entry["can_reopen"] = False
+        factories.append(entry)
 
     detail.update({
         "downstream_file_path": values.get("downstream_file_path"),

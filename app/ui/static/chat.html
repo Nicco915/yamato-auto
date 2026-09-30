@@ -639,6 +639,7 @@ function batchStatusBadge(status) {
     running: { label: "运行中", cls: "badge-running" },
     pending_review: { label: "待审核", cls: "badge-pending" },
     completed: { label: "已完成", cls: "badge-done" },
+    completed_with_errors: { label: "部分失败", cls: "badge-pending" },
     error: { label: "异常", cls: "badge-error" },
     unknown: { label: "未知", cls: "badge-unknown" },
   };
@@ -702,13 +703,15 @@ function renderSessionHeader(thread_id, data) {
 
   /* ---- 待办操作按钮（规则与批次详情页一致） ----
      对话页内所有跳转链接一律 target=_blank 新标签页打开（2026-09 用户反馈：
-     同页覆盖会打断对话现场，审核/分票完回来对话上下文丢失） */
+     同页覆盖会打断对话现场，审核/分票完回来对话上下文丢失）；
+     completed_with_errors（部分失败）与 completed 同等看待：仍可补充工厂/分票 */
+  const isDone = (status === "completed" || status === "completed_with_errors");
   let actions = "";
   if (status === "pending_review") {
     actions += '<a class="btn btn-primary btn-sm" target="_blank" rel="noopener" href="/review?thread_id='
              + encodeURIComponent(thread_id) + '">去审核</a>';
   }
-  if (status === "completed" || status === "pending_review") {
+  if (isDone || status === "pending_review") {
     actions += '<button class="btn btn-sm" id="bsb-add-factories" onclick="chatAddFactories()">补充工厂</button>';
   } else if (status === "running") {
     actions += '<button class="btn btn-sm" disabled title="批次正在运行，待挂起审核或完成后再补充">补充工厂</button>';
@@ -716,7 +719,7 @@ function renderSessionHeader(thread_id, data) {
   if (split && split.split_thread_id) {
     actions += '<a class="btn btn-primary btn-sm" target="_blank" rel="noopener" href="/split/'
              + encodeURIComponent(split.split_thread_id) + '">查看分票</a>';
-  } else if (status === "completed") {
+  } else if (isDone) {
     actions += '<button class="btn btn-primary btn-sm" id="bsb-start-split" onclick="chatStartSplit()">开始分票</button>';
   }
   $("bsb-actions").innerHTML = actions;
@@ -726,7 +729,7 @@ function renderSessionHeader(thread_id, data) {
               + encodeURIComponent(thread_id) + '">批次详情</a>';
   if (finalOutput) {
     outputs += '<button class="btn btn-sm" onclick="chatOpenOutputExcel(this)"'
-             + (status !== "completed"
+             + (!isDone
                 ? ' title="批次仍在运行：当前是半成品，后续工厂确认后会继续追加写入；流程继续前请先关闭 Excel"'
                 : '')
              + '>打开输出 Excel</button>';

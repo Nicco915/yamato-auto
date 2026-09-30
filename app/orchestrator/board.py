@@ -11,6 +11,9 @@
   后台线程跑 start_batch_from_scan，HTTP 立即返回不阻塞；
 - reset_to_todo：退回未执行——把文件夹关联的批次从执行中(挂起/异常)/
   已完成回退到未执行，清掉全部执行痕迹，看板重新把它列为候选。
+- folder_plan / prepare_folders：预建工厂文件夹（提取失败告警闭环 §3.4，
+  源头预防 no_folder_matched）——解析装箱单工厂名单，与上游「工厂」目录
+  现有子目录 diff（factory_aliases 同口径），确认后批量 mkdir。
 
 所有路径处理使用 pathlib.Path，兼容 macOS/Windows。
 """
@@ -131,7 +134,7 @@ def board_state() -> dict[str, Any]:
             try:
                 from app.orchestrator.pipeline_state import get_pipeline_state
                 state = get_pipeline_state(rec["thread_id"])
-                if rec.get("status") != "completed":
+                if rec.get("status") not in ("completed", "completed_with_errors"):
                     fresh = state.get("batch") or {}
                     if fresh.get("status") and fresh["status"] != rec.get("status"):
                         rec = batch_store.get_batch(rec["thread_id"]) or fresh
@@ -142,15 +145,19 @@ def board_state() -> dict[str, Any]:
                 rec["_done_factories"] = len(extract.get("done_factories") or [])
                 rec["_pending_factories"] = len(extract.get("pending_factories") or [])
                 rec["_current_factory"] = extract.get("current_factory")
+                rec["_factories_failed"] = extract.get("factories_failed") or 0
                 rec["_final_output_path"] = extract.get("final_output_path")
                 rec["_split_thread_id"] = split.get("split_thread_id")
                 rec["_declarations_ready"] = split.get("declarations_ready", False)
             except Exception:  # noqa: BLE001 自愈/取数失败不阻塞看板
                 pass
-        if rec is not None and rec.get("status") == "completed":
+        # completed_with_errors 仍归「已完成」档（橙色徽章 + 失败工厂计数警示）
+        if rec is not None and rec.get("status") in ("completed", "completed_with_errors"):
             done.append({"folder_name": child.name,
                          "thread_id": rec["thread_id"],
+                         "status": rec.get("status"),
                          "completed_at": rec.get("completed_at"),
+                         "factories_failed": rec.get("_factories_failed", 0),
                          "has_checkpoint": rec.get("_has_checkpoint", True),
                          "final_output_path": rec.get("_final_output_path"),
                          "split_thread_id": rec.get("_split_thread_id"),
@@ -213,7 +220,7 @@ def mark_done(folder_name: str, thread_id: str | None = None) -> dict[str, Any]:
     matched = discovery.match_watch_folders(watch)
     existing = matched.get(folder_name)
     if existing is not None:
-        if existing.get("status") == "completed":
+        if existing.get("status") in ("completed", "completed_with_errors"):
             return {"ok": True, "linked": False,
                     "message": f"「{folder_name}」已是已完成状态",
                     "thread_id": existing["thread_id"]}
@@ -226,7 +233,7 @@ def mark_done(folder_name: str, thread_id: str | None = None) -> dict[str, Any]:
         target = batch_store.get_batch(tid)
         if target is None:
             raise FileNotFoundError(f"批次不存在: {tid}")
-        if target.get("status") != "completed":
+        if target.get("status") not in ("completed", "completed_with_errors"):
             raise ValueError(f"只能关联已完成批次（{tid} 当前状态 "
                              f"{target.get('status')}）")
         bound = target.get("folder_name")
@@ -490,3 +497,175 @@ def reset_to_todo(folder_name: str) -> dict[str, Any]:
     return {"ok": True, "thread_id": tid,
             "message": f"已把「{folder_name}」退回未执行"
                        f"（清理了{detail}），可重新开始"}
+
+
+# ---------------------------------------------------------------------------
+# 预建工厂文件夹（提取失败告警闭环 §3.4）：源头预防 no_folder_matched
+# ---------------------------------------------------------------------------
+
+# diff「已有」判定只认确定性匹配档（与 Node2/prescan 同源）；fuzzy/contains
+# 是概率猜测，照常按命名规则预建规范文件夹，避免「猜中的旧文件夹」与
+# 「新建的规范文件夹」并存后匹配口径漂移
+_PLAN_EXISTING_METHODS = ("alias", "alias_ci", "exact", "alias_folder")
+
+
+def folder_plan(
+    folder_name: str,
+    downstream_file_path: str | None = None,
+) -> dict[str, Any]:
+    """预建工厂文件夹预览（只读）：装箱单工厂名单 vs 上游现有子目录 diff。
+
+    流程（探测+解析与 service.start_batch_from_scan 同口径）：
+    1. 监控目录下定位 folder_name，探测 ContentsOfTheContainer 装箱单
+       （本层无命中向下一层钻取，复用 discovery.discover_downstream_files）；
+    2. 解析装箱单拿工厂全名单（parse_downstream_file）；
+    3. 上游根 = 装箱单所在目录（有「工厂」子目录则取它，
+       discovery.pick_upstream_root）；
+    4. 逐工厂 match_factory_folder：确定性档（alias/alias_ci/exact/
+       alias_folder）命中现有子目录 → existing；否则按命名规则
+       （factory_aliases 主数据 short_name 优先，无别名回退装箱单原名，
+       安全化非法字符）生成待建 folder_name → missing。
+
+    返回：
+      - 正常：{"need_choice": False, "folder_name", "downstream_file_path",
+        "upstream_root", "existing": [{factory, folder_name, method}],
+        "missing": [{factory, folder_name}], "need_upstream": bool}
+        need_upstream=True 表示装箱单旁没有标准「工厂」子目录，文件夹将
+        直接建在装箱单同级（前端据此提示用户确认布局）；
+      - 多装箱单候选且未指定：{"need_choice": True, "downstream_candidates":
+        [路径...], "existing": [], "missing": [], "need_upstream": False}
+        ——前端让用户选择后带 downstream_file_path 重调。
+
+    异常契约（路由层转 HTTP）：文件夹不存在 → FileNotFoundError；
+    装箱单找不到/解析失败/上游目录不存在或不可读 → ValueError。
+    """
+    from app.factory_match import (
+        load_alias_map, load_folder_match_candidates, match_factory_folder)
+    from app.nodes.parse_downstream import parse_downstream_file
+    from app.orchestrator import factory_setup
+
+    folder_name = (folder_name or "").strip()
+    if not folder_name:
+        raise ValueError("文件夹名不能为空")
+    watch = _watch_path()
+    folder = watch / folder_name
+    if not folder.is_dir():
+        raise FileNotFoundError(f"文件夹不存在: {folder_name}")
+
+    # 下游装箱单：显式指定 > 自动探测；多候选未指定 → 返回选择信号（不报错，
+    # 只读预览让用户先看候选再选定重调）
+    if downstream_file_path:
+        chosen = Path(downstream_file_path).expanduser()
+        if not chosen.is_file():
+            raise ValueError(f"指定的装箱单不存在: {downstream_file_path}")
+        candidates = [chosen]
+    else:
+        candidates = discovery.discover_downstream_files(folder)
+        if not candidates:
+            raise ValueError(
+                f"子文件夹 {folder_name} 中未找到 ContentsOfTheContainer 装箱单文件")
+        if len(candidates) > 1:
+            return {"need_choice": True,
+                    "downstream_candidates": [str(p) for p in candidates],
+                    "existing": [], "missing": [], "need_upstream": False}
+    downstream = candidates[0]
+
+    # 上游根：与 start_batch_from_scan 同口径——装箱单实际所在目录
+    # （装箱单常落在嵌套中间层，与「工厂」目录同层），有「工厂」子目录则取它
+    base = downstream.parent
+    upstream = discovery.pick_upstream_root(base)
+    need_upstream = upstream == base  # 无标准「工厂」子目录，将建在装箱单同级
+    if not upstream.is_dir():
+        raise ValueError(f"上游工厂目录不存在: {upstream}")
+
+    try:
+        requirements, _ = parse_downstream_file(str(downstream))
+    except Exception as e:  # noqa: BLE001 统一转 ValueError 给路由层 422
+        raise ValueError(f"装箱单解析失败: {type(e).__name__}: {e}") from e
+
+    try:
+        folders = [d.name for d in upstream.iterdir() if d.is_dir()]
+    except OSError as e:
+        raise ValueError(f"上游工厂目录不可读: {e}") from e
+
+    alias_map = load_alias_map()
+    folder_candidates = load_folder_match_candidates()
+    cutoff = get_settings().fuzzy_match_score_cutoff
+
+    existing: list[dict[str, Any]] = []
+    missing: list[dict[str, str]] = []
+    for factory in requirements:
+        hit, _score, method = match_factory_folder(
+            factory, folders, alias_map, cutoff=cutoff,
+            folder_candidates=folder_candidates)
+        if hit and method in _PLAN_EXISTING_METHODS:
+            existing.append({"factory": factory, "folder_name": hit,
+                             "method": method})
+            continue
+        # 命名规则（已拍板方案 B）：主数据 short_name 优先，无别名回退
+        # 装箱单原名；安全化与 factory_setup 建夹同一函数，口径一致
+        desired = factory_setup._sanitize_folder_name(
+            factory_setup._short_name_for_factory(factory) or factory)
+        if desired in folders or any(m["folder_name"] == desired for m in missing):
+            # 目标文件夹已存在（或两名工厂归并到同一待建名）：不重复创建
+            existing.append({"factory": factory, "folder_name": desired,
+                             "method": "desired_exists"})
+            continue
+        missing.append({"factory": factory, "folder_name": desired})
+
+    return {"need_choice": False,
+            "folder_name": folder_name,
+            "downstream_file_path": str(downstream),
+            "upstream_root": str(upstream),
+            "existing": existing,
+            "missing": missing,
+            "need_upstream": need_upstream}
+
+
+def prepare_folders(
+    folder_name: str,
+    downstream_file_path: str | None = None,
+) -> dict[str, Any]:
+    """预建工厂文件夹（写）：按 folder_plan 的 missing 清单批量 mkdir。
+
+    幂等：已存在的目录跳过（进 skipped），重复调用安全。新建空文件夹本身
+    不触发任何提取——操作员放文件后再启动批次。确认门由看板确认弹窗承担
+    （一次一确认），本函数不再二次确认。
+
+    异常契约同 folder_plan；多装箱单候选未指定时转 ValueError（写路径
+    不返回选择信号，消息列出候选文件名）。mkdir 失败立即抛 ValueError
+    （已建的不回滚——幂等，重试即可补齐）。
+    """
+    plan = folder_plan(folder_name, downstream_file_path)
+    if plan.get("need_choice"):
+        names = [Path(p).name for p in plan["downstream_candidates"]]
+        raise ValueError(
+            f"发现多个下游装箱单，请先指定其中一个：{'、'.join(names)}")
+
+    upstream = Path(plan["upstream_root"])
+    created: list[str] = []
+    skipped: list[str] = []
+    for item in plan["missing"]:
+        target = upstream / item["folder_name"]
+        if target.is_dir():
+            skipped.append(item["folder_name"])
+            continue
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            raise ValueError(
+                f"创建文件夹失败 {item['folder_name']}: {e}") from e
+        created.append(item["folder_name"])
+
+    logger.info("预建工厂文件夹 | folder=%s | 新建=%s | 已存在跳过=%s",
+                folder_name, created, skipped)
+    message = f"已创建 {len(created)} 个工厂文件夹"
+    if skipped:
+        message += f"，{len(skipped)} 个已存在跳过"
+    if created:
+        message += "。请把各工厂单据放入对应文件夹后再启动批次"
+    return {"ok": True,
+            "created": created,
+            "skipped": skipped,
+            "upstream_root": plan["upstream_root"],
+            "message": message}

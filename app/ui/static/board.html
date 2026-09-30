@@ -101,6 +101,25 @@
   </div>
 </div>
 
+<!-- 预建工厂文件夹弹窗（确认门：列出将创建/已存在清单，确认后批量 mkdir） -->
+<div id="prep-mask" class="modal-mask" onclick="if (event.target === this) closePrepareModal()">
+  <div class="modal start-modal">
+    <h3 id="prep-title">预建工厂文件夹</h3>
+    <p class="hint">按装箱单工厂名单在上游「工厂」目录预建缺失文件夹（别名表有简称用简称，无别名用装箱单原名）。创建的是空文件夹，放入单据后再启动批次。</p>
+    <div class="field" id="prep-downstream-field" style="display:none">
+      <label>下游装箱单（发现多个，请选择一个）</label>
+      <select id="prep-downstream" onchange="loadPreparePlan(this.value)"></select>
+    </div>
+    <div class="field">
+      <div id="prep-summary" style="font-size:13px;line-height:1.8"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closePrepareModal()">取消</button>
+      <button class="btn btn-primary" id="prep-confirm-btn" onclick="confirmPrepare()">确认创建</button>
+    </div>
+  </div>
+</div>
+
 <script src="/ui/static/ui.js"></script>
 <script>
 renderTopbar("board");
@@ -136,6 +155,8 @@ function statusBadge(status) {
       return '<span class="badge badge-warn">进行中</span>';
     case "completed":
       return '<span class="badge badge-ok">已完成</span>';
+    case "completed_with_errors":
+      return '<span class="badge badge-warn">部分失败</span>';
     case "error":
       return '<span class="badge badge-muted">异常</span>';
     default:
@@ -194,6 +215,8 @@ function renderTodo(list) {
       '<div class="b-actions">' +
       '<button class="btn btn-sm btn-primary" ' + (c.has_content ? "" : "disabled") +
         ' onclick="openStartModal(' + i + ')">开始批次</button>' +
+      '<button class="btn btn-sm" ' + (c.has_content ? "" : "disabled") +
+        ' onclick="openPrepareModal(' + i + ')">预建工厂文件夹</button>' +
       '<button class="btn btn-sm" onclick="markDone(' + i + ')">标记完成</button>' +
       '</div></div>';
   }).join("");
@@ -292,9 +315,14 @@ function renderDone(list) {
   if (!list.length) { el.innerHTML = '<div class="b-empty">暂无已完成批次</div>'; return; }
   el.innerHTML = list.map(function (b, i) {
     var noCp = b.has_checkpoint === false;
+    var meta = (b.status === "completed_with_errors" ? statusBadge(b.status) + ' · ' : '') +
+      '完成于 ' + esc(fmtTime(b.completed_at));
+    if ((b.factories_failed || 0) > 0) {
+      meta += ' · <span style="color:#b45309">' + b.factories_failed + ' 家工厂提取失败</span>';
+    }
     return '<div class="b-card">' +
       '<div class="b-name">' + esc(b.folder_name) + '</div>' +
-      '<div class="b-meta">完成于 ' + esc(fmtTime(b.completed_at)) +
+      '<div class="b-meta">' + meta +
         // 纯标记记录（无对应批次）批次号留空
         '<br>批次号：' + (noCp ? '' : esc(b.thread_id)) + '</div>' +
       '<div class="b-actions">' +
@@ -571,12 +599,96 @@ async function confirmStart() {
   }
 }
 
+/* ---------- 预建工厂文件夹（弹窗即确认门：列「将创建/已存在」清单） ---------- */
+var _prepCandidate = null;   // 当前操作的未执行候选
+var _prepPlan = null;        // 最近一次 folder-plan 响应（非 need_choice 时）
+
+async function openPrepareModal(idx) {
+  var c = (_board && _board.candidates || [])[idx];
+  if (!c) return;
+  _prepCandidate = c;
+  _prepPlan = null;
+  $("prep-title").textContent = "预建工厂文件夹：" + c.folder_name;
+  $("prep-downstream-field").style.display = "none";
+  $("prep-summary").innerHTML = '<span style="color:var(--muted)">正在解析装箱单…</span>';
+  $("prep-confirm-btn").disabled = true;
+  $("prep-confirm-btn").textContent = "确认创建";
+  $("prep-mask").classList.add("show");
+  await loadPreparePlan(null);
+}
+
+/* 拉取预览；多装箱单时先渲染选择下拉，选定后带 downstream_file_path 重调 */
+async function loadPreparePlan(downstreamPath) {
+  if (!_prepCandidate) return;
+  var url = "/api/v1/watch/folder-plan?folder_name=" + encodeURIComponent(_prepCandidate.folder_name);
+  if (downstreamPath) url += "&downstream_file_path=" + encodeURIComponent(downstreamPath);
+  try {
+    var plan = await api(url);
+    if (plan.need_choice) {
+      $("prep-downstream-field").style.display = "";
+      $("prep-downstream").innerHTML = (plan.downstream_candidates || []).map(function (p) {
+        var name = String(p).split(/[\\/]/).pop();
+        return '<option value="' + esc(p) + '">' + esc(name) + '</option>';
+      }).join("");
+      $("prep-summary").innerHTML = '<span style="color:var(--muted)">请先选择装箱单</span>';
+      $("prep-confirm-btn").disabled = true;
+      return;
+    }
+    _prepPlan = plan;
+    var miss = plan.missing || [], exist = plan.existing || [];
+    var h = "";
+    if (plan.need_upstream) {
+      h += '<div style="color:#b45309">未找到标准「工厂」目录，文件夹将直接建在装箱单同级目录。</div>';
+    }
+    h += '<div><b>将创建 ' + miss.length + ' 个：</b>' +
+      (miss.length ? miss.map(function (m) { return esc(m.folder_name); }).join("、") : "无") + '</div>';
+    h += '<div><b>已存在 ' + exist.length + ' 个：</b>' +
+      (exist.length ? exist.map(function (m) { return esc(m.folder_name); }).join("、") : "无") + '</div>';
+    $("prep-summary").innerHTML = h;
+    $("prep-confirm-btn").disabled = miss.length === 0;
+    $("prep-confirm-btn").textContent = miss.length ? ("确认创建 " + miss.length + " 个") : "无需创建";
+  } catch (e) {
+    $("prep-summary").innerHTML = '<span style="color:#b91c1c">预览失败：' + esc(e.message) + '</span>';
+    $("prep-confirm-btn").disabled = true;
+  }
+}
+
+function closePrepareModal() {
+  $("prep-mask").classList.remove("show");
+  _prepCandidate = null;
+  _prepPlan = null;
+}
+
+async function confirmPrepare() {
+  if (!_prepCandidate || !_prepPlan) return;
+  var btn = $("prep-confirm-btn");
+  if (btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = "创建中…";
+  var body = { folder_name: _prepCandidate.folder_name };
+  // 多装箱单场景：带上用户选定的装箱单，与预览口径一致
+  if ($("prep-downstream-field").style.display !== "none") {
+    body.downstream_file_path = $("prep-downstream").value;
+  }
+  try {
+    var r = await api("/api/v1/watch/prepare-folders", { method: "POST", body: body });
+    toast((r && r.message) || "工厂文件夹已创建", 4000);
+    closePrepareModal();
+    loadBoard(false);
+  } catch (e) {
+    toast("预建失败：" + e.message, 4000);
+    btn.disabled = false;
+    btn.textContent = "确认创建";
+  }
+}
+
 /* ---------- 轮询 ---------- */
 loadBoard(false);
 _pollTimer = setInterval(function () {
   // 弹窗打开时暂停轮询，避免重绘打断输入
   if ($("start-mask").classList.contains("show")) return;
   if ($("markdone-mask").classList.contains("show")) return;
+  if ($("prep-mask").classList.contains("show")) return;
   loadBoard(false);
 }, 10000);
 </script>

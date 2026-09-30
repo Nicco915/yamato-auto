@@ -20,12 +20,21 @@ def export_node(state: AgentState) -> dict:
     out_path = state.get("final_output_path")
     batch_id = state.get("batch_id") or "unknown"
 
+    # 失败工厂计数（提取失败告警闭环 §3.2 配套）。
+    # 口径：downstream_requirements 全集 − factory_outputs 快照（仅 Approved 工厂
+    # 进快照）。差集 = 提取失败（deferred 耗尽/占位挂起/被跳过）+ 人工驳回/跳过
+    # ——state 无独立的「最终失败」字段，差集是最接近的可得口径，故注释留痕。
+    requirements = state.get("downstream_requirements") or {}
+    factory_outputs = state.get("factory_outputs") or {}
+    factories_failed = len(set(requirements) - set(factory_outputs))
+
     # 单批次摘要
     batch_summary = {
         "exported_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
         "downstream_file": state.get("downstream_file_path"),
         "final_output_path": out_path,
-        "factories_processed": list((state.get("downstream_requirements") or {}).keys()),
+        "factories_processed": list(requirements.keys()),
+        "factories_failed": factories_failed,
         "validation_status": state.get("validation_status"),
     }
 

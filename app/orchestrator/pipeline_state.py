@@ -108,6 +108,16 @@ def _extract_phase(thread_id: str) -> dict[str, Any] | None:
     pending = list(values.get("pending_factories") or [])
     done = list((values.get("factory_outputs") or {}).keys())
 
+    # 失败工厂计数（提取失败告警闭环 §3.2）：口径与 export_node 一致
+    # （downstream_requirements 全集 − factory_outputs 快照）。只在图跑完
+    # （next 为空）时有意义——运行中/挂起中差集只是「还没轮到」，不能算失败
+    requirements = values.get("downstream_requirements") or {}
+    total_set = set(requirements.keys())
+    factory_filter = values.get("factory_filter")
+    if factory_filter:
+        total_set &= set(factory_filter)
+    factories_failed = len(total_set - set(done)) if not next_nodes else 0
+
     return {
         "phase": phase,
         "current_node": current_node,
@@ -115,6 +125,7 @@ def _extract_phase(thread_id: str) -> dict[str, Any] | None:
         "current_factory": current_factory,
         "pending_factories": pending,
         "done_factories": done,
+        "factories_failed": factories_failed,
         "final_output_path": values.get("final_output_path"),
     }
 
@@ -190,6 +201,11 @@ def get_pipeline_state(thread_id: str) -> dict[str, Any]:
 
     # ---- batches 表状态自愈：以 checkpoint 推导的阶段为权威源校正滞留的 status ----
     desired_status = _PHASE_TO_BATCH_STATUS.get(current_phase)
+    # 提取失败告警闭环（§3.2）：图跑完但有失败工厂时批次置
+    # completed_with_errors 而非 completed（看板仍归「已完成」档，橙色徽章警示）
+    if (desired_status == "completed" and extract
+            and (extract.get("factories_failed") or 0) > 0):
+        desired_status = "completed_with_errors"
     if desired_status:
         if batch is None:
             # 无 batches 行（旧批次/手动建批）也合成最小信息，让状态栏按钮可用

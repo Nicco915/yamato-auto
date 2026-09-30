@@ -158,8 +158,13 @@ def _ensure_three_columns(ws) -> None:
                 list(NEW_COL_NAMES), INSERT_AFTER_COL)
 
 
-def _write_excel(state: AgentState, out_path: Path) -> int:
-    """按行号精准写回 中文品名/净重/毛重 单元格，返回写入的行数。"""
+def _write_excel(state: AgentState, out_path: Path) -> tuple[int, int]:
+    """按行号精准写回 中文品名/净重/毛重 单元格。
+
+    返回 (写入的行数, 跳过的占位行数)：无有效单重且无中文品名的条目
+    （提取失败占位/Error 项）逐条记 warning 并计数，供导出摘要统计
+    （提取失败告警闭环 §1.5）。
+    """
     settings = get_settings()
     cur = state.get("current_factory_data") or {}
     factory = cur.get("factory_name")
@@ -180,13 +185,20 @@ def _write_excel(state: AgentState, out_path: Path) -> int:
 
     written = 0
     skipped_mx = 0
+    skipped_placeholder = 0
     for item in cur.get("calculated_items") or []:
         calc = item.get("calculation") or {}
         unit_net = calc.get("calculated_unit_net")
         unit_gross = calc.get("calculated_unit_gross")
         name_cn = item.get("name_cn") or (item.get("db_record") or {}).get("name_cn")
         if unit_net is None and unit_gross is None and not name_cn:
-            continue  # Error 项无有效单重，留给人工线下处理
+            # Error 项/占位数据无有效单重，留给人工线下处理——不再静默跳过
+            skipped_placeholder += 1
+            logger.warning(
+                "[Node6] 跳过占位行：工厂「%s」SKU「%s」无有效单重且无中文品名"
+                "（原因：%s）", factory, item.get("sku"),
+                item.get("source_file") or item.get("review_reason") or "无有效数据")
+            continue
         for excel_row in row_map.get(str(item.get("sku")), []):
             if col_po is not None and _is_mx_po(
                     ws.cell(row=excel_row, column=col_po).value):
@@ -207,6 +219,9 @@ def _write_excel(state: AgentState, out_path: Path) -> int:
             written += 1
     if skipped_mx:
         logger.info("[Node6] 跳过 MX 行写回 %d 行（人工已填值）", skipped_mx)
+    if skipped_placeholder:
+        logger.warning("[Node6] 工厂「%s」共跳过 %d 条占位行（未写入 Excel）",
+                       factory, skipped_placeholder)
     # 落盘前可写探测：让 Excel 独占锁导致的失败尽早冒泡，避免做完耗时写操作才报错
     _probe_writable(out_path)
     try:
@@ -215,7 +230,7 @@ def _write_excel(state: AgentState, out_path: Path) -> int:
         if _is_file_lock_error(e):
             raise RuntimeError(_format_file_busy_msg(out_path)) from e
         raise
-    return written
+    return written, skipped_placeholder
 
 
 def clear_sku_rows(state: AgentState, out_path: Path, skus: list[str]) -> int:
@@ -383,6 +398,12 @@ def _upsert_db(state: AgentState) -> tuple[int, int]:
             calc = item.get("calculation") or {}
             unit_net = calc.get("calculated_unit_net")
             unit_gross = calc.get("calculated_unit_gross")
+            if unit_net is None and unit_gross is None:
+                # writer 防线：净重/毛重全 None 的 SKU（提取失败占位数据）
+                # 不 INSERT/UPDATE 主库，堵主库污染
+                logger.warning("[Node6] 占位数据不入主库：工厂「%s」SKU「%s」"
+                               "净重/毛重全空，跳过落库", factory_name, sku)
+                continue
 
             record = session.scalar(
                 select(FactorySKU).where(
@@ -460,12 +481,15 @@ def writer(state: AgentState) -> dict:
         return {}
 
     out_path = _ensure_output_copy(state)
-    written = _write_excel(state, out_path)
+    written, skipped_placeholder = _write_excel(state, out_path)
     inserted, updated = _upsert_db(state)
 
-    logger.info("[Node6] 工厂「%s」：写入 %d 行 Excel；"
-                "落库 INSERT %d / UPDATE %d", factory, written, inserted, updated)
+    logger.info("[Node6] 工厂「%s」：写入 %d 行 Excel（跳过占位 %d 条）；"
+                "落库 INSERT %d / UPDATE %d",
+                factory, written, skipped_placeholder, inserted, updated)
 
+    # 占位行跳过计数随快照入 factory_outputs/state，供 Node7 摘要统计
+    cur["skipped_placeholder_rows"] = skipped_placeholder
     factory_outputs = state.get("factory_outputs") or {}
     # 存完整 current_factory_data 快照（reopen 时全文恢复，与首次审核字段一致）；
     # 旧格式列表（仅 calculated_items）由 reopen 层兼容读取

@@ -222,6 +222,12 @@ class WatchStartRequest(BaseModel):
     downstream_file_path: Optional[str] = None  # 多个装箱单时由人工选定
 
 
+class WatchPrepareFoldersRequest(BaseModel):
+    """看板：按装箱单工厂名单预建缺失的工厂文件夹（确认动作由看板弹窗承担）。"""
+    folder_name: str
+    downstream_file_path: Optional[str] = None  # 多个装箱单时由人工选定
+
+
 # ---------- 路由 ----------
 
 @app.post("/api/v1/orders/process")
@@ -379,6 +385,41 @@ async def watch_start(request: WatchStartRequest):
         raise HTTPException(status_code=404, detail=str(e)) from e
     except FileExistsError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@app.get("/api/v1/watch/folder-plan")
+async def watch_folder_plan(folder_name: str,
+                            downstream_file_path: Optional[str] = None):
+    """预建工厂文件夹预览（只读）：装箱单工厂名单 vs 上游现有子目录 diff。
+
+    多个装箱单候选且未指定时返回 {"need_choice": true, "downstream_candidates":
+    [...]}，前端让用户选择后带 downstream_file_path 重调。
+    """
+    from app.orchestrator import board
+    try:
+        return await asyncio.to_thread(
+            board.folder_plan, folder_name, downstream_file_path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@app.post("/api/v1/watch/prepare-folders")
+async def watch_prepare_folders(request: WatchPrepareFoldersRequest):
+    """预建工厂文件夹（写）：按预览 missing 清单批量 mkdir，幂等。
+
+    确认门由看板确认弹窗承担（一次一确认）；新建空文件夹不触发提取，
+    操作员放入单据后再启动批次。
+    """
+    from app.orchestrator import board
+    try:
+        return await asyncio.to_thread(
+            board.prepare_folders, request.folder_name, request.downstream_file_path)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 

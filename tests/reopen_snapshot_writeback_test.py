@@ -90,7 +90,8 @@ def patched(monkeypatch):
     """打桩 writer 三件套 + _write_audit，返回可控的 fake graph 工厂。"""
     monkeypatch.setattr(writer_mod, "_ensure_output_copy",
                         lambda state: TMP / "out.xlsx")
-    monkeypatch.setattr(writer_mod, "_write_excel", lambda state, path: 3)
+    # 提取失败告警闭环（T2）：_write_excel 新契约为 (written, skipped_placeholder)
+    monkeypatch.setattr(writer_mod, "_write_excel", lambda state, path: (3, 0))
     monkeypatch.setattr(writer_mod, "_upsert_db", lambda state: (0, 0))
     monkeypatch.setattr(service, "_write_audit", lambda *a, **k: None)
 

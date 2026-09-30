@@ -111,6 +111,7 @@ var STATUS_MAP = {
   pending_review: ["待审核", "b-red"],
   running:        ["进行中", "b-orange"],
   completed:      ["已完成", "b-green"],
+  completed_with_errors: ["部分失败", "b-orange"],
   unknown:        ["未知", "b-gray"],
   error:          ["异常", "b-gray"]
 };
@@ -118,7 +119,8 @@ var ROLE_MAP = {
   current: ["当前", "b-blue"],
   pending: ["待处理", "b-gray"],
   done:    ["已完成", "b-green"],
-  skipped: ["已跳过", "b-gray"]
+  skipped: ["已跳过", "b-gray"],
+  failed:  ["提取失败待补录", "b-red"]
 };
 var SESS_STATUS_MAP = {
   waiting_pl: "等待箱单",
@@ -391,12 +393,24 @@ function renderUsage(d) {
   var failed = (u.failed_calls != null) ? u.failed_calls : 0;
   var tokens = (u.total_tokens != null) ? u.total_tokens : 0;
   var note = u.note || "进程内累计，重启清零";
+  var fbk = u.failed_by_kind || {};
+  var fatalN = fbk.fatal || 0;
+  var extra = "";
+  // 失败次数旁透出最近失败原因（截断 80 字，title 悬停看完整）
+  if (failed > 0 && u.last_error) {
+    var le = String(u.last_error);
+    extra += '<div class="note c-red" title="' + _esc(le) + '">最近失败：' +
+      _esc(le.length > 80 ? le.slice(0, 80) + "…" : le) + "</div>";
+  }
+  if (fatalN > 0) {
+    extra += '<div class="note c-red"><b>含致命错误（模型权限/认证），请检查百炼配置</b></div>';
+  }
   return '<div class="card lcard"><h3>LLM 用量</h3>' +
     '<div class="usage-row">' +
     '<div><div class="usage-num">' + _esc(calls) + '</div><div class="usage-lbl">调用次数</div></div>' +
     '<div><div class="usage-num' + (failed > 0 ? " bad" : "") + '">' + _esc(failed) + '</div><div class="usage-lbl">失败次数</div></div>' +
     '<div><div class="usage-num">' + _esc(tokens) + '</div><div class="usage-lbl">累计 Tokens</div></div>' +
-    "</div>" +
+    "</div>" + extra +
     '<div class="note">' + _esc(note) + "</div></div>";
 }
 
@@ -491,7 +505,9 @@ function renderFactories(d) {
       sessBadge = badge(SESS_STATUS_MAP[ss] || ss, "b-gray");
     }
     var reopenLink = "";
-    if (f.role === "done" && threadId) {
+    // can_reopen === false：role=done 但无 factory_outputs 快照（老批次/历史
+    // 数据），不渲染「重新打开」，堵 reopen 404
+    if (f.role === "done" && threadId && f.can_reopen !== false) {
       reopenLink = '<a class="btn btn-sm" href="/review?thread_id=' +
         encodeURIComponent(threadId) + '&factory=' + encodeURIComponent(fname) +
         '" style="margin-left:8px">重新打开</a>';

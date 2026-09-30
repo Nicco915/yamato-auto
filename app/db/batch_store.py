@@ -150,7 +150,7 @@ def update_status(
     *,
     final_output_path: str | None = None,
 ) -> bool:
-    """更新 batch 状态；若 status 为 completed 则自动填充 completed_at。
+    """更新 batch 状态；若 status 为 completed/completed_with_errors 则自动填充 completed_at。
 
     非 error 状态时清空 error_message/error_at（恢复后不留旧错误）。
     """
@@ -164,8 +164,8 @@ def update_status(
             row.updated_at = datetime.utcnow()
             if final_output_path is not None:
                 row.final_output_path = final_output_path
-            if status == "completed":
-                row.completed_at = row.updated_at
+            if status in ("completed", "completed_with_errors"):
+                row.completed_at = row.completed_at or row.updated_at
             if status != "error":
                 row.error_message = None
                 row.error_at = None

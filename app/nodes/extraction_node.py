@@ -46,10 +46,15 @@ _session_import_error: Exception | None = None
 if not get_settings().extraction_mock:
     try:
         from app.extraction import session as _sm
+        from app.extraction.llm_client import FatalLLMError
 
         _session_mod = _sm
     except ImportError as e:  # 提取线尚未就绪时兜底
         _session_import_error = e
+
+if "FatalLLMError" not in globals():
+    class FatalLLMError(Exception):  # noqa: N818
+        """提取线 import 失败时的兜底类型（不会被抛出，仅供 except 子句求值）。"""
 
 # 与 extraction.agent 一致的垃圾文件过滤
 IGNORE_NAMES = {".DS_Store", "Thumbs.db"}
@@ -302,6 +307,11 @@ def extraction_node(state: AgentState) -> dict:
 
     try:
         session = _run_factory_session(batch_id, folder_path, factory_name, expected_skus)
+    except FatalLLMError:
+        # 批次熔断：LLM 致命错误（403/401 账号级，重试无意义）不生成占位数据，
+        # 直接上抛终止图——由 service.run_until_interrupt 异常出口 mark_error 落状态
+        logger.error("[Node3] 工厂「%s」LLM 致命错误，熔断批次", factory_name)
+        raise
     except Exception as e:  # 提取异常不中断流转，转人工兜底
         logger.exception("[Node3] 提取引擎异常：%s，生成人工补录占位数据", e)
         cur["extracted_items"] = _placeholder_items(expected_skus, f"extraction_error: {e}")
