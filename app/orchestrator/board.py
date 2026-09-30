@@ -16,10 +16,12 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import sqlite3
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +30,10 @@ from app.db import batch_store
 from app.orchestrator import discovery
 
 logger = logging.getLogger(__name__)
+
+# running 无 checkpoint 的宽容期（秒）：覆盖正常启动到首个 checkpoint 的
+# 耗时 + 跨进程竞态缓冲；超过此期且后台线程已死才按僵尸行标 error
+STALE_RUNNING_SECONDS = 600
 
 
 def _has_checkpoint(thread_id: str) -> bool:
@@ -89,6 +95,34 @@ def board_state() -> dict[str, Any]:
         rec = matched.get(child.name)
         if rec is not None:
             rec["_has_checkpoint"] = _has_checkpoint(rec["thread_id"])
+        if (rec is not None and rec.get("status") == "running"
+                and rec.get("_has_checkpoint") is False):
+            # 僵尸行自愈：running 但无 checkpoint——后台启动线程已死且
+            # 行龄超宽容期，说明服务重启/线程异常退出，标 error 留信息
+            alive = any(
+                t.name == f"board-start-{rec['thread_id']}" and t.is_alive()
+                for t in threading.enumerate())
+            if not alive:
+                stale = True
+                updated_raw = rec.get("updated_at")
+                try:
+                    updated = datetime.fromisoformat(updated_raw)
+                    age = (datetime.utcnow() - updated).total_seconds()
+                    stale = age >= STALE_RUNNING_SECONDS
+                except (TypeError, ValueError):
+                    stale = True  # 解析失败视为超龄，宁可标错
+                if stale and batch_store.mark_error(
+                        rec["thread_id"],
+                        "任务异常中断：服务可能重启或后台线程已退出，"
+                        "可退回未执行后重新启动"):
+                    logger.info(
+                        "看板僵尸行自愈 | thread_id=%s | 标为 error",
+                        rec["thread_id"])
+                    # 重新取行以带出 error_message/error_at，并保持
+                    # matched 引用一致；_has_checkpoint 是本地附加键需补回
+                    rec = batch_store.get_batch(rec["thread_id"]) or rec
+                    rec["_has_checkpoint"] = False
+                    matched[child.name] = rec
         if rec is not None and rec["_has_checkpoint"]:
             # 以 checkpoint 为权威源取执行态：非 completed 行顺带自愈回写
             # 滞留状态；所有活批次透传卡片操作字段（输出路径/分票信息）。
@@ -134,6 +168,9 @@ def board_state() -> dict[str, Any]:
                 "final_output_path": rec.get("_final_output_path"),
                 "split_thread_id": rec.get("_split_thread_id"),
                 "declarations_ready": rec.get("_declarations_ready", False),
+                "error_message": rec.get("error_message"),
+                "error_at": rec.get("error_at"),
+                "updated_at": rec.get("updated_at"),
             })
         else:
             downstream = discovery.discover_downstream_files(child)
@@ -268,9 +305,9 @@ def start_from_board(
             )
             logger.info("看板启动批次完成首段 | thread_id=%s | status=%s",
                         tid, result.get("status"))
-        except Exception:  # noqa: BLE001 后台线程异常不抛出，落状态 + 日志
+        except Exception as e:  # noqa: BLE001 后台线程异常不抛出，落状态 + 日志
             logger.exception("看板启动批次失败 | thread_id=%s", tid)
-            batch_store.update_status(tid, "error")
+            batch_store.mark_error(tid, f"{type(e).__name__}: {e}"[:500])
 
     threading.Thread(target=_run, daemon=True,
                      name=f"board-start-{tid}").start()
@@ -326,9 +363,31 @@ def reset_to_todo(folder_name: str) -> dict[str, Any]:
 
     from app.api import service
 
-    # 合成行：无 checkpoint 的纯标记，删 batches 行即完成回退
+    # 合成行：无 checkpoint 的纯标记/残留行，删 batches 行即完成回退；
+    # 删前留一条 batch_reset 审计痕（留痕失败只 warning 不阻塞）
     if not service.get_order_state(tid).get("exists"):
         batch_store.delete_batch(tid)
+        try:
+            from app.db.models import ReviewAudit
+            from app.db.session import get_session
+            with get_session() as session:
+                session.add(ReviewAudit(
+                    thread_id=tid,
+                    factory_name=None,
+                    approved=False,
+                    edited_count=0,
+                    changes_json=json.dumps(
+                        [{"folder_name": folder_name,
+                          "error_message": rec.get("error_message")}],
+                        ensure_ascii=False),
+                    new_skus_json="[]",
+                    result_status="batch_reset",
+                ))
+                session.commit()
+        except Exception as e:  # noqa: BLE001 与 delete_batch 同哲学：留痕失败不阻塞
+            logger.warning("⚠️⚠️ [审计落库失败] thread=%s "
+                           "批次已退回，但 batch_reset 留痕写入失败：%s: %s",
+                           tid, type(e).__name__, e)
         logger.info("看板退回未执行（合成行） | folder=%s | thread_id=%s",
                     folder_name, tid)
         return {"ok": True, "thread_id": tid,

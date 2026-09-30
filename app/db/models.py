@@ -268,6 +268,10 @@ class Batch(Base):
     upstream_root: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     status: Mapped[str | None] = mapped_column(String(50), nullable=True, default="unknown")
     final_output_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # 异常留痕：失败原因摘要（截断 500 字符，监控看板异常卡片直接展示）
+    error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # 异常发生时间（与 error_message 成对出现，恢复后一并清空）
+    error_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
