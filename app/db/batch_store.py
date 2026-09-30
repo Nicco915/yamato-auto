@@ -60,6 +60,7 @@ def ensure_error_columns() -> None:
 
 def get_batch(thread_id: str) -> dict[str, Any] | None:
     """按 thread_id 查询 batch 记录；不存在返回 None。"""
+    ensure_error_columns()  # 读路径也要补列：老库缺列时 SELECT 直接报 no such column
     try:
         with get_session() as s:
             row = s.get(Batch, thread_id)
@@ -78,6 +79,7 @@ def list_batches(
     limit: int = 1000,
 ) -> list[dict[str, Any]]:
     """列出 batch 记录，可选按状态/监控目录过滤。"""
+    ensure_error_columns()  # 读路径也要补列：老库缺列时 SELECT 直接报 no such column
     try:
         with get_session() as s:
             q = s.query(Batch)

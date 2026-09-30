@@ -276,3 +276,40 @@ def test_update_status_clears_error_fields(watch):
     assert row["status"] == "running"
     assert row["error_message"] is None
     assert row["error_at"] is None
+
+
+# ---------- 7. 老库读路径自动补列（生产事故回归） ----------
+
+def test_list_batches_auto_migrates_old_db():
+    """老库（batches 无 error_message/error_at 列）调 list_batches 必须自动补列。
+
+    生产事故回归（2026-09-30）：ensure_error_columns 最初只挂在写路径，
+    部署后首次 board_state 是读——SELECT 带新列打老库报 no such column，
+    list_batches 静默返回 []，全部已完成批次在看板错档为「未执行」。
+    """
+    from sqlalchemy import text
+
+    from app.db.session import get_engine
+
+    batch_store.upsert_batch("old-lib-t1", status="completed")
+
+    # 把临时库降级为「老库」：DROP 新列 + 重置迁移标志（模拟新进程启动）
+    engine = get_engine()
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE batches DROP COLUMN error_message"))
+        conn.execute(text("ALTER TABLE batches DROP COLUMN error_at"))
+        conn.commit()
+    batch_store._columns_ensured = False
+
+    try:
+        rows = batch_store.list_batches()  # 读路径应自动补列并正常返回
+        assert any(r["thread_id"] == "old-lib-t1" for r in rows)
+        row = batch_store.get_batch("old-lib-t1")  # get_batch 读路径同理
+        assert row is not None and row["status"] == "completed"
+
+        with engine.connect() as conn:
+            cols = {r[1] for r in conn.execute(
+                text("PRAGMA table_info(batches)")).fetchall()}
+        assert {"error_message", "error_at"} <= cols
+    finally:
+        batch_store.delete_batch("old-lib-t1")
