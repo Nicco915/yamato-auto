@@ -228,6 +228,51 @@ async function openWithExcel(btn) {
   }
 }
 
+/* 导出透视：调批次透视导出端点，成功后提示（含警告明细） */
+async function exportPivot(btn) {
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = "导出中…";
+  try {
+    var r = await api("/api/v1/batches/" + encodeURIComponent(threadId) + "/export-pivot",
+                      { method: "POST" });
+    var warns = (r && r.warnings) || [];
+    var msg = "透视表已导出";
+    if (warns.length) msg += "（" + warns.length + " 条警告：" + warns.join("；") + "）";
+    showToast(msg);
+  } catch (e) {
+    if (e && e.status === 409) {
+      showToast("该批次还没有装箱单，请先完成提取");
+    } else {
+      showToast("导出透视失败：" + (e && e.message ? e.message : e));
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "导出透视";
+  }
+}
+
+/* 打开透视目录（系统文件管理器；目录不存在时后端 404 给中文引导） */
+async function openPivotDir(btn) {
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.textContent = "打开中…";
+  try {
+    var data = await api("/api/v1/batches/" + encodeURIComponent(threadId) + "/pivot/open",
+                         { method: "POST" });
+    if (data && data.ok) {
+      showToast("已打开透视目录");
+    } else {
+      showToast("打开响应异常，请检查目录是否已正常打开");
+    }
+  } catch (e) {
+    showToast("打开透视目录失败：" + (e && e.message ? e.message : e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "打开透视目录";
+  }
+}
+
 /* 打开报关单目录：分票产出是一目录多份文件，用系统文件管理器打开目录 */
 async function openSplitDir(btn) {
   if (!btn || btn.disabled) return;          // 防连点
@@ -304,6 +349,10 @@ function renderHead(d) {
     btns += '<a class="btn lbtn primary" href="/review?thread_id=' + encodeURIComponent(threadId) + '">去审核</a>';
   }
   btns += '<a class="btn lbtn" href="/chat?thread_id=' + encodeURIComponent(threadId) + '">Agent 对话</a>';
+
+  // 透视导出：装箱单随时可能变动（补充工厂/手动修改），导出与打开目录随时可用
+  btns += '<button class="btn lbtn" onclick="exportPivot(this)">导出透视</button>';
+  btns += '<button class="btn lbtn" onclick="openPivotDir(this)">打开透视目录</button>';
 
   // 补充工厂按钮：completed / pending_review 可点；running 禁用；其他状态不显示
   if (d.status === "completed" || d.status === "pending_review") {

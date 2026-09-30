@@ -347,6 +347,50 @@ async def open_batch_output(thread_id: str, request: Request):
     return {"ok": True, "path": str(path)}
 
 
+@router.post("/api/v1/batches/{thread_id}/pivot/open")
+async def open_pivot_dir(thread_id: str, request: Request):
+    """本机文件管理器打开该批次的透视导出目录（pivot/）。
+
+    与打开单个 Excel 不同：透视文件允许反复覆盖导出，用系统文件管理器
+    打开目录便于用户自取（macOS Finder / Windows 资源管理器）。
+
+    安全措施（与批次输出 /open、分票 /open 端点同一套）：
+    - 必须 POST：有副作用（启动本地程序），不允许 GET 预取/重放；
+    - 本机闸门：request.client.host 必须是 127.0.0.1 / ::1；
+    - 输出目录白名单：resolve 后必须落在 settings.output_dir_abs 之下
+      （thread_id 来自 URL 路径段，防 ../ 穿越）。
+
+    异常：403 非本机/越界；404 目录不存在（还没导出透视）；503 OpenFileError。
+    """
+    client = request.client
+    if client is None or client.host not in _LOCALHOST_IPS:
+        raise HTTPException(status_code=403, detail="该操作只能从本机浏览器发起")
+
+    try:
+        out_dir = batch_pivot_dir(thread_id).resolve()
+    except OSError as e:
+        raise HTTPException(status_code=404, detail=f"输出路径无法解析: {e}") from e
+
+    output_root = Path(get_settings().output_dir_abs).resolve()
+    try:
+        out_dir.relative_to(output_root)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=403, detail=f"输出路径超出允许目录范围: {out_dir}"
+        ) from e
+
+    if not out_dir.is_dir():
+        raise HTTPException(
+            status_code=404,
+            detail="透视目录不存在：请先点击「导出透视」生成文件",
+        )
+    try:
+        await asyncio.to_thread(open_with_default_app, out_dir)
+    except OpenFileError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    return {"ok": True, "path": str(out_dir)}
+
+
 @router.delete("/api/v1/batches/{thread_id}")
 async def delete_batch(thread_id: str):
     """删除过往批次：不存在 404，进行中 409；review_audits 留痕 batch_deleted。"""

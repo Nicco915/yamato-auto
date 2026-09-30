@@ -388,6 +388,46 @@ def open_declarations_dir(split_thread_id: str, request: Request):
     return {"ok": True, "path": str(out_dir)}
 
 
+@router.post("/{split_thread_id}/stats/open")
+def open_stats_dir(split_thread_id: str, request: Request):
+    """本机文件管理器打开该分票任务的统计导出目录（stats/）。
+
+    与 /open（报关单目录）同一套安全措施：POST-only、本机 IP 闸门、
+    输出目录白名单（resolve 后必须在 settings.output_dir_abs 之下）。
+
+    异常：403 非本机/越界；404 目录不存在（还没导出统计表）；
+    503 OpenFileError（打开命令失败）。
+    """
+    client = request.client
+    if client is None or client.host not in _LOCALHOST_IPS:
+        raise HTTPException(status_code=403, detail="该操作只能从本机浏览器发起")
+
+    batch_id = split_thread_id.removeprefix("split-")
+    try:
+        out_dir = batch_stats_dir(batch_id).resolve()
+    except OSError as e:
+        raise HTTPException(status_code=404, detail=f"输出路径无法解析: {e}") from e
+
+    output_root = Path(get_settings().output_dir_abs).resolve()
+    try:
+        out_dir.relative_to(output_root)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=403, detail=f"输出路径超出允许目录范围: {out_dir}"
+        ) from e
+
+    if not out_dir.is_dir():
+        raise HTTPException(
+            status_code=404,
+            detail="统计目录不存在：请先点击「导出统计 Excel」生成文件",
+        )
+    try:
+        open_with_default_app(out_dir)
+    except OpenFileError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    return {"ok": True, "path": str(out_dir)}
+
+
 @router.get("/{split_thread_id}/files")
 def list_files(split_thread_id: str):
     """列出该任务输出目录下的 xlsx 文件（文件名 + 大小 + 修改时间）。"""

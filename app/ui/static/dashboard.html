@@ -393,6 +393,10 @@ function rowActions(b) {
     '<button class="btn btn-sm" onclick="exportPivot(' +
     esc(JSON.stringify(String(b.thread_id))) +
     ', this)">导出透视</button>';
+  html +=
+    '<button class="btn btn-sm" onclick="openPivotDir(' +
+    esc(JSON.stringify(String(b.thread_id))) +
+    ', this)">打开透视目录</button>';
   if (_pivotExported[b.thread_id]) {
     html += '<a class="btn btn-sm" href="/api/v1/batches/' + id + '/pivot/download">下载</a>';
   }
@@ -494,6 +498,28 @@ async function exportPivot(threadId, btn) {
     if (btn) {
       btn.disabled = false;
       btn.textContent = "导出透视";
+    }
+  }
+}
+
+/* 打开透视目录（系统文件管理器；目录不存在时后端 404 给中文引导） */
+async function openPivotDir(threadId, btn) {
+  if (btn && btn.disabled) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = "打开中…";
+  }
+  try {
+    const r = await api("/api/v1/batches/" + encodeURIComponent(threadId) + "/pivot/open", {
+      method: "POST",
+    });
+    if (r && r.ok) toast("已打开透视目录");
+  } catch (e) {
+    toast("打开透视目录失败：" + e.message, 4000);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "打开透视目录";
     }
   }
 }

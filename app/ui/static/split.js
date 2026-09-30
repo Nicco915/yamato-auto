@@ -176,6 +176,25 @@ async function exportStats() {
     }
 }
 
+async function openStatsDir() {
+    var btn = document.getElementById('btn-open-stats');
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = '打开中…';
+    try {
+        var data = await api('/api/v1/split/' + encodeURIComponent(splitThreadId) + '/stats/open', {
+            method: 'POST'
+        });
+        if (data && data.ok) toast('已打开统计目录');
+    } catch(e) {
+        if (e.status === 404) toast('统计目录不存在：请先点击「导出统计 Excel」生成文件', 4000);
+        else toast('打开统计目录失败：' + e.message, 4000);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '打开统计目录';
+    }
+}
+
 async function resetSplitAction() {
     var btn = document.getElementById('btn-reset');
     btn.disabled = true;
