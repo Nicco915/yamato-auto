@@ -10,6 +10,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 APP_ROOT = Path(__file__).resolve().parent.parent
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
@@ -25,6 +27,23 @@ from app.orchestrator.pipeline_state import _is_stage_done  # noqa: E402
 from _test_isolation import isolate_to_tmp  # noqa: E402
 
 TMP = isolate_to_tmp("yamato_pipeline_state_test_")
+
+
+@pytest.fixture(autouse=True)
+def _no_auto_backup(monkeypatch):
+    """结案自动备份属阶段二行为，测试隔离缺口 2026-10-12 补齐：
+    update_status 转 completed（含 pipeline_state 自愈回写）会延迟
+    import app.orchestrator.backup 并调 trigger_async 起 backup-worker
+    线程（持全局快照锁），全量混跑时与 tests/test_backup.py 的同步
+    快照用例撞锁（已有备份任务进行中）。这里统一打成无副作用空函数
+    （仅记录调用）；batch_store 是函数内延迟 import，monkeypatch 必须
+    打在 app.orchestrator.backup 模块属性上才有效。"""
+    from app.orchestrator import backup
+    calls: list[str] = []
+    monkeypatch.setattr(
+        backup, "trigger_async",
+        lambda reason, **kw: calls.append(reason) or True)
+    yield
 
 
 def test_is_stage_done_basic():

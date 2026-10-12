@@ -252,6 +252,40 @@ error_message/error_at，看板异常档直出摘要；「僵尸行」自愈—�
 无 checkpoint、线程已死且超过宽容期，读时自动标异常（已拍板「自动标异常、
 手动退回」，绝不自动标完成）。
 
+## 数据备份与恢复
+
+**备份什么**：每份快照落 `app/app/data/backups/{YYYYMMDD_HHMMSS}/`，内容为
+master.db 与 checkpoints.db（走 sqlite3 在线备份 API，WAL 运行中安全，
+产出已合并 wal 的一致快照，含快照侧完整性校验）、`kb_extension.json`、
+`output/` 全量，外加 `external_paths.json`（外部路径当前生效值 + 存在性，
+灾难恢复核对用）与 `manifest.json`（原因/耗时/逐文件大小/`env_keys`）。
+**不备份什么**：`.env`（防密钥随快照外泄——manifest 只记快照时生效的
+**键名清单** `env_keys`，绝不记值；恢复时参照 `.env.example` 重建）、
+sessions 缓存、logs、`data/cache/`（含 excel_pdf）。
+
+**三个触发点**：① 服务启动时距上次快照超 12 小时自动异步备份（失败只
+warning 不阻断启动）；② 批次结案（`update_status` 转 completed）自动异步
+备份（completed_with_errors 不触发，60 秒节流防连环触发）；③ 看板页头
+「立即备份」按钮（确认弹窗充当确认门，对应 `POST /api/v1/backup`，进行中
+返回 409）。
+
+**存放与保留**：默认落 `app/app/data/backups/`（已被 .gitignore 忽略），
+保留最近 20 份（只按时间戳白名单目录计数/删除，其他目录不动；既有旧手工
+快照同格式自然计入配额）。可用环境变量 `BACKUP_DIR` 覆盖备份根（Windows
+部署写绝对路径如 `D:\yamato-backups`）。**警告**：不要把 BACKUP_DIR 指到
+git 跟踪目录或云同步目录（iCloud/OneDrive/坚果云），库内容与输出单据会
+被同步外泄。
+
+**恢复**：先停止 uvicorn（关闭 start.bat 窗口），再运行
+`python3 scripts/restore_backup.py`——交互式列出快照（时间/大小/文件清单，
+兼容无 manifest 的旧快照），选序号、输 `yes` 确认后执行：恢复前自动做一份
+兜底快照，随后删目标库 `-wal`/`-shm` 伴生文件、覆盖两 DB 与
+kb_extension.json、追加式还原 output/（不删现有多余文件），完成后提示重启
+并参照 `.env.example` 重建 .env（脚本永不自动还原 .env）。
+
+**手动 CLI 备份**：`python3 scripts/backup_master.py`（已委托
+orchestrator.backup，与三个触发点同一套快照逻辑）。
+
 ## 提取引擎接口契约
 
 `app/extraction/pipeline.py` 对外暴露：

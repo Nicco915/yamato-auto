@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     master_db_path: str = "app/data/master.db"
     checkpoint_db_path: str = "app/data/checkpoints.db"
 
+    # ----- 备份 -----
+    # 备份根目录：空 = master.db 同级 backups/（即 app/app/data/backups/）；
+    # env BACKUP_DIR 可覆盖，Windows 部署写绝对路径如 D:\yamato-backups。
+    # 警告：勿指向 git 跟踪目录或云同步目录（iCloud/OneDrive/坚果云）——
+    # 快照内的业务数据（库内容、输出单据）会被同步外泄。
+    backup_dir: str = ""
+
     # ----- 业务路径 -----
     # 以下两项默认值是"当前生产数据所在位置"（macOS 开发现状），属业务数据位置，
     # 不要随意改默认值；Windows 部署时必须在 .env 中用环境变量覆盖这两项
@@ -135,6 +142,12 @@ class Settings(BaseSettings):
         return self.resolve(self.output_dir)
 
     @property
+    def backup_dir_abs(self) -> Path:
+        """备份根目录：默认 master.db 同级 backups/（app/app/data/backups/）。"""
+        return self.resolve(self.backup_dir) if self.backup_dir.strip() \
+            else self.master_db_abs.parent / "backups"
+
+    @property
     def alias_map_abs(self) -> Path:
         return self.resolve(self.alias_map_path)
 
@@ -195,6 +208,7 @@ def get_settings() -> Settings:
     s.master_db_abs.parent.mkdir(parents=True, exist_ok=True)
     s.checkpoint_db_abs.parent.mkdir(parents=True, exist_ok=True)
     s.output_dir_abs.mkdir(parents=True, exist_ok=True)
+    s.backup_dir_abs.mkdir(parents=True, exist_ok=True)
     return s
 
 

@@ -1,60 +1,30 @@
 #!/usr/bin/env python3
-"""master/checkpoint 数据库快照 + 完整性校验。
+"""数据库 + 配置 + 输出 全量快照 CLI（委托 orchestrator.backup）。
+
+2026-10-12 起委托 app.orchestrator.backup.create_snapshot（WAL 安全在线备份
++ 快照侧完整性校验 + 保留最近 20 份 + external_paths/manifest 两份清单），
+本脚本仅保留 CLI 入口与打印格式，避免两套备份逻辑并存漂移。
 
 用法（在 app/ 目录下）：
   python3 scripts/backup_master.py
 
 环境变量：
-  YAMATO_BACKUP_DIR  覆盖默认备份目录（默认 master.db 同级 backups/）
+  BACKUP_DIR  覆盖默认备份目录（默认 master.db 同级 backups/）
 """
-import os
-import shutil
-import sqlite3
 import sys
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.config import get_settings
-
-
-def _integrity_check(db_path: Path) -> None:
-    conn = sqlite3.connect(str(db_path))
-    try:
-        ok = conn.execute("PRAGMA integrity_check;").fetchone()[0]
-        if ok != "ok":
-            raise RuntimeError(f"{db_path.name} 完整性校验失败: {ok}")
-    finally:
-        conn.close()
+from app.orchestrator.backup import create_snapshot  # noqa: E402
 
 
 def snapshot() -> Path:
-    """为当前 master.db / checkpoints.db / alias_map.json / .env 创建时间戳快照。"""
-    settings = get_settings()
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    base_dir = Path(os.environ.get("YAMATO_BACKUP_DIR") or settings.master_db_abs.parent)
-    backup_dir = base_dir / "backups" / ts
-    backup_dir.mkdir(parents=True, exist_ok=True)
-
-    files = [
-        settings.master_db_abs,
-        settings.checkpoint_db_abs,
-        settings.alias_map_abs,
-        settings.resolve(".env"),
-    ]
-    copied = []
-    for src in files:
-        if src.exists():
-            dst = backup_dir / src.name
-            shutil.copy2(src, dst)
-            copied.append(src.name)
-            if src.suffix == ".db":
-                _integrity_check(dst)
-
-    print(f"备份完成: {backup_dir}")
-    print(f"  包含: {', '.join(copied)}")
-    return backup_dir
+    """创建时间戳快照并打印结果，返回快照目录。"""
+    result = create_snapshot("cli")
+    print(f"备份完成: {result['snapshot']}")
+    print(f"  包含: {', '.join(result['files'])}")
+    return Path(result["snapshot"])
 
 
 def main() -> None:

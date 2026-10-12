@@ -54,6 +54,14 @@ async def lifespan(app: FastAPI):
         start_factory_watch()
     except Exception:  # noqa: BLE001
         logger.warning("缺资料文件夹监控启动失败", exc_info=True)
+    # 启动超期自动备份（2026-10-12 数据备份机制）：距上次快照 >12h 则异步
+    # 备份；失败只 warning 不阻断启动（与上方监控同哲学）；异步线程执行，
+    # output/ 较大时也不拖慢启动
+    try:
+        from app.orchestrator.backup import maybe_backup_on_startup
+        maybe_backup_on_startup()
+    except Exception:  # noqa: BLE001
+        logger.warning("启动时自动备份检查失败", exc_info=True)
     yield
     # 关停监控线程（置停止旗标；daemon 线程本身随进程消亡）
     try:
@@ -437,6 +445,22 @@ async def watch_prepare_folders(request: WatchPrepareFoldersRequest):
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@app.post("/api/v1/backup")
+async def backup_now():
+    """看板「立即备份」：同步执行快照（to_thread 不阻塞事件循环）。
+
+    确认门由看板确认弹窗承担（一次一确认）；返回快照路径/耗时/大小。
+    已有备份进行中 → 409。
+    """
+    from app.orchestrator import backup
+    try:
+        return await asyncio.to_thread(backup.create_snapshot, "manual")
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"备份失败: {e}") from e
 
 
 @app.post("/api/v1/batches/{thread_id}/advance")

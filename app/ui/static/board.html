@@ -43,6 +43,7 @@
     <span class="spacer"></span>
     <span class="refresh-note" id="refresh-note">每 10 秒自动刷新</span>
     <button class="btn btn-sm" id="refresh-btn" onclick="loadBoard(true)">刷新</button>
+    <button class="btn btn-sm" id="backup-btn" onclick="openBackupModal()">立即备份</button>
   </div>
   <div class="board-cols">
     <div class="board-col col-todo">
@@ -116,6 +117,19 @@
     <div class="modal-actions">
       <button class="btn" onclick="closePrepareModal()">取消</button>
       <button class="btn btn-primary" id="prep-confirm-btn" onclick="confirmPrepare()">确认创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- 立即备份确认弹窗（确认门：一次一确认；结果在弹窗内展示） -->
+<div id="backup-mask" class="modal-mask" onclick="if (event.target === this) closeBackupModal()">
+  <div class="modal start-modal">
+    <h3 id="backup-title">立即备份</h3>
+    <p class="hint">将备份数据库、配置与全部输出文件，耗时取决于输出目录大小。确认？</p>
+    <div class="field" id="backup-result" style="display:none"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeBackupModal()">取消</button>
+      <button class="btn btn-primary" id="backup-confirm-btn" onclick="confirmBackup()">确认备份</button>
     </div>
   </div>
 </div>
@@ -777,6 +791,64 @@ async function confirmPrepare() {
   }
 }
 
+/* ---------- 立即备份（确认门：弹窗确认 + 结果弹窗内展示） ---------- */
+var _backing = false;
+
+function openBackupModal() {
+  if (_backing) return;
+  var res = $("backup-result");
+  res.style.display = "none";
+  res.innerHTML = "";
+  var btn = $("backup-confirm-btn");
+  btn.disabled = false;
+  btn.textContent = "确认备份";
+  $("backup-mask").classList.add("show");
+}
+
+function closeBackupModal() {
+  $("backup-mask").classList.remove("show");
+}
+
+/* 大小文案：123.4 KB / 5.6 MB / 1.2 GB */
+function _fmtBytes(n) {
+  n = Number(n) || 0;
+  if (n >= 1024 * 1024 * 1024) return (n / 1024 / 1024 / 1024).toFixed(1) + " GB";
+  if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + " MB";
+  if (n >= 1024) return (n / 1024).toFixed(1) + " KB";
+  return n + " B";
+}
+
+async function confirmBackup() {
+  if (_backing) return;
+  _backing = true;
+  var btn = $("backup-confirm-btn");
+  var res = $("backup-result");
+  btn.disabled = true;
+  btn.textContent = "备份中…";
+  res.style.display = "none";
+  res.innerHTML = "";
+  try {
+    var r = await api("/api/v1/backup", { method: "POST" });
+    res.style.display = "";
+    res.innerHTML =
+      '<div style="font-size:13px;line-height:1.8;color:#15803d"><b>备份完成</b></div>' +
+      '<div style="font-size:12px;line-height:1.8">快照路径：' + esc(r.snapshot || "") + '<br>' +
+      '耗时：' + (r.elapsed_s != null ? r.elapsed_s : "-") + ' 秒 · 大小：' + _fmtBytes(r.size_bytes) + '</div>';
+    btn.textContent = "再次备份";
+    btn.disabled = false;
+    loadBoard(false);
+  } catch (e) {
+    res.style.display = "";
+    res.innerHTML = '<div style="font-size:13px;line-height:1.8;color:#b91c1c">' +
+      (e.status === 409 ? "已有备份任务进行中，请稍后再试" : "备份失败：" + esc(e.message)) +
+      '</div>';
+    btn.disabled = false;
+    btn.textContent = "确认备份";
+  } finally {
+    _backing = false;
+  }
+}
+
 /* ---------- 轮询 ---------- */
 loadBoard(false);
 _pollTimer = setInterval(function () {
@@ -784,6 +856,7 @@ _pollTimer = setInterval(function () {
   if ($("start-mask").classList.contains("show")) return;
   if ($("markdone-mask").classList.contains("show")) return;
   if ($("prep-mask").classList.contains("show")) return;
+  if ($("backup-mask").classList.contains("show")) return;
   loadBoard(false);
 }, 10000);
 </script>

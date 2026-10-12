@@ -57,6 +57,23 @@ from _test_isolation import isolate_to_tmp  # noqa: E402
 TMP = isolate_to_tmp("yamato_awaiting_test_")
 
 
+@pytest.fixture(autouse=True)
+def _no_auto_backup(monkeypatch):
+    """结案自动备份属阶段二行为，测试隔离缺口 2026-10-12 补齐：
+    update_status 转 completed 会延迟 import app.orchestrator.backup 并调
+    trigger_async 起 backup-worker 线程（持全局快照锁），全量混跑时与
+    tests/test_backup.py 的同步快照用例撞锁（已有备份任务进行中）。
+    这里统一打成无副作用空函数（仅记录调用）；batch_store 是函数内
+    延迟 import，monkeypatch 必须打在 app.orchestrator.backup 模块属性上。
+    """
+    from app.orchestrator import backup
+    calls: list[str] = []
+    monkeypatch.setattr(
+        backup, "trigger_async",
+        lambda reason, **kw: calls.append(reason) or True)
+    yield
+
+
 @pytest.fixture()
 def watch(tmp_path):
     """每个用例独立监控目录；结束后恢复 settings.watch_dir。"""

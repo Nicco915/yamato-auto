@@ -194,6 +194,8 @@ def update_status(
     """更新 batch 状态；若 status 为 completed/completed_with_errors 则自动填充 completed_at。
 
     非 error 状态时清空 error_message/error_at（恢复后不留旧错误）。
+    转 completed 时异步触发自动备份（2026-10-12 数据备份机制），
+    completed_with_errors 不触发；触发失败只记 warning，不影响返回 True。
     """
     ensure_error_columns()
     ensure_force_completed_column()
@@ -202,6 +204,7 @@ def update_status(
             row = s.get(Batch, thread_id)
             if row is None:
                 return False
+            old_status = row.status
             row.status = status
             row.updated_at = datetime.utcnow()
             if final_output_path is not None:
@@ -212,6 +215,14 @@ def update_status(
                 row.error_message = None
                 row.error_at = None
             s.commit()
+        if status == "completed" and old_status != "completed":
+            try:
+                from app.orchestrator import backup as _backup
+                _backup.trigger_async(f"batch_completed:{thread_id}")
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "结案自动备份触发失败 | thread_id=%s", thread_id,
+                    exc_info=True)
         return True
     except Exception as exc:  # noqa: BLE001
         logger.error("更新 batch %s 状态失败: %s", thread_id, exc)
