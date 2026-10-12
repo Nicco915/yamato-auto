@@ -403,6 +403,109 @@ def _sync_output_copy_rows(
         logger.info("[补充工厂] 已向输出副本同步 %d 行（%s）", synced, dst)
 
 
+def force_complete_batch(thread_id: str) -> dict[str, Any]:
+    """强制结案（2026-10-12 待补充状态）：待补充批次直接结案。
+
+    校验：批次存在且自愈后的权威状态为 awaiting_factories，否则 ValueError
+    （路由层转 400）。动作：batches.force_completed=1（持久标志，pipeline_state
+    自愈不得打回）+ status 置 completed（completed_at 自动填充），并向
+    review_audits 插一条 result_status="batch_force_completed" 留痕
+    （factory_name=None；留痕失败只 warning 不阻塞，与 _write_audit 同哲学）。
+
+    Returns:
+        {"ok": True, "status": "completed", "message": ...}
+
+    Raises:
+        ValueError: 批次不存在 / 当前状态不是待补充
+    """
+    tid = (thread_id or "").strip()
+    batch = batch_store.get_batch(tid)
+    if batch is None:
+        raise ValueError(f"批次不存在: {tid}")
+
+    # 权威状态以 pipeline_state 自愈结果为准（batches 表滞留旧值时先校正）
+    from app.orchestrator.pipeline_state import get_pipeline_state
+    ps = get_pipeline_state(tid)
+    current = ((ps.get("batch") or {}).get("status")) if ps.get("exists") else None
+    if current != "awaiting_factories":
+        raise ValueError(
+            f"批次当前状态为「{current or '未知'}」，仅「待补充」状态可强制结案")
+
+    if not batch_store.set_force_completed(tid):
+        raise ValueError(f"批次 {tid} 强制结案标志写入失败，请查看服务端日志")
+    batch_store.update_status(tid, "completed")
+
+    try:
+        with get_session() as session:
+            session.add(ReviewAudit(
+                thread_id=tid,
+                factory_name=None,
+                approved=False,
+                edited_count=0,
+                changes_json=json.dumps([{"force_complete": True}],
+                                        ensure_ascii=False),
+                new_skus_json="[]",
+                result_status="batch_force_completed",
+            ))
+            session.commit()
+    except Exception as e:  # noqa: BLE001 留痕失败不阻塞已完成的结案
+        logger.warning("⚠️⚠️ [审计落库失败] thread=%s "
+                       "批次已强制结案，但 batch_force_completed 留痕写入失败：%s: %s",
+                       tid, type(e).__name__, e)
+
+    logger.info("批次强制结案 | thread_id=%s", tid)
+    return {"ok": True, "status": "completed",
+            "message": "已强制结案：剩余缺资料工厂不再补齐"}
+
+
+def _auto_create_factory_folders(
+    upstream: Path,
+    factories: list[str],
+    *,
+    check_folder_match: bool,
+    overrides: dict[str, str] | None = None,
+) -> None:
+    """自动为缺资料工厂建空文件夹（2026-10-12 用户二次确认，调整 B）。
+
+    命名与看板手动「预建工厂文件夹」完全一致（factory_setup 共享 helper
+    canonical_folder_name / ensure_factory_folder）；幂等（exist_ok=True）、
+    逐个 info 日志、单个失败只 warning 不阻断主流程。CLAUDE.md 写操作
+    确认门不适用于此系统内部幂等动作（代码注释留档于 factory_setup）。
+
+    check_folder_match=True（补充工厂路径）：先与现有文件夹按 Node2 同口径
+    重匹配，有任何命中（含 fuzzy）都视为已有文件夹不建——只给完全未匹配
+    的工厂建，避免 fuzzy 命中的工厂被新建空文件夹抢走提取源。
+    False（建批路径）：调用方 prescan 已判定 unmatched，直接建。
+    """
+    if not factories:
+        return
+    if not upstream.is_dir():
+        logger.warning("自动建夹跳过：上游工厂目录不存在 %s", upstream)
+        return
+    to_create = list(factories)
+    if check_folder_match:
+        from app.factory_match import (
+            load_alias_map, load_folder_match_candidates, match_factory_folder)
+        try:
+            folders = [d.name for d in upstream.iterdir() if d.is_dir()]
+        except OSError as e:
+            logger.warning("自动建夹跳过：上游工厂目录不可读 %s", e)
+            return
+        alias_map = load_alias_map()
+        folder_candidates = load_folder_match_candidates()
+        cutoff = get_settings().fuzzy_match_score_cutoff
+        to_create = []
+        for factory in factories:
+            hit, _score, _method = match_factory_folder(
+                factory, folders, alias_map, cutoff=cutoff,
+                overrides=overrides, folder_candidates=folder_candidates)
+            if hit:
+                continue  # 已有匹配文件夹（含 fuzzy），不建
+            to_create.append(factory)
+    for factory in to_create:
+        factory_setup.ensure_factory_folder(upstream, factory)
+
+
 def add_factories_to_batch(
     batch_id: str,
     on_progress: Callable[[dict], None] | None = None,
@@ -476,6 +579,16 @@ def add_factories_to_batch(
 
     if not added:
         return {"added": 0, "factories": [], "message": "没有待补充的工厂"}
+
+    # 2026-10-12 用户确认（调整 B）：新增入队的未匹配工厂一并自动建夹，
+    # 操作员按标准名放单据后监控即可接手；幂等，失败只 warning 不阻断
+    try:
+        _auto_create_factory_folders(
+            Path(config["upstream_root"]).expanduser(), added,
+            check_folder_match=True,
+            overrides=values.get("factory_alias_overrides") or None)
+    except Exception:  # noqa: BLE001 自动建夹是辅助设施，绝不阻断补充
+        logger.warning("[补充工厂] 自动建夹异常（不阻断）", exc_info=True)
 
     # 对待补充工厂用新解析值覆盖 requirements/row_map（装箱单可能改过）；
     # 已写入工厂与挂起中的当前工厂保持原值不动
@@ -2298,7 +2411,11 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
     #   - 在快照里 → done（可 reopen）；
     #   - 不在快照但最新审计 approved（老批次/历史数据无快照）→ done 且
     #     can_reopen=False（前端据此不渲染「重新打开」，堵 reopen 404）；
-    #   - 其余（提取失败耗尽重试/占位挂起被驳回/被跳过）→ failed，
+    #   - 最新审计为 factory_auto_skipped → auto_skipped（缺资料自动跳过，
+    #     2026-10-12 需求 1）；
+    #   - 最新审计为 factory_skipped → skipped（人工跳过，补上后端从未产出
+    #     的该 role，ROLE_MAP 徽章已有定义）；
+    #   - 其余（提取失败耗尽重试/占位挂起被驳回）→ failed，
     #     前端显示「提取失败待补录」，不再一律「已完成」。
     outputs = values.get("factory_outputs") or {}
     deferred_names = {
@@ -2315,7 +2432,14 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
             role = "done"
         else:
             last = latest_audit.get(name)
-            role = "done" if (last is not None and last.approved) else "failed"
+            if last is not None and last.approved:
+                role = "done"
+            elif last is not None and last.result_status == "factory_auto_skipped":
+                role = "auto_skipped"
+            elif last is not None and last.result_status == "factory_skipped":
+                role = "skipped"
+            else:
+                role = "failed"
         entry = {
             "factory": name,
             "role": role,
@@ -2334,6 +2458,18 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
         "audit": audit,
         "usage": _usage_with_scope(),
     })
+
+    # 权威状态覆盖（2026-10-12 待补充状态）：checkpoint 三态推导的 completed
+    # 无法区分「全部完成」与「缺资料待补充」；以 pipeline_state 自愈后的
+    # batches 表状态为准（awaiting_factories / completed_with_errors 等细分
+    # 状态直接透出，前端徽章/按钮据此渲染）。覆盖失败保留 checkpoint 三态。
+    try:
+        from app.orchestrator.pipeline_state import get_pipeline_state
+        healed = (get_pipeline_state(thread_id).get("batch") or {}).get("status")
+        if healed:
+            detail["status"] = healed
+    except Exception as e:  # noqa: BLE001
+        logger.warning("批次详情权威状态覆盖失败 %s: %s", thread_id, e)
     return detail
 
 
@@ -2636,9 +2772,11 @@ def create_batch(
     u_path = Path(upstream).expanduser()
     if not u_path.is_dir():
         raise ValueError(f"上游工厂文件夹路径不存在或不是目录: {upstream}")
-    # 加固：上游目录必须能匹配到至少 1 个工厂（用 W5 prescan 干跑一遍），
-    # 否则下游 12 个工厂会全部 no_folder_matched，浪费算力且用户看到一堆 0 SKU 错误。
-    # 默认生产开启；测试场景（空 tmpdir）可设 FACTORY_DIR_STRICT=0 跳过。
+    # 上游目录与装箱单工厂的匹配预扫（用 W5 prescan 干跑一遍）。
+    # 2026-10-12 起放宽：一家都匹配不到不再拒绝建批——全部工厂按缺资料
+    # 自动跳过，批次跑完进「待补充」（awaiting_factories），操作员补文件夹
+    # 后经「补充工厂」/监控自动补齐；只记 warning 放行。
+    # 测试场景（空 tmpdir）可设 FACTORY_DIR_STRICT=0 跳过整个预扫。
     if os.environ.get("FACTORY_DIR_STRICT", "1") == "1":
         try:
             _scan = prescan_factory_aliases(
@@ -2648,11 +2786,15 @@ def create_batch(
             _unmatched = _scan.get("unmatched") or []
             _total = len(_resolved) + len(_candidates) + len(_unmatched)
             if _total > 0 and not _resolved:
-                raise ValueError(
-                    f"上游路径下未匹配到任何工厂文件夹: {upstream}"
-                    f"（检查路径是否少带 /工厂 等子目录名？例如 83/工厂 而不是 83）")
-        except ValueError:
-            raise
+                logger.warning(
+                    "上游路径下未匹配到任何工厂文件夹: %s"
+                    "（全部工厂将按缺资料自动跳过，批次进待补充）", upstream)
+            # 2026-10-12 用户确认（调整 B）：建批时自动为 prescan 未匹配
+            # 工厂建空文件夹（与看板预建同一命名口径），操作员按标准名放
+            # 单据后监控/补充工厂接手；幂等，单个失败只 warning 不阻断建批
+            if _unmatched:
+                _auto_create_factory_folders(u_path, _unmatched,
+                                             check_folder_match=False)
         except Exception:
             # 装箱单解析失败 / W5 异常 → 软警告，不阻断（交给 dispatcher preview 兜底）
             pass

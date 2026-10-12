@@ -45,6 +45,11 @@ class AgentState(TypedDict, total=False):
     # "failure_reason"}），不进 Node5/Node6——占位数据绝不写 Excel/主库；
     # 主队列走完后由 Node2 弹出做二遍重试，仍失败才最终挂起人工补录
     deferred_factories: List[Dict]
+    # 自动跳过清单（2026-10-12 需求 1，Node4C 写入）：二遍仍缺资料
+    # （no_folder_matched/no_documents）的工厂不挂人工审核，记到这里；
+    # 条目 {"factory_name", "failure_reason", "ts"}，供日志/审计上下文与
+    # pipeline_state「待补充」分类参考（权威分类以 review_audits 留痕为准）
+    auto_skipped_factories: List[Dict]
 
     # ----- 当前批次 -----
     current_factory_data: CurrentFactoryData

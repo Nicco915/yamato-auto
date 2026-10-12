@@ -282,7 +282,10 @@ def test_start_exec_real_run(monkeypatch):
     _force_mock_extraction(monkeypatch)
     sub = _WATCH / "START_REAL1"
     mid = sub / "93"
-    (mid / "工厂" / "工厂A").mkdir(parents=True)
+    fa = mid / "工厂" / "工厂A"
+    fa.mkdir(parents=True)
+    # 2026-10-12 起空文件夹按缺资料自动跳过（no_documents），mock 也需放假单据
+    (fa / "pl.pdf").write_bytes(b"%PDF-1.4 fake")
     _make_xlsx(mid / "ContentsOfTheContainer.xlsx",
                [("工厂A", "SKU-A1", "测试品A", 10)])
 
@@ -309,7 +312,10 @@ def test_start_exec_explicit_downstream_nested(monkeypatch):
     _force_mock_extraction(monkeypatch)
     sub = _WATCH / "START_REAL2"
     mid = sub / "93"
-    (mid / "工厂" / "工厂A").mkdir(parents=True)
+    fa = mid / "工厂" / "工厂A"
+    fa.mkdir(parents=True)
+    # 2026-10-12 起空文件夹按缺资料自动跳过（no_documents），mock 也需放假单据
+    (fa / "pl.pdf").write_bytes(b"%PDF-1.4 fake")
     picked = mid / "ContentsOfTheContainer_b.xlsx"
     _make_xlsx(mid / "ContentsOfTheContainer_a.xlsx",
                [("工厂A", "SKU-A1", "测试品A", 10)])

@@ -172,7 +172,10 @@ def test_e2e_reopen_after_completion_keeps_completed(monkeypatch):
     ws.append([E2E_FACTORY, E2E_SKU, "ITEM-C", 10])
     wb.save(xlsx)
     upstream = TMP / "reopen_e2e_upstream"
-    (upstream / E2E_FACTORY).mkdir(parents=True)
+    # 2026-10-12 起空文件夹按缺资料自动跳过（no_documents），mock 也需放假单据
+    d = upstream / E2E_FACTORY
+    d.mkdir(parents=True)
+    (d / "pl.pdf").write_bytes(b"%PDF-1.4 fake")
 
     r1 = service.run_until_interrupt(
         E2E_THREAD, downstream_file_path=str(xlsx), upstream_root=str(upstream))

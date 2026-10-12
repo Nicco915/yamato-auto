@@ -128,7 +128,12 @@ def test_start_failure_marks_error(watch, monkeypatch):
     cand.mkdir()
     _make_xlsx(cand / "ContentsOfTheContainer_001.xlsx")
 
+    # 竞态防护（2026-10-12）：boom 等主线程断言完「HTTP 返回瞬间是 running 行」
+    # 再抛，否则后台线程抢跑先标 error，第一个断言偶发失败
+    gate = threading.Event()
+
     def boom(folder_name, thread_id=None, downstream_file_path=None, **kw):
+        gate.wait(timeout=5)
         raise ValueError("上游工厂文件夹路径不存在")
 
     monkeypatch.setattr(service, "start_batch_from_scan", boom)
@@ -138,6 +143,7 @@ def test_start_failure_marks_error(watch, monkeypatch):
     assert r["thread_id"] == "err-t1"
     # HTTP 返回瞬间是预写的 running 行
     assert batch_store.get_batch("err-t1")["status"] == "running"
+    gate.set()  # 放行后台线程抛错
 
     _join_board_thread("err-t1")
 

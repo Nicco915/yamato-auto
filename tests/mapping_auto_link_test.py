@@ -80,8 +80,11 @@ def _make_fixtures() -> tuple[str, str]:
     wb.save(xlsx)
 
     upstream = TMP / "upstream"
+    # 2026-10-12 起空文件夹按缺资料自动跳过（no_documents），mock 也需放假单据
     for f in (F1, F2, F3, F4, F5):
-        (upstream / f).mkdir(parents=True)
+        d = upstream / f
+        d.mkdir(parents=True)
+        (d / "pl.pdf").write_bytes(b"%PDF-1.4 fake")
     return str(xlsx), str(upstream)
 
 

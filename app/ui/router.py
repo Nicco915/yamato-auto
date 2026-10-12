@@ -17,6 +17,7 @@ API（路由极薄，逻辑全在 app.api.service；全部 asyncio.to_thread 防
 - PATCH /api/v1/batches/{thread_id}/paths  更新批次路径配置（404 不存在）
 - POST /api/v1/batches/{thread_id}/rerun   完全重跑批次（404 不存在）
 - POST /api/v1/batches/{thread_id}/add-factories  补充工厂（400 失败）
+- POST /api/v1/batches/{thread_id}/force-complete 强制结案（400 非待补充）
 - POST /api/v1/batches/{batch_id}/export-pivot   生成 XD 透视导出（404 批次不存在 / 409 装箱单不存在）
 - GET  /api/v1/batches/{batch_id}/pivot/download 下载最新 XD 透视文件（404 未导出过）
 - GET  /api/v1/usage                全局 LLM 用量（scope=process_lifetime）
@@ -448,6 +449,17 @@ async def add_factories_endpoint(thread_id: str):
     except RuntimeError as e:
         # 批次正在运行中（无 interrupt 且 next 非空）
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/api/v1/batches/{thread_id}/force-complete")
+async def force_complete_endpoint(thread_id: str):
+    """强制结案（2026-10-12 待补充状态）：待补充批次直接结案，剩余缺资料
+    工厂不再补齐；batches.force_completed=1 防自愈打回，review_audits 留痕
+    batch_force_completed。批次不存在/非待补充状态 → 400。"""
+    try:
+        return await asyncio.to_thread(service.force_complete_batch, thread_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 

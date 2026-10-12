@@ -2,14 +2,22 @@
 
 从 LangGraph checkpoint、Batch 表、Declaration 表推导当前批次处于哪个阶段，
 供前端 Agent 对话页顶部状态图使用。
+
+2026-10-12 待补充状态：awaiting_factories 不是新 phase，是 export_done 且
+存在「缺资料自动跳过/人工跳过/未处理」缺口工厂时 desired_status 的细分值
+（不进 _PHASE_TO_BATCH_STATUS 映射表，由 get_pipeline_state 内部分类）。
 """
 from __future__ import annotations
 
 import logging
 from typing import Any
 
+from sqlalchemy import select
+
 from app.config import get_settings
 from app.db import batch_store
+from app.db.models import ReviewAudit
+from app.db.session import get_session
 from app.graph import NODE1, NODE2, NODE3, NODE4, NODE5, NODE6, NODE7, get_graph
 from app.split.graph import (
     NODE1_SPLIT,
@@ -126,6 +134,9 @@ def _extract_phase(thread_id: str) -> dict[str, Any] | None:
         "pending_factories": pending,
         "done_factories": done,
         "factories_failed": factories_failed,
+        # 缺口工厂名单（与 factories_failed 同口径同条件），供
+        # awaiting_factories/completed_with_errors 分类查审计留痕用
+        "failed_factories": sorted(total_set - set(done)) if not next_nodes else [],
         "final_output_path": values.get("final_output_path"),
     }
 
@@ -178,6 +189,59 @@ def _split_phase(batch_thread_id: str) -> dict[str, Any] | None:
     }
 
 
+# 缺口工厂「缺资料/未处理」类审计留痕（2026-10-12 待补充状态分类口径）：
+# 最新一条留痕属于其中之一（或无审计）→ 批次归 awaiting_factories 而非已完成
+_SKIP_RESULT_STATUSES = {"factory_auto_skipped", "factory_skipped"}
+
+
+def _classify_incomplete_batch(thread_id: str, failed_factories: list[str],
+                               batch: dict[str, Any] | None) -> str:
+    """export_done 但有缺口工厂时的状态细分（2026-10-12 需求 2）。
+
+    - 人工强制结案（batches.force_completed）→ 保持 "completed"
+      （自愈不得打回待补充）；
+    - 缺口工厂**全部**为人工驳回（有审计、approved=False、result_status
+      非跳过类）→ "completed_with_errors"（语义收窄：仅剩「提取出错且
+      经人工处理仍有失败」）；
+    - 其余（缺资料自动跳过/人工跳过/无审计留痕/混合）→ "awaiting_factories"。
+
+    审计口径与 service.get_batch_detail 一致：每厂取 audit_id 最大的一条。
+    DB 查询失败只 warning、按 awaiting_factories 处理（宁可留在执行中列）。
+    """
+    if batch and batch.get("force_completed"):
+        return "completed"
+    if not failed_factories:
+        return "completed"
+    try:
+        with get_session() as session:
+            rows = session.scalars(
+                select(ReviewAudit)
+                .where(ReviewAudit.thread_id == thread_id)
+                .order_by(ReviewAudit.audit_id)
+            ).all()
+        latest: dict[str, Any] = {}
+        for r in rows:  # audit_id 升序遍历，后者覆盖前者 = 每厂最新一条
+            if r.factory_name:
+                latest[r.factory_name] = r
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("批次 %s 待补充分类查询审计失败: %s（按待补充处理）",
+                       thread_id, exc)
+        return "awaiting_factories"
+
+    saw_rejected = False
+    for name in failed_factories:
+        r = latest.get(name)
+        # 无审计（未处理）/ 缺资料自动跳过 / 人工跳过 → 待补充（混合同）
+        if r is None or r.result_status in _SKIP_RESULT_STATUSES:
+            return "awaiting_factories"
+        # 最新一条 approved 却没进 factory_outputs（异常态）：不放行完成，
+        # 按待补充留在执行中列
+        if r.approved:
+            return "awaiting_factories"
+        saw_rejected = True
+    return "completed_with_errors" if saw_rejected else "awaiting_factories"
+
+
 def get_pipeline_state(thread_id: str) -> dict[str, Any]:
     """返回给定 batch thread_id 的流水线状态。"""
     batch = batch_store.get_batch(thread_id)
@@ -201,11 +265,16 @@ def get_pipeline_state(thread_id: str) -> dict[str, Any]:
 
     # ---- batches 表状态自愈：以 checkpoint 推导的阶段为权威源校正滞留的 status ----
     desired_status = _PHASE_TO_BATCH_STATUS.get(current_phase)
-    # 提取失败告警闭环（§3.2）：图跑完但有失败工厂时批次置
-    # completed_with_errors 而非 completed（看板仍归「已完成」档，橙色徽章警示）
+    # 图跑完但有缺口工厂时的状态细分（2026-10-12 需求 2，替代原一律
+    # completed_with_errors 的旧口径）：
+    #   全为人工驳回 → completed_with_errors（看板仍归「已完成」档，橙色徽章）；
+    #   缺资料自动跳过/人工跳过/未处理 → awaiting_factories（看板归执行中列，
+    #   「待补充」，可补充工厂补齐后自愈转 completed，或人工强制结案）；
+    #   人工已强制结案（force_completed）→ 保持 completed 不打回。
     if (desired_status == "completed" and extract
             and (extract.get("factories_failed") or 0) > 0):
-        desired_status = "completed_with_errors"
+        desired_status = _classify_incomplete_batch(
+            thread_id, extract.get("failed_factories") or [], batch)
     if desired_status:
         if batch is None:
             # 无 batches 行（旧批次/手动建批）也合成最小信息，让状态栏按钮可用

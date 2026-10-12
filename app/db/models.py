@@ -272,6 +272,11 @@ class Batch(Base):
     error_message: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # 异常发生时间（与 error_message 成对出现，恢复后一并清空）
     error_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 人工强制结案标志（2026-10-12 待补充状态）：True 时 pipeline_state 自愈
+    # 不得把批次从 completed 打回 awaiting_factories；老库由
+    # batch_store.ensure_force_completed_column 幂等 ALTER 补列
+    force_completed: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(

@@ -146,6 +146,32 @@ function phaseText(p) {
   return PHASE_TEXT[p] || p;
 }
 
+/* 与后端 board.py STALE_RUNNING_SECONDS=600 同源：最后更新超龄即亮「疑似卡住」
+   黄条；后端另有僵尸自愈（标 error），同阈值不同机制，互不冲突 */
+var STALE_RUNNING_SECONDS = 600;
+
+/* 批次时间戳解析：board 后端 created_at/updated_at 来自 batch_store 的
+   datetime.utcnow()，是无时区标记的朴素 ISO——按 UTC 解析，与后端
+   board.py 的行龄计算口径一致（直接 new Date 会被当本地时间，差一个时区） */
+function parseIsoUtc(s) {
+  if (!s) return null;
+  var str = String(s);
+  // SQLite "YYYY-MM-DD HH:MM:SS" 补 T，避免 Safari 解析失败
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(str)) str = str.replace(" ", "T");
+  // 无时区后缀按 UTC 处理
+  if (!/[zZ]|[+-]\d{2}:?\d{2}$/.test(str)) str += "Z";
+  var d = new Date(str);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/* 时长文案：12分34秒（超 1 小时带小时位，如 1时02分03秒） */
+function fmtDuration(sec) {
+  sec = Math.max(0, Math.floor(sec || 0));
+  var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  if (h > 0) return h + "时" + m + "分" + s + "秒";
+  return m + "分" + s + "秒";
+}
+
 function statusBadge(status) {
   switch (status) {
     case "pending_review":
@@ -157,6 +183,8 @@ function statusBadge(status) {
       return '<span class="badge badge-ok">已完成</span>';
     case "completed_with_errors":
       return '<span class="badge badge-warn">部分失败</span>';
+    case "awaiting_factories":
+      return '<span class="badge badge-warn">待补充</span>';
     case "error":
       return '<span class="badge badge-muted">异常</span>';
     default:
@@ -225,15 +253,58 @@ function renderTodo(list) {
 function renderRunning(list) {
   var el = $("col-running");
   if (!list.length) { el.innerHTML = '<div class="b-empty">暂无执行中的批次</div>'; return; }
+  // 时长/秒数每次渲染重算：由 10 秒轮询驱动，不加额外定时器
+  var nowMs = Date.now();
   el.innerHTML = list.map(function (b, i) {
-    var total = (b.done_factories || 0) + (b.pending_factories || 0) + (b.current_factory ? 1 : 0);
-    var prog = total > 0
-      ? "工厂进度 " + (b.done_factories || 0) + "/" + total + (b.current_factory ? " · 当前：" + esc(b.current_factory) : "")
-      : "";
-    return '<div class="b-card">' +
+    var doneN = b.done_factories || 0;
+    // total 口径保持与原版一致：done + pending + current
+    var total = doneN + (b.pending_factories || 0) + (b.current_factory ? 1 : 0);
+    var isRunning = b.status === "running";
+    var isAwaiting = b.status === "awaiting_factories";
+
+    // 徽章行：进行中带旋转图标（待补充无活动不转圈，保持阶段一文案）
+    var meta = statusBadge(b.status) +
+      (isRunning ? ' <span class="spin-ico">◌</span>' : '') +
+      ' · ' + esc(phaseText(b.current_phase));
+
+    var staleSec = -1;
+    if (isRunning) {
+      // 进行中动态指示（2026-10-12 需求 3）：已运行时长 + 最后更新 + 进度条
+      var created = parseIsoUtc(b.created_at);
+      if (created) meta += '<br>已运行 ' + fmtDuration((nowMs - created.getTime()) / 1000);
+      var updated = parseIsoUtc(b.updated_at);
+      if (updated) {
+        staleSec = Math.max(0, Math.floor((nowMs - updated.getTime()) / 1000));
+        meta += ' · 最后更新 ' + fmtDuration(staleSec) + '前';
+      }
+      if (total > 0) {
+        var pct = Math.round(doneN / total * 100);
+        meta += '<div class="ymk-prog"><i style="width:' + pct + '%"></i></div>' +
+          '<div>' + doneN + '/' + total + ' · ' + pct + '%' +
+          (b.current_factory ? ' · 当前：' + esc(b.current_factory) : '') + '</div>';
+      }
+    } else if (!isAwaiting && total > 0) {
+      // 挂起审核/异常等非进行中：保留原进度文本
+      meta += '<br>工厂进度 ' + doneN + '/' + total +
+        (b.current_factory ? ' · 当前：' + esc(b.current_factory) : '');
+    }
+
+    // 待补充卡片（2026-10-12 需求 2/4）：缺口数 + 文件夹监控指示
+    if (isAwaiting) {
+      meta += '<br>待补充 · 缺 ' + (b.factories_failed || 0) + ' 家' +
+        (b.monitoring ? ' · 📡 监控中' : '');
+    }
+
+    // 疑似卡住：running 且最后更新超 600 秒（阈值与后端 board.py
+    // STALE_RUNNING_SECONDS 同源）→ 黄色警示条
+    var staleWarn = isRunning && staleSec > STALE_RUNNING_SECONDS;
+    return '<div class="b-card"' + (staleWarn ? ' style="border-left:3px solid #f59e0b"' : '') + '>' +
       '<div class="b-name">' + esc(b.folder_name) + '</div>' +
-      '<div class="b-meta">' + statusBadge(b.status) + ' · ' + esc(phaseText(b.current_phase)) +
-        (prog ? '<br>' + prog : '') +
+      (staleWarn
+        ? '<div style="color:#b45309;font-size:12px;margin-top:4px">疑似卡住：已 ' +
+          fmtDuration(staleSec) + ' 未更新，可到详情页确认状态或退回未执行后重跑</div>'
+        : '') +
+      '<div class="b-meta">' + meta +
         // 无对应批次（残留行）时批次号留空，不拿文件夹名冒充批次号
         '<br>批次号：' + (b.has_checkpoint === false ? '' : esc(b.thread_id)) +
         // 异常卡片直出失败原因：截断 120 字符展示，title 悬停看完整信息（完整堆栈在 error.log）
@@ -263,10 +334,14 @@ function runningActions(b, i) {
     h += '<a class="btn btn-sm btn-primary" target="_blank" rel="noopener" href="/review?thread_id=' +
       encodeURIComponent(tid) + '">去审核</a>';
   }
-  if (b.status === "completed" || b.status === "pending_review") {
+  if (b.status === "completed" || b.status === "pending_review" || b.status === "awaiting_factories") {
     h += '<button class="btn btn-sm" onclick="boardAddFactories(\'r\', ' + i + ', this)">补充工厂</button>';
   } else if (b.status === "running") {
     h += '<button class="btn btn-sm" disabled>补充工厂</button>';
+  }
+  // 待补充批次（2026-10-12 需求 2）：「标记完成」= 强制结案（confirm 确认门）
+  if (b.status === "awaiting_factories") {
+    h += '<button class="btn btn-sm btn-primary" onclick="boardForceComplete(\'r\', ' + i + ', this)">标记完成</button>';
   }
   if (b.split_thread_id) {
     h += '<a class="btn btn-sm btn-primary" target="_blank" rel="noopener" href="/split/' +
@@ -359,6 +434,26 @@ async function boardAddFactories(tier, i, btn) {
   } finally {
     btn.disabled = false;
     btn.textContent = "补充工厂";
+  }
+}
+
+/* 标记完成（强制结案，2026-10-12 需求 2）：待补充批次直接结案，确认门一次一确认 */
+async function boardForceComplete(tier, i, btn) {
+  var b = _cardAt(tier, i);
+  if (!b || (btn && btn.disabled)) return;
+  if (!confirm("强制结案后剩余缺资料工厂不再补齐。确认？")) return;
+  btn.disabled = true;
+  btn.textContent = "结案中…";
+  try {
+    var r = await api("/api/v1/batches/" + encodeURIComponent(b.thread_id) + "/force-complete",
+                      { method: "POST" });
+    toast((r && r.message) || "已强制结案");
+    loadBoard(false);
+  } catch (e) {
+    toast("强制结案失败：" + e.message, 4000);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "标记完成";
   }
 }
 

@@ -11,7 +11,10 @@
 3. 无待补充：全部 approve 后调用 → added==0 + message，state 不动；
 4. 已 approve 工厂不被重复处理（factory_outputs 键不重复、Excel 行不重复写）；
 5. pending_review 状态调用：挂起中补充 → Node5 重挂起、当前工厂 payload 不丢，
-   pending 已合并，审核链走完四家全部落 factory_outputs。
+   pending 已合并，审核链走完四家全部落 factory_outputs；
+6. auto-skipped 捞回（2026-10-12 需求 1）：缺资料自动跳过的工厂差集可捞回
+   （未补文件夹二遍仍自动跳过回 awaiting；补齐后挂起审核、approve 后自愈
+   转 completed）。
 
 续跑语义实测结论（langgraph 1.2.9，本文件 e2e 即为验证）：
 - completed（next 为空）：update_state(as_node=NODE6) 后条件边 _route_after_writer
@@ -78,7 +81,11 @@ def _write_manifest(path: Path, rows: list[tuple[str, str, str, int]]) -> str:
 def _make_upstream(tag: str, factories: list[str]) -> str:
     root = TMP / f"upstream_{tag}"
     for f in factories:
-        (root / f).mkdir(parents=True, exist_ok=True)
+        d = root / f
+        d.mkdir(parents=True, exist_ok=True)
+        # 2026-10-12 起 Node3 区分 no_documents（空文件夹=缺资料自动跳过）：
+        # mock 模式下也需放一个单据文件才算「有资料」走 mock 提取
+        (d / "pl.pdf").write_bytes(b"%PDF-1.4 fake")
     return str(root)
 
 
@@ -394,6 +401,70 @@ def test_pending_review_merge_and_resuspend(monkeypatch):
     print("[断言通过] 挂起中补充的工厂随审核链走完：三家全部落 factory_outputs")
 
 
+# ---------------------------------------------------------------------------
+# 6. auto-skipped 工厂可被 add_factories_to_batch 捞回（2026-10-12 需求 1）
+# ---------------------------------------------------------------------------
+
+def test_auto_skipped_factory_can_be_added_back(monkeypatch):
+    """缺资料自动跳过的工厂不进 factory_outputs，差集口径（装箱单全集 −
+    factory_outputs − 队列中 − 挂起中）天然能捞回：补齐文件夹后
+    add_factories_to_batch 应把该厂补入并挂起审核；approve 后批次自愈回
+    completed（不再停 awaiting_factories）。"""
+    _force_mock_extraction(monkeypatch)
+    # 厂名刻意取零相似度（rapidfuzz ratio=0），防 B 无文件夹时被 fuzzy 匹配到 A
+    F_A, F_B = "东海制果", "西陆金属工业"
+    SKU_A, SKU_B = "4900000000601", "4900000000602"
+    THREAD = "ADDF-E2E-AUTOSKIP"
+
+    xlsx = _write_manifest(TMP / "addf_autoskip.xlsx", [
+        (F_A, SKU_A, "ITEM-A", 10),
+        (F_B, SKU_B, "ITEM-B", 20),
+    ])
+    # 只给 A 建文件夹放单据；B 暂无文件夹（稍后补齐）
+    root = TMP / "upstream_autoskip"
+    (root / F_A).mkdir(parents=True, exist_ok=True)
+    (root / F_A / "pl.pdf").write_bytes(b"%PDF-1.4 fake")
+    upstream = str(root)
+    _write_batch_config(THREAD, xlsx, upstream)
+
+    r = service.run_until_interrupt(THREAD, downstream_file_path=xlsx,
+                                    upstream_root=upstream)
+    assert r["review_data"]["factory_name"] == F_A
+    # approve A 后：B 是最后一家、首遍即缺资料 → Node4C 自动跳过 → 跑完
+    r = service.resume_order(THREAD, {"approved": True, "items": []})
+    assert r["status"] == "success", r
+
+    # B 已自动跳过（审计留痕），批次归待补充
+    audits = [x for x in _audit_rows(THREAD) if x.factory_name == F_B]
+    assert audits and audits[-1].result_status == "factory_auto_skipped"
+    from app.orchestrator.pipeline_state import get_pipeline_state
+    assert get_pipeline_state(THREAD)["batch"]["status"] == "awaiting_factories"
+
+    # 不给 B 补文件夹就调补充工厂：差集捞回 B（added=1），但二遍仍缺资料
+    # → 再次自动跳过 → 一路跑完回 awaiting（不挂人工）
+    r = service.add_factories_to_batch(THREAD)
+    assert r["added"] == 1 and r["factories"] == [F_B], r
+    assert r["status"] == "completed", r   # 无挂起：二遍仍自动跳过
+    assert get_pipeline_state(THREAD)["batch"]["status"] == "awaiting_factories"
+
+    # 补齐 B 的文件夹与单据后再补充：mock 提取成功 → Node5 挂起
+    (root / F_B).mkdir(parents=True, exist_ok=True)
+    (root / F_B / "pl.pdf").write_bytes(b"%PDF-1.4 fake")
+    r = service.add_factories_to_batch(THREAD)
+    assert r["added"] == 1 and r["factories"] == [F_B], r
+    assert r["status"] == "pending_human_review", r
+    assert r["review_data"]["factory_name"] == F_B
+
+    r = service.resume_order(THREAD, {"approved": True, "items": []})
+    assert r["status"] == "success", r
+
+    outputs = service.get_order_state(THREAD)["values"].get("factory_outputs") or {}
+    assert set(outputs) == {F_A, F_B}, sorted(outputs)
+    # 补齐后自愈转 completed（不再停待补充）
+    assert get_pipeline_state(THREAD)["batch"]["status"] == "completed"
+    print("[断言通过] auto-skipped 工厂可被补充工厂捞回，补齐后自愈转 completed")
+
+
 def main():
     import pytest  # 脚本模式下提供 MonkeyPatch（pytest 运行时是注入的 fixture）
     with pytest.MonkeyPatch.context() as mp:
@@ -406,6 +477,8 @@ def main():
         test_approved_factories_not_reprocessed(mp)
     with pytest.MonkeyPatch.context() as mp:
         test_pending_review_merge_and_resuspend(mp)
+    with pytest.MonkeyPatch.context() as mp:
+        test_auto_skipped_factory_can_be_added_back(mp)
     print("\nadd_factories_test: PASS")
 
 

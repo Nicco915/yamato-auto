@@ -261,6 +261,18 @@ def extraction_node(state: AgentState) -> dict:
         cur["failure_reason"] = "no_folder_matched"
         return {"current_factory_data": cur, "force_reextract": False}
 
+    # 缺资料二分（2026-10-12 需求 1）：文件夹匹配成功但无任何受支持单据
+    # （覆盖「预建空文件夹」场景）——与 no_folder_matched 同属可自动跳过类，
+    # 由 Node4 条件边分流 Node4C；有单据但提取为空仍走下方 no_items_extracted
+    # 挂人工审核，行为不变
+    if not cur.get("source_documents"):
+        logger.warning("[Node3] 工厂「%s」文件夹内无受支持单据（%s），"
+                       "生成缺资料占位数据", factory_name, folder_path)
+        cur["extracted_items"] = _placeholder_items(expected_skus, "no_documents")
+        cur["extraction_ok"] = False
+        cur["failure_reason"] = "no_documents"
+        return {"current_factory_data": cur, "force_reextract": False}
+
     if _session_mod is None:
         logger.warning("[Node3] 提取引擎不可用（%s），使用 mock 数据",
                        _session_import_error or 'EXTRACTION_MOCK=1')

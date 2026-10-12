@@ -9,8 +9,8 @@
    批次 success；Excel 只写 A 的行（B 行 净重/毛重 留空）；
    factory_outputs 只有 A；review_audits 有 B 的 factory_skipped 行
    （approved=false），A 为正常 approved 行；
-4. get_batch_detail：B 的 role=="failed"（提取失败告警闭环 §3.1 口径变更：
-   被驳回/跳过且无快照一律归 failed，红色徽章「提取失败待补录」），A 为 done。
+4. get_batch_detail：B 的 role=="skipped"（2026-10-12 待补充状态增强
+   §1.7：role 推导补上 skipped/auto_skipped，灰色徽章「已跳过」），A 为 done。
 
 隔离（血泪红线 2026-08-11，与 tests/logging_context_test.py 同模式）：
 checkpoint/master db、output、sessions 全部指向临时目录——import 全部
@@ -69,8 +69,12 @@ def _make_fixtures() -> tuple[str, str]:
     wb.save(xlsx)
 
     upstream = TMP / "upstream"
-    (upstream / F_A).mkdir(parents=True)
-    (upstream / F_B).mkdir(parents=True)
+    # 2026-10-12 起 Node3 区分 no_documents（空文件夹=缺资料自动跳过）：
+    # mock 模式下也需放一个单据文件才算「有资料」走 mock 提取
+    for f in (F_A, F_B):
+        d = upstream / f
+        d.mkdir(parents=True)
+        (d / "pl.pdf").write_bytes(b"%PDF-1.4 fake")
     return str(xlsx), str(upstream)
 
 
@@ -224,21 +228,22 @@ def test_e2e_approve_a_skip_b(monkeypatch):
 
 
 def test_batch_detail_skipped_role():
-    """get_batch_detail：B role=failed（红色徽章「提取失败待补录」），A role=done。
+    """get_batch_detail：B role=skipped（灰色徽章「已跳过」），A role=done。
 
-    提取失败告警闭环（设计文档 §3.1）口径变更：role 推导的失败维度
-    = requirements − factory_outputs − pending/current/deferred，被驳回/
-    被跳过（最新审计 approved=false 且无快照）一律归 failed，不再有
-    skipped 角色；audit 区仍保留 factory_skipped 供前端渲染「跳过」文案。
+    2026-10-12 待补充状态增强（实施计划 §1.7）口径再变更：get_batch_detail
+    role 推导补上后端从未产出的 skipped/auto_skipped——最新审计
+    result_status=factory_skipped → skipped、factory_auto_skipped →
+    auto_skipped，其余 approved=false 无快照仍归 failed；audit 区
+    仍保留 factory_skipped 供前端渲染「跳过」文案。
     """
     detail = service.get_batch_detail(THREAD)
     roles = {f["factory"]: f["role"] for f in detail["factories"]}
     assert roles.get(F_A) == "done", roles
-    assert roles.get(F_B) == "failed", roles
+    assert roles.get(F_B) == "skipped", roles
     # audit 区也带 result_status，供前端渲染「跳过」文案
     statuses = {(a["factory_name"], a["result_status"]) for a in detail["audit"]}
     assert (F_B, "factory_skipped") in statuses, statuses
-    print("[断言通过] get_batch_detail：B=failed / A=done，audit 带 factory_skipped")
+    print("[断言通过] get_batch_detail：B=skipped / A=done，audit 带 factory_skipped")
 
 
 def main():

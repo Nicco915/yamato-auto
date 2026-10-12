@@ -45,7 +45,22 @@ async def lifespan(app: FastAPI):
     from app.db.sync import ensure_mapping_skus_migrated, reconcile_incomplete_flags
     ensure_mapping_skus_migrated()
     reconcile_incomplete_flags()
+    # 缺资料文件夹监控（2026-10-12 需求 4）：轮询 awaiting_factories 批次
+    # 缺口工厂文件夹，资料到达且大小稳定后自动补充。失败只 warning 不阻断
+    # 启动（与上方迁移同哲学）；监控对象每轮从 DB 现查、无持久状态，
+    # uvicorn 重启后自动恢复对所有待补充批次的监控，无需额外代码
+    try:
+        from app.orchestrator.factory_watch import start_factory_watch
+        start_factory_watch()
+    except Exception:  # noqa: BLE001
+        logger.warning("缺资料文件夹监控启动失败", exc_info=True)
     yield
+    # 关停监控线程（置停止旗标；daemon 线程本身随进程消亡）
+    try:
+        from app.orchestrator.factory_watch import stop_factory_watch
+        stop_factory_watch()
+    except Exception:  # noqa: BLE001
+        logger.warning("缺资料文件夹监控停止失败", exc_info=True)
 
 
 app = FastAPI(title="供应链单证自动化 API", version="0.1.0", lifespan=lifespan)

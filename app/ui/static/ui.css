@@ -294,6 +294,32 @@ input::placeholder { color: #9ca3af; }
 .muted { color: var(--muted); }
 .mono { font-family: ui-monospace, Menlo, monospace; }
 
+/* ---------- 进行中动态指示（2026-10-12 需求 3）：board.html / batch.html 共用 ---------- */
+/* 旋转图标：字符图标（◌），不引外部资源 */
+@keyframes ymk-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.spin-ico {
+  display: inline-block;
+  animation: ymk-spin 1s linear infinite;
+}
+
+/* 工厂进度条：轨道/填充样式共用，填充宽度由内联 style 百分比控制 */
+.ymk-prog {
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 4px 0 2px;
+}
+.ymk-prog > i {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  border-radius: 3px;
+}
+
 /* ========== 分票审核页 ========== */
 
 /* 港口 Tab 栏 */

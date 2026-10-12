@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 _columns_ensured = False
 _columns_lock = threading.Lock()
 
+# ensure_force_completed_column 一次性幂等迁移标志（同上）
+_force_col_ensured = False
+_force_col_lock = threading.Lock()
+
 
 def ensure_error_columns() -> None:
     """老库幂等补列：batches 加 error_message / error_at（create_all 不会给已有表加列）。
@@ -58,9 +62,44 @@ def ensure_error_columns() -> None:
             logger.error("batches 表补列 error_message/error_at 失败: %s", exc)
 
 
+def ensure_force_completed_column() -> None:
+    """老库幂等补列：batches 加 force_completed（2026-10-12 待补充状态，
+    人工强制结案防自愈打回标志；create_all 不会给已有表加列）。
+
+    与 ensure_error_columns 同模式：模块级标志每进程只执行一次；异常只记
+    日志不抛——但加列失败会导致读写 force_completed 报错，故失败记 error 级。
+    所有读写路径都调用（读路径也要补列：老库缺列时 SELECT 直接报
+    no such column，与 error_message 同理）。
+    """
+    global _force_col_ensured
+    if _force_col_ensured:
+        return
+    with _force_col_lock:
+        if _force_col_ensured:
+            return
+        try:
+            engine = get_engine()
+            with engine.connect() as conn:
+                cols = {
+                    row[1]
+                    for row in conn.execute(text("PRAGMA table_info(batches)")).fetchall()
+                }
+                if "force_completed" not in cols:
+                    conn.execute(
+                        text("ALTER TABLE batches ADD COLUMN force_completed "
+                             "BOOLEAN DEFAULT 0")
+                    )
+                    logger.info("batches 表补列 force_completed 完成")
+                conn.commit()
+            _force_col_ensured = True
+        except Exception as exc:  # noqa: BLE001
+            logger.error("batches 表补列 force_completed 失败: %s", exc)
+
+
 def get_batch(thread_id: str) -> dict[str, Any] | None:
     """按 thread_id 查询 batch 记录；不存在返回 None。"""
     ensure_error_columns()  # 读路径也要补列：老库缺列时 SELECT 直接报 no such column
+    ensure_force_completed_column()
     try:
         with get_session() as s:
             row = s.get(Batch, thread_id)
@@ -80,6 +119,7 @@ def list_batches(
 ) -> list[dict[str, Any]]:
     """列出 batch 记录，可选按状态/监控目录过滤。"""
     ensure_error_columns()  # 读路径也要补列：老库缺列时 SELECT 直接报 no such column
+    ensure_force_completed_column()
     try:
         with get_session() as s:
             q = s.query(Batch)
@@ -106,6 +146,7 @@ def upsert_batch(
 ) -> bool:
     """创建或更新 batch 记录。thread_id 不存在则插入，存在则更新传入的非空字段。"""
     ensure_error_columns()
+    ensure_force_completed_column()
     try:
         with get_session() as s:
             row = s.get(Batch, thread_id)
@@ -155,6 +196,7 @@ def update_status(
     非 error 状态时清空 error_message/error_at（恢复后不留旧错误）。
     """
     ensure_error_columns()
+    ensure_force_completed_column()
     try:
         with get_session() as s:
             row = s.get(Batch, thread_id)
@@ -179,6 +221,7 @@ def update_status(
 def mark_error(thread_id: str, message: str) -> bool:
     """将 batch 置为 error 状态并留痕失败原因；行不存在返回 False。"""
     ensure_error_columns()
+    ensure_force_completed_column()
     try:
         with get_session() as s:
             row = s.get(Batch, thread_id)
@@ -193,6 +236,25 @@ def mark_error(thread_id: str, message: str) -> bool:
         return True
     except Exception as exc:  # noqa: BLE001
         logger.error("标记 batch %s 为 error 失败: %s", thread_id, exc)
+        return False
+
+
+def set_force_completed(thread_id: str) -> bool:
+    """置人工强制结案标志（2026-10-12 待补充状态）：pipeline_state 自愈
+    见 force_completed=True 不再把批次打回 awaiting_factories。
+    行不存在返回 False；写失败记 error 日志返回 False。"""
+    ensure_force_completed_column()
+    try:
+        with get_session() as s:
+            row = s.get(Batch, thread_id)
+            if row is None:
+                return False
+            row.force_completed = True
+            row.updated_at = datetime.utcnow()
+            s.commit()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.error("标记 batch %s 强制结案失败: %s", thread_id, exc)
         return False
 
 
@@ -211,6 +273,16 @@ def delete_batch(thread_id: str) -> bool:
         return False
 
 
+def list_by_status(status: str, *, limit: int = 1000) -> list[dict[str, Any]]:
+    """按状态列出 batch 记录（2026-10-12 缺资料文件夹监控：factory_watch
+    每轮捞 status == "awaiting_factories" 的批次）。
+
+    list_batches(status=...) 的语义化薄封装；查询失败返回 []（同
+    list_batches 的兜底哲学，监控线程下一轮重试即可）。
+    """
+    return list_batches(status=status, limit=limit)
+
+
 def _to_dict(row: Batch) -> dict[str, Any]:
     return {
         "thread_id": row.thread_id,
@@ -222,6 +294,7 @@ def _to_dict(row: Batch) -> dict[str, Any]:
         "final_output_path": row.final_output_path,
         "error_message": row.error_message,
         "error_at": row.error_at.isoformat() if row.error_at else None,
+        "force_completed": bool(row.force_completed),
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,

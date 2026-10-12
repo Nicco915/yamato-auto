@@ -54,17 +54,38 @@ def _short_name_for_factory(factory_name: str) -> str | None:
     return None
 
 
-def _create_empty_folder(upstream_root: Path, factory_name: str) -> Path | None:
-    """为缺失工厂创建空文件夹，优先使用 short_name，否则用工厂名安全化。"""
-    short = _short_name_for_factory(factory_name)
-    folder_name = _sanitize_folder_name(short or factory_name)
-    target = upstream_root / folder_name
+def canonical_folder_name(factory_name: str) -> str:
+    """工厂文件夹标准命名（唯一口径，2026-10-12 抽出共享）：工厂主数据
+    short_name 优先，无别名回退装箱单原名，安全化非法字符。
+
+    看板手动「预建工厂文件夹」（board.folder_plan）与建批/补厂自动建夹
+    （service.create_batch / add_factories_to_batch）共用本函数，保证
+    「自动建」与「手动预建」产出的文件夹名完全一致。
+    """
+    return _sanitize_folder_name(_short_name_for_factory(factory_name) or factory_name)
+
+
+def ensure_factory_folder(upstream_root: Path, factory_name: str) -> Path | None:
+    """按标准命名幂等创建工厂文件夹：成功/已存在返回路径，失败只记
+    warning 返回 None（绝不抛出，不阻断建批/补厂主流程）。
+
+    2026-10-12 用户确认建批自动建夹：CLAUDE.md 写操作确认门不适用于此
+    系统内部幂等动作（exist_ok=True，重复调用无副作用；空文件夹本身不
+    触发提取，操作员放单据后由监控/补充工厂接手）。
+    """
+    target = Path(upstream_root) / canonical_folder_name(factory_name)
     try:
         target.mkdir(parents=True, exist_ok=True)
-        return target
     except OSError as exc:
-        logger.warning("创建空文件夹失败 %s: %s", target, exc)
+        logger.warning("自动创建工厂文件夹失败 %s: %s", target, exc)
         return None
+    logger.info("自动创建工厂文件夹 | 工厂=%s | 文件夹=%s", factory_name, target)
+    return target
+
+
+def _create_empty_folder(upstream_root: Path, factory_name: str) -> Path | None:
+    """为缺失工厂创建空文件夹，优先使用 short_name，否则用工厂名安全化。"""
+    return ensure_factory_folder(upstream_root, factory_name)
 
 
 def _write_alias(factory_name: str, folder_name: str) -> bool:

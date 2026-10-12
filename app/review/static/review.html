@@ -1929,12 +1929,14 @@ async function doSubmit() {
 
 /* 「跳过本工厂」：confirm 确认后以 {skipped:true} resume——Node5 置 Skipped、
    不做 items 合并；Node6 不写 Excel/不落库，批次照常推进；审计落 factory_skipped。
+   2026-10-12 起语义变化：被跳过工厂不计入完成，图跑完后批次停在「待补充」
+   （awaiting_factories），可补充工厂补齐或在详情页强制结案。
    跳过语义明确（整厂不处理），不走改动摘要弹窗。 */
 async function skipFactory() {
   if (isReopen) return;   // reopen 模式下按钮已隐藏，双保险
   const btn = $("btn-skip");
   if (btn.disabled) return;   // 防连点
-  if (!confirm("跳过该工厂？本批次将不写入 Excel、不落库；单据到齐后可用「补充工厂」重新处理。")) {
+  if (!confirm("跳过该工厂？本批次将不写入 Excel、不落库；单据到齐后可用「补充工厂」重新处理。\n跳过后该工厂不计入完成，批次将停在『待补充』，可稍后补充工厂或在详情页强制结案。")) {
     return;
   }
   const submitBtn = $("btn-submit");

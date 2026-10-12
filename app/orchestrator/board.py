@@ -15,6 +15,10 @@
   源头预防 no_folder_matched）——解析装箱单工厂名单，与上游「工厂」目录
   现有子目录 diff（factory_aliases 同口径），确认后批量 mkdir。
 
+2026-10-12 待补充状态：awaiting_factories 批次（图跑完但有缺资料/跳过/
+未处理缺口工厂）归「执行中」列，in_progress 透出 factories_failed（缺口
+数）、created_at 与 monitoring（是否正被缺资料文件夹监控盯着）供卡片渲染。
+
 所有路径处理使用 pathlib.Path，兼容 macOS/Windows。
 """
 from __future__ import annotations
@@ -178,6 +182,11 @@ def board_state() -> dict[str, Any]:
                 "error_message": rec.get("error_message"),
                 "error_at": rec.get("error_at"),
                 "updated_at": rec.get("updated_at"),
+                # 2026-10-12 待补充状态：缺口工厂数 / 建批时间 / 是否监控中
+                #（created_at/updated_at 在 batch_store._to_dict 已 isoformat）
+                "factories_failed": rec.get("_factories_failed", 0),
+                "created_at": rec.get("created_at"),
+                "monitoring": rec.get("status") == "awaiting_factories",
             })
         else:
             downstream = discovery.discover_downstream_files(child)
@@ -603,9 +612,9 @@ def folder_plan(
                              "method": method})
             continue
         # 命名规则（已拍板方案 B）：主数据 short_name 优先，无别名回退
-        # 装箱单原名；安全化与 factory_setup 建夹同一函数，口径一致
-        desired = factory_setup._sanitize_folder_name(
-            factory_setup._short_name_for_factory(factory) or factory)
+        # 装箱单原名；命名走共享 helper（factory_setup.canonical_folder_name），
+        # 与建批/补厂自动建夹同一口径，「自动建」与「手动预建」名字完全一致
+        desired = factory_setup.canonical_folder_name(factory)
         if desired in folders or any(m["folder_name"] == desired for m in missing):
             # 目标文件夹已存在（或两名工厂归并到同一待建名）：不重复创建
             existing.append({"factory": factory, "folder_name": desired,

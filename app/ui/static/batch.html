@@ -112,6 +112,7 @@ var STATUS_MAP = {
   running:        ["进行中", "b-orange"],
   completed:      ["已完成", "b-green"],
   completed_with_errors: ["部分失败", "b-orange"],
+  awaiting_factories: ["待补充", "b-orange"],
   unknown:        ["未知", "b-gray"],
   error:          ["异常", "b-gray"]
 };
@@ -120,6 +121,7 @@ var ROLE_MAP = {
   pending: ["待处理", "b-gray"],
   done:    ["已完成", "b-green"],
   skipped: ["已跳过", "b-gray"],
+  auto_skipped: ["缺资料自动跳过", "b-gray"],
   failed:  ["提取失败待补录", "b-red"]
 };
 var SESS_STATUS_MAP = {
@@ -199,6 +201,24 @@ async function addFactories() {
     showToast("补充工厂失败：" + (e && e.message ? e.message : e));
     try { await load(); } catch (e2) {}   // 恢复渲染与轮询（load 会重建按钮）
     if (btn) { btn.disabled = false; btn.textContent = "补充工厂"; }
+  }
+}
+
+/* ---- 强制结案（2026-10-12 需求 2）：待补充批次直接结案，剩余缺资料工厂不再补齐 ---- */
+async function forceComplete() {
+  var btn = document.getElementById("btn-force-complete");
+  if (!confirm("剩余缺资料工厂将不再补齐，批次直接结案。确认？")) return;
+  if (btn) { btn.disabled = true; btn.textContent = "结案中…"; }
+  stopPolling();            // 结案后转 completed，无需继续轮询
+  try {
+    var r = await api("/api/v1/batches/" + encodeURIComponent(threadId) + "/force-complete",
+                      { method: "POST" });
+    showToast((r && r.message) || "已强制结案");
+    await load();
+  } catch (e) {
+    showToast("强制结案失败：" + (e && e.message ? e.message : e));
+    try { await load(); } catch (e2) {}   // 恢复渲染与轮询（load 会重建按钮）
+    if (btn) { btn.disabled = false; btn.textContent = "强制结案"; }
   }
 }
 
@@ -320,6 +340,10 @@ function badge(txt, cls) { return '<span class="badge bd ' + cls + '">' + _esc(t
 
 function renderHead(d) {
   var st = STATUS_MAP[d.status] || [d.status || "未知", "b-gray"];
+  // 进行中动态指示（2026-10-12 需求 3）：进行中/待审核徽章旁加旋转图标，
+  // 待补充（awaiting_factories）无活动不转圈，改在下方进度区显示待补充文案
+  var spin = (d.status === "running" || d.status === "pending_review")
+    ? ' <span class="spin-ico">◌</span>' : "";
   var prog = d.progress || {};
   var done = (prog.done != null) ? prog.done : "-";
   var total = (prog.total != null) ? prog.total : "-";
@@ -356,11 +380,17 @@ function renderHead(d) {
   btns += '<button class="btn lbtn" onclick="exportPivot(this)">导出透视</button>';
   btns += '<button class="btn lbtn" onclick="openPivotDir(this)">打开透视目录</button>';
 
-  // 补充工厂按钮：completed / pending_review 可点；running 禁用；其他状态不显示
-  if (d.status === "completed" || d.status === "pending_review") {
+  // 补充工厂按钮：completed / pending_review / awaiting_factories（待补充）
+  // 可点；running 禁用；其他状态不显示
+  if (d.status === "completed" || d.status === "pending_review" || d.status === "awaiting_factories") {
     btns += '<button class="btn lbtn" id="btn-add-factories" onclick="addFactories()">补充工厂</button>';
   } else if (d.status === "running") {
     btns += '<button class="btn lbtn" disabled title="批次正在运行，待挂起审核或完成后再补充">补充工厂</button>';
+  }
+
+  // 强制结案按钮（2026-10-12 需求 2）：仅待补充显示，确认门一次一确认
+  if (d.status === "awaiting_factories") {
+    btns += '<button class="btn lbtn" id="btn-force-complete" onclick="forceComplete()">强制结案</button>';
   }
 
   // 分票按钮
@@ -377,9 +407,30 @@ function renderHead(d) {
     btns += '<button class="btn lbtn" disabled title="批次处理完成后才能分票">开始分票</button>';
   }
 
+  // 工厂进度条（2026-10-12 需求 3）：复用 factories[] role 统计 done/总数，
+  // 渲染在头部摘要下；待补充状态附缺口数（auto_skipped/skipped/failed）与监控中文案
+  var flist = d.factories || [];
+  var ftotal = flist.length;
+  var progBar = "";
+  if (ftotal > 0) {
+    var fdone = flist.filter(function (f) { return f && f.role === "done"; }).length;
+    var fpct = Math.round(fdone / ftotal * 100);
+    progBar = '<div style="margin-top:8px;font-size:12px" class="c-gray">工厂进度 ' +
+      fdone + '/' + ftotal + ' · ' + fpct + '%</div>' +
+      '<div class="ymk-prog"><i style="width:' + fpct + '%"></i></div>';
+  }
+  if (d.status === "awaiting_factories") {
+    var gapN = flist.filter(function (f) {
+      return f && (f.role === "auto_skipped" || f.role === "skipped" || f.role === "failed");
+    }).length;
+    progBar += '<div style="margin-top:6px;font-size:12px" class="c-orange">待补充 · 缺 ' +
+      gapN + ' 家 · 📡 监控中（缺资料文件夹到齐后自动补充续跑）</div>';
+  }
+
   return '<div class="card lcard">' +
-    '<div class="head-title">' + _esc(threadId) + " " + badge(st[0], st[1]) + "</div>" +
+    '<div class="head-title">' + _esc(threadId) + " " + badge(st[0], st[1]) + spin + "</div>" +
     '<div class="kv">' + rows + "</div>" +
+    progBar +
     '<div class="head-actions">' + btns + "</div>" +
     "</div>";
 }
@@ -563,6 +614,10 @@ function renderAudit(d) {
         var res;
         if (a.result_status === "factory_skipped") {
           res = '<span class="c-gray">跳过</span>';   // 「跳过本工厂」留痕：approved=false，单列文案
+        } else if (a.result_status === "factory_auto_skipped") {
+          res = '<span class="c-gray">自动跳过(缺资料)</span>';   // 缺资料自动跳过留痕（2026-10-12 需求 1）
+        } else if (a.result_status === "batch_force_completed") {
+          res = '<span class="c-gray">强制结案</span>';   // 待补充批次人工强制结案留痕（2026-10-12 需求 2）
         } else {
           res = a.approved ? '<span class="c-green">通过</span>' : '<span class="c-red">未通过</span>';
         }
@@ -594,7 +649,7 @@ function renderAll(d) {
 
 /* ================= 进度自动刷新（W4a 轮询底座） ================= */
 var POLL_MS = 5000;
-var POLL_ACTIVE_STATUS = { running: 1, pending_review: 1 };
+var POLL_ACTIVE_STATUS = { running: 1, pending_review: 1, awaiting_factories: 1 };
 var pollTimer = null;       // setInterval 句柄，非空即表示轮询激活
 var pollInflight = false;   // 重入保护：上一轮请求未返回则跳过
 var openFactories = {};     // 已展开的工厂名集合（跨 renderAll 保持 details open）
