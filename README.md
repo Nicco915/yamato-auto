@@ -19,7 +19,8 @@
 ## 架构图
 
 ```text
- 操作员（浏览器：/chat 调度对话页、/review 审核页、/dashboard 批次看板）
+ 操作员（浏览器：/board 监控看板[落地页]、/chat 调度对话页、/review 审核页、
+              /dashboard 批次看板、/mappings 映射管理、/split/{id} 分票页）
         │
         ▼
 ┌────────────────────────────────────────────────────────────────┐
@@ -71,8 +72,11 @@ app/                            # 仓库根（.env 相对路径以此为基准�
 │   ├── extraction/             # 提取引擎（excel/pdf_text/vision/doc 四通道 + LLM 客户端）
 │   ├── db/                     # SQLAlchemy 模型 + 会话（master.db）
 │   ├── dispatcher/             # 调度 Agent（见下节）
+│   ├── orchestrator/           # 批次编排层：监控目录扫描配对（discovery）、监控看板
+│   │                           #  状态聚合（board）、流水线状态读取/自愈（pipeline_state）等
 │   ├── review/                 # 人工双屏审核页（/review + /api/v1/review/*）
-│   ├── ui/                     # 生产前端页面（/dashboard、/chat、/batch/{id}）
+│   ├── ui/                     # 生产前端页面（/board、/chat、/dashboard、/batch/{id}、
+│   │                           #  /split/{id}、/mappings；静态页在 ui/static/）
 │   ├── api/                    # FastAPI 路由（薄）+ service 层（逻辑集中）
 │   ├── data/                   # 运行后生成：master.db / checkpoints.db / logs / KB 数据
 │   └── output/                 # 运行后生成：写回的 Excel 副本
@@ -127,9 +131,12 @@ python3 -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000
 
 启动后页面入口：
 
+- `/`：落地页，重定向到 `/board`
+- `/board`：**监控看板**——监控目录三档总览与日常操作主入口（见下节）
 - `/chat`：调度 Agent 对话页（自然语言管理批次，SSE 流式进度）
 - `/dashboard`：批次看板；`/batch/{thread_id}`：批次详情
 - `/review?thread_id=...`：人工双屏审核页
+- `/split/{split_thread_id}`：分票/报关单页；`/mappings`：工厂/SKU 映射管理
 
 常用 API：
 
@@ -142,6 +149,10 @@ POST /api/v1/dispatcher/chat/stream    # 同上，SSE 流式
 GET  /api/v1/dispatcher/last_operation # 最近一次写操作摘要（L2 记忆）
 GET  /api/v1/dispatcher/history        # 会话对话历史
 POST /api/v1/agent/chat                # 提取 Agent 路径配置对话（生产授权通道）
+GET  /api/v1/watch/board               # 监控看板三档状态
+POST /api/v1/watch/start               # 看板一键启动批次
+POST /api/v1/watch/mark-done           # 标记完成（可绑定已有批次）
+POST /api/v1/watch/reset               # 退回未执行
 GET  /api/v1/review/{thread_id}/payload    # 审核页数据包
 GET  /api/v1/review/{thread_id}/document   # 审核页原始单据
 GET  /health
@@ -206,6 +217,40 @@ thread_id 建议使用批次号，如 `ETD0725`。同一 thread_id 的挂起状�
 10 次操作摘要，跨重启延续，注入两引擎的 prompt）；**L3** RAG 知识库
 （操作指引 + 错误案例，Pinecone 向量 / 关键词双后端，未命中问题进待策展
 队列，经 curate_kb 人工确认后才入库）。
+
+## 监控看板（/board，落地页）
+
+监控看板是日常操作的**主入口**：`/` 直接重定向到 `/board`，`start.bat`
+启动后浏览器打开的即此页。它把「监控目录总览」从调度对话提为常驻可视化页
+（`app/orchestrator/board.py` + `app/ui/static/board.html`，三列卡片，
+10s 轮询，弹窗打开时暂停）。
+
+**三档分类**：扫描监控目录（`WATCH_DIR`）一级子文件夹，按 batches 表状态分
+「未执行 / 执行中 / 已完成」。文件夹 ↔ 批次的配对走三重匹配（thread_id ==
+文件夹名 → folder_name 列 → 路径归属兜底），且带 watch_dir 归属过滤——
+行上记录过 watch_dir 的只参与对应目录的配对，历史空 watch_dir 行保留资格。
+
+**文件夹 ↔ 批次显式关联**：无论从哪头开始，关联都会自动落到数据层——
+create_batch 时若上/下游路径落在监控目录一级子文件夹内，自动写
+folder_name/watch_dir 两列；delete_batch 同步删 batches 行（不再留孤儿行）；
+标记完成弹窗可选「关联到已有已完成批次」（批次不存在 404 / 非完成态 422 /
+已绑定别文件夹 409）。
+
+**看板内完成日常操作**，特殊操作才跳转：
+
+- 未执行档：开始批次（确认弹窗充当确认门，后台 daemon 线程跑，预写
+  running 行消除空窗）；标记完成（纯标记或绑定已有批次）；
+- 执行中档：状态徽标 + 去审核 / 补充工厂 / 查看分票 / 开始分票 /
+  打开输出 Excel / 打开报关单目录——全部复用对话页既有端点 + confirm
+  确认门，零新增端点（所需字段由 get_pipeline_state 透传）；
+- 已完成档：打开输出 Excel / 打开报关单目录；详情 / 对话跳转（无
+  checkpoint 的合成行详情按钮置灰不可点，对话会新建会话属正常）；
+- 异常卡片：直出错误摘要，支持「退回未执行」全量回退重来。
+
+**异常恢复闭环**：批次异常（含提取致命错误熔断）在 batches 表留痕
+error_message/error_at，看板异常档直出摘要；「僵尸行」自愈——running 行
+无 checkpoint、线程已死且超过宽容期，读时自动标异常（已拍板「自动标异常、
+手动退回」，绝不自动标完成）。
 
 ## 提取引擎接口契约
 
