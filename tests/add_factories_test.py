@@ -15,6 +15,11 @@
 6. auto-skipped 捞回（2026-10-12 需求 1）：缺资料自动跳过的工厂差集可捞回
    （未补文件夹二遍仍自动跳过回 awaiting；补齐后挂起审核、approve 后自愈
    转 completed）。
+7. aborted 复活（2026-10-14 热修复）：Node2 入口协作停止现场（next=NODE2、
+   无 interrupt）→ add_factories 解除自愈守卫续跑，主队列残留厂挂起审核，
+   无二次终止；as_node 续跑正确性（Node2 只弹一次）由本用例实测钉死；
+8. aborted 复活 + 追加新工厂：update_state(as_node=NODE6) 合并路径对
+   aborted 现场同样成立，旧厂→新厂依次挂起、全部落 outputs。
 
 续跑语义实测结论（langgraph 1.2.9，本文件 e2e 即为验证）：
 - completed（next 为空）：update_state(as_node=NODE6) 后条件边 _route_after_writer
@@ -52,6 +57,7 @@ from openpyxl import Workbook, load_workbook  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 
 from app.api import service  # noqa: E402
+from app.db import batch_store  # noqa: E402
 from app.db.models import ReviewAudit  # noqa: E402
 from app.db.session import get_session  # noqa: E402
 from app.nodes import extraction_node as en  # noqa: E402
@@ -465,6 +471,127 @@ def test_auto_skipped_factory_can_be_added_back(monkeypatch):
     print("[断言通过] auto-skipped 工厂可被补充工厂捞回，补齐后自愈转 completed")
 
 
+# ---------------------------------------------------------------------------
+# 7. aborted 复活（无新工厂可补）：主队列残留续跑，解除自愈守卫
+# ---------------------------------------------------------------------------
+
+def test_aborted_batch_revive_with_pending_queue(monkeypatch):
+    """跑图挂起 → 置终止标志 → approve 当前厂（Node6 写入后 Node2 入口
+    检查点拦下 → aborted 中间现场：next=NODE2、无 interrupt）→
+    add_factories_to_batch 复活：解除自愈守卫（aborted→running）、
+    防御清标志、state 无合并直接 stream(None) 恢复挂起任务——
+    验证 as_node 续跑正确性：Node2 只跑一次，B 挂起审核不丢不重复。"""
+    _force_mock_extraction(monkeypatch)
+    from app.orchestrator.pipeline_state import get_pipeline_state
+    F_A, F_B = "复活厂甲", "复活厂乙"
+    SKU_A, SKU_B = "4900000000701", "4900000000702"
+    THREAD = "ADDF-E2E-ABORT-PENDING"
+
+    xlsx = _write_manifest(TMP / "addf_abort_pending.xlsx", [
+        (F_A, SKU_A, "ITEM-A", 10),
+        (F_B, SKU_B, "ITEM-B", 20),
+    ])
+    upstream = _make_upstream("abort_pending", [F_A, F_B])
+    _write_batch_config(THREAD, xlsx, upstream)
+
+    r = service.run_until_interrupt(THREAD, downstream_file_path=xlsx,
+                                    upstream_root=upstream)
+    assert r["review_data"]["factory_name"] == F_A
+
+    # 批次行 + 终止标志：approve A → Node6 写入 → Node2 入口拦下 → aborted
+    batch_store.upsert_batch(THREAD, status="running")
+    batch_store.set_cancel_requested(THREAD)
+    r = service.resume_order(THREAD, {"approved": True, "items": []})
+    assert r["status"] == "aborted", r
+    row = batch_store.get_batch(THREAD)
+    assert row["status"] == "aborted"
+    assert row["cancel_requested"] is False      # _mark_batch_aborted 已清
+    # aborted 中间现场形态钉死：next 指向 Node2 入口、无 interrupt
+    state = service.get_order_state(THREAD)
+    assert state["next_nodes"] == ["node2_folder_router"], state["next_nodes"]
+    # 自愈守卫：aborted 一律不覆写（回归）
+    assert get_pipeline_state(THREAD)["batch"]["status"] == "aborted"
+
+    # A 已写入、B 仍在主队列 → 无新工厂可补，但仍应复活并把剩余队列跑下去
+    r = service.add_factories_to_batch(THREAD)
+    assert r["added"] == 0 and r["factories"] == [], r
+    assert r["status"] == "pending_human_review", r
+    assert r["review_data"]["factory_name"] == F_B, r["review_data"]
+    assert r.get("message"), r
+    # 复活后：标志未残留（不会二次终止）、自愈恢复驱动 → pending_review
+    assert batch_store.is_cancel_requested(THREAD) is False
+    assert get_pipeline_state(THREAD)["batch"]["status"] == "pending_review"
+
+    # 审核链走完 → completed；A/B 各写一次（Node2 未重复弹厂）
+    r = service.resume_order(THREAD, {"approved": True, "items": []})
+    assert r["status"] == "success", r
+    outputs = service.get_order_state(THREAD)["values"].get("factory_outputs") or {}
+    assert set(outputs) == {F_A, F_B}, sorted(outputs)
+    rows = _excel_rows_by_sku(r["final_output_path"])
+    assert len(rows) == 2, rows
+    assert rows[SKU_A]["net"] == 50.0 and rows[SKU_B]["net"] == 100.0
+    assert get_pipeline_state(THREAD)["batch"]["status"] == "completed"
+    print("[断言通过] aborted 复活（无新工厂）：主队列残留续跑，自愈恢复驱动")
+
+
+# ---------------------------------------------------------------------------
+# 8. aborted 复活 + 装箱单追加新工厂：update_state(as_node=NODE6) 合并路径
+# ---------------------------------------------------------------------------
+
+def test_aborted_batch_revive_with_new_factory(monkeypatch):
+    """aborted 现场（next=NODE2 残留）+ 追加新工厂 → 走 update_state
+    (as_node=NODE6) 合并路径。验证 aborted 中间现场重算路由后 Node2
+    只弹一次、队列顺序 旧厂 B → 新厂 C 依次挂起审核、全部落 outputs。"""
+    _force_mock_extraction(monkeypatch)
+    F_A, F_B, F_C = "复新厂甲", "复新厂乙", "复新厂丙"
+    SKU_A, SKU_B, SKU_C = "4900000000801", "4900000000802", "4900000000803"
+    THREAD = "ADDF-E2E-ABORT-NEW"
+
+    xlsx_path = TMP / "addf_abort_new.xlsx"
+    xlsx = _write_manifest(xlsx_path, [
+        (F_A, SKU_A, "ITEM-A", 10),
+        (F_B, SKU_B, "ITEM-B", 20),
+    ])
+    upstream = _make_upstream("abort_new", [F_A, F_B, F_C])
+    _write_batch_config(THREAD, xlsx, upstream)
+
+    r = service.run_until_interrupt(THREAD, downstream_file_path=xlsx,
+                                    upstream_root=upstream)
+    assert r["review_data"]["factory_name"] == F_A
+
+    batch_store.upsert_batch(THREAD, status="running")
+    batch_store.set_cancel_requested(THREAD)
+    r = service.resume_order(THREAD, {"approved": True, "items": []})
+    assert r["status"] == "aborted", r
+
+    # 终止后用户在装箱单尾部追加新工厂 C
+    xlsx = _write_manifest(xlsx_path, [
+        (F_A, SKU_A, "ITEM-A", 10),
+        (F_B, SKU_B, "ITEM-B", 20),
+        (F_C, SKU_C, "ITEM-C", 30),
+    ])
+
+    r = service.add_factories_to_batch(THREAD)
+    assert r["added"] == 1 and r["factories"] == [F_C], r
+    assert r["status"] == "pending_human_review", r
+    # 旧队列优先：先挂 B（Node2 只弹一次，顺序不乱）
+    assert r["review_data"]["factory_name"] == F_B, r["review_data"]
+
+    r = service.resume_order(THREAD, {"approved": True, "items": []})
+    assert r["review_data"]["factory_name"] == F_C, r.get("review_data")
+    r = service.resume_order(THREAD, {"approved": True, "items": []})
+    assert r["status"] == "success", r
+
+    outputs = service.get_order_state(THREAD)["values"].get("factory_outputs") or {}
+    assert set(outputs) == {F_A, F_B, F_C}, sorted(outputs)
+    rows = _excel_rows_by_sku(r["final_output_path"])
+    assert len(rows) == 3, rows
+    assert rows[SKU_A]["net"] == 50.0 and rows[SKU_B]["net"] == 100.0
+    assert rows[SKU_C]["net"] == round(MOCK_UNIT_NET * 30, 2)
+    assert rows[SKU_C]["gross"] == round(MOCK_UNIT_GROSS * 30, 2)
+    print("[断言通过] aborted 复活 + 追加新工厂：as_node=NODE6 合并路径续跑正确")
+
+
 def main():
     import pytest  # 脚本模式下提供 MonkeyPatch（pytest 运行时是注入的 fixture）
     with pytest.MonkeyPatch.context() as mp:
@@ -479,6 +606,10 @@ def main():
         test_pending_review_merge_and_resuspend(mp)
     with pytest.MonkeyPatch.context() as mp:
         test_auto_skipped_factory_can_be_added_back(mp)
+    with pytest.MonkeyPatch.context() as mp:
+        test_aborted_batch_revive_with_pending_queue(mp)
+    with pytest.MonkeyPatch.context() as mp:
+        test_aborted_batch_revive_with_new_factory(mp)
     print("\nadd_factories_test: PASS")
 
 

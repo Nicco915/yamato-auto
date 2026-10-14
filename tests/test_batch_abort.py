@@ -16,7 +16,9 @@
 6. reset_to_todo：aborted 行放行退回（不抛「批次正在运行」）；running 行
    同假 snap 仍抛 RuntimeError；
 7. 包装层协作停止（代表一条 rerun_with_paths）：stream 抛
-   BatchAbortedError → 返回 status=aborted 且批次行 aborted、不抛异常。
+   BatchAbortedError → 返回 status=aborted 且批次行 aborted、不抛异常；
+8. add_factories aborted 复活（热修复）：aborted + next 非空假 snap 不再
+   被「正在运行中」409 挡下，复活为 running + 清标志；running 同形态仍挡。
 
 绝不发真实 LLM 请求（隔离 .env 无 key，假 graph 不跑真图）。
 
@@ -302,7 +304,6 @@ def test_reset_to_todo_running_still_rejected(watch, monkeypatch):
 
 
 # ---------- 7. 包装层协作停止（代表一条：rerun_with_paths） ----------
-
 def test_rerun_with_paths_batch_aborted_returns_aborted(monkeypatch):
     """stream 抛 BatchAbortedError → 不向上抛，返回 status=aborted，
     批次行落 aborted（六条包装层同模式，此为代表路径）。"""
@@ -323,3 +324,70 @@ def test_rerun_with_paths_batch_aborted_returns_aborted(monkeypatch):
     row = batch_store.get_batch(tid)
     assert row["status"] == "aborted"
     assert row["cancel_requested"] is False  # _mark_batch_aborted 已清标志
+
+
+# ---------- 8. add_factories aborted 复活（2026-10-14 热修复，假 snap 单元级） ----------
+
+def _write_manifest_xlsx(path, rows) -> str:
+    """最小下游装箱单（表头与 add_factories_test 同口径）。"""
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["MAKER_MEI_KJ", "SHOHIN_CD", "SHOHIN_MEI_E", "SOTOBAKO_D_HACCHU_SU"])
+    for row in rows:
+        ws.append(list(row))
+    wb.save(path)
+    return str(path)
+
+
+def _write_addf_config(tid: str, xlsx: str, upstream: str) -> None:
+    now = datetime.utcnow().isoformat()
+    service._write_batch_config(tid, {
+        "thread_id": tid,
+        "downstream_file_path": xlsx,
+        "upstream_root": upstream,
+        "created_at": now,
+        "last_run_at": now,
+        "run_count": 1,
+    })
+
+
+def test_add_factories_aborted_passes_running_guard(tmp_path, monkeypatch):
+    """aborted + 假 snap（next 非空、无 interrupt）→ 不再被「正在运行中」
+    409 挡下；复活为 running（解除自愈守卫）、防御清标志；无新工厂可补
+    走纯续跑（跳过 update_state），空 stream 落 completed 兜底分支。"""
+    tid = "tid-addf-aborted-revive"
+    xlsx = _write_manifest_xlsx(tmp_path / "manifest.xlsx", [
+        ("复活厂甲", "4900000000901", "ITEM-A", 1)])
+    _write_addf_config(tid, xlsx, str(tmp_path))
+    batch_store.upsert_batch(tid, status="aborted")
+    # 钉子：即使标志残留（正常已被 _mark_batch_aborted 清掉），复活也要清
+    batch_store.set_cancel_requested(tid)
+    snap = _FakeSnap(
+        values={"batch_id": tid,
+                "downstream_requirements": {"复活厂甲": ["4900000000901"]},
+                "factory_outputs": {"复活厂甲": {}}},
+        next_nodes=(NODE2,))
+    monkeypatch.setattr(service, "get_graph", lambda: _FakeGraph(snap))
+
+    r = service.add_factories_to_batch(tid)
+
+    assert r["status"] == "completed", r      # 假 stream 为空 → 兜底跑完分支
+    assert r["added"] == 0 and r.get("message"), r
+    row = batch_store.get_batch(tid)
+    assert row["status"] == "running"         # 已离开 aborted（自愈守卫解除）
+    assert row["cancel_requested"] is False
+
+
+def test_add_factories_running_still_blocked(tmp_path, monkeypatch):
+    """running + 同形态假 snap → 照旧 RuntimeError（409 口径不松）。"""
+    tid = "tid-addf-running-blocked"
+    xlsx = _write_manifest_xlsx(tmp_path / "manifest.xlsx", [
+        ("挡下厂甲", "4900000000902", "ITEM-A", 1)])
+    _write_addf_config(tid, xlsx, str(tmp_path))
+    batch_store.upsert_batch(tid, status="running")
+    snap = _FakeSnap(values={"batch_id": tid}, next_nodes=(NODE2,))
+    monkeypatch.setattr(service, "get_graph", lambda: _FakeGraph(snap))
+
+    with pytest.raises(RuntimeError, match="正在运行中"):
+        service.add_factories_to_batch(tid)

@@ -641,6 +641,7 @@ function batchStatusBadge(status) {
     completed: { label: "已完成", cls: "badge-done" },
     completed_with_errors: { label: "部分失败", cls: "badge-pending" },
     awaiting_factories: { label: "待补充", cls: "badge-pending" },
+    aborted: { label: "已终止", cls: "badge-unknown" },
     error: { label: "异常", cls: "badge-error" },
     unknown: { label: "未知", cls: "badge-unknown" },
   };
@@ -714,7 +715,7 @@ function renderSessionHeader(thread_id, data) {
     actions += '<a class="btn btn-primary btn-sm" target="_blank" rel="noopener" href="/review?thread_id='
              + encodeURIComponent(thread_id) + '">去审核</a>';
   }
-  if (isDone || status === "pending_review" || status === "awaiting_factories") {
+  if (isDone || status === "pending_review" || status === "awaiting_factories" || status === "aborted") {
     actions += '<button class="btn btn-sm" id="bsb-add-factories" onclick="chatAddFactories()">补充工厂</button>';
   } else if (status === "running") {
     actions += '<button class="btn btn-sm" disabled title="批次正在运行，待挂起审核或完成后再补充">补充工厂</button>';

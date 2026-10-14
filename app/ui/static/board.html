@@ -363,7 +363,7 @@ function runningActions(b, i) {
     h += '<a class="btn btn-sm btn-primary" target="_blank" rel="noopener" href="/review?thread_id=' +
       encodeURIComponent(tid) + '">去审核</a>';
   }
-  if (b.status === "completed" || b.status === "pending_review" || b.status === "awaiting_factories") {
+  if (b.status === "completed" || b.status === "pending_review" || b.status === "awaiting_factories" || b.status === "aborted") {
     h += '<button class="btn btn-sm" onclick="boardAddFactories(\'r\', ' + i + ', this)">补充工厂</button>';
   } else if (b.status === "running") {
     h += '<button class="btn btn-sm" disabled>补充工厂</button>';
@@ -905,15 +905,13 @@ async function confirmAbort() {
   res.style.display = "none";
   res.innerHTML = "";
   try {
-    var r = await api("/api/v1/batches/" + encodeURIComponent(b.thread_id) + "/abort",
-                      { method: "POST" });
-    // cooperative/immediate 两情形文案由后端给（decision 7），弹窗内展示；
-    // 保留按钮可用：cancel_requested 已置位再次确认即强制解锁（immediate）
-    res.style.display = "";
-    res.innerHTML = '<div style="font-size:13px;line-height:1.8;color:#15803d"><b>' +
-      esc((r && r.message) || "终止请求已提交") + '</b></div>';
-    btn.disabled = false;
-    btn.textContent = "再次终止";
+    await api("/api/v1/batches/" + encodeURIComponent(b.thread_id) + "/abort",
+              { method: "POST" });
+    // 成功即关窗刷新（2026-10-14 用户反馈）：cooperative/immediate 两情形
+    // 的结果由卡片状态变化自然呈现（aborted 徽章 + 可退回/可补充工厂）；
+    // 「二次点击强制解锁」不丢——卡片「终止任务」重开弹窗再确认即可，
+    // openAbortModal 每次打开都重置按钮文案与结果区
+    closeAbortModal();
     loadBoard(false);
   } catch (e) {
     res.style.display = "";

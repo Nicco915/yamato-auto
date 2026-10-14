@@ -526,6 +526,15 @@ def add_factories_to_batch(
       current_factory_data 重建等价 payload 再次 interrupt，审核页刷新后照常
       审核，当前工厂不丢；
     - running（next 非空且无 interrupt）：RuntimeError（路由层转 409）稍后再试。
+    - aborted（2026-10-14 复活，协作停止在 Node2/Node7 入口：节点未执行、
+      snap.next 指向该节点、无 interrupt）：放行进入主流程，正式续跑前
+      update_status(tid,"running") 解除 pipeline_state 自愈守卫 +
+      防御性再清 cancel_requested；state 无需合并（无新工厂可补且图还有
+      未跑节点）时跳过 update_state 直接 stream(None) 原样恢复挂起任务，
+      否则同 completed 走 as_node=NODE6 锚点重路由。跑完/挂起后状态由
+      _write_batch_state 与自愈驱动（pending_review→人审；全补齐→completed；
+      仍缺→awaiting_factories，factory_watch 监控随之恢复）；期间用户可再次
+      终止（状态已回 running，abort 走协作检查点，最终落回 aborted）。
 
     Returns:
         {"added": int, "factories": [...], "status": ..., "message": ...?}
@@ -557,7 +566,12 @@ def add_factories_to_batch(
 
     values = snap.values
     has_interrupt = any(t.interrupts for t in snap.tasks)
-    if snap.next and not has_interrupt:
+    # 2026-10-14 aborted 复活：已终止批次 checkpoint 残留 next 非空属预期
+    # （协作停止点在 Node2/Node7 入口，节点未执行、无 __interrupt__），
+    # 不按「运行中」409 挡下；其余 next 非空形态照旧视为运行中
+    batch_row = batch_store.get_batch(batch_id)
+    was_aborted = bool(batch_row) and batch_row.get("status") == "aborted"
+    if snap.next and not has_interrupt and not was_aborted:
         raise RuntimeError(
             f"批次 {batch_id} 正在运行中，请待其挂起审核或完成后再补充工厂")
 
@@ -577,8 +591,10 @@ def add_factories_to_batch(
     added = [f for f in to_add
              if f not in queued and f not in deferred_names and f != current_name]
 
-    if not added:
+    if not added and not (was_aborted and snap.next):
         return {"added": 0, "factories": [], "message": "没有待补充的工厂"}
+    # aborted 复活且图还有未跑节点（停在 Node2 入口时主/暂缓队列未消，
+    # 或停在 Node7 入口）：即使无新工厂可补，也照走续跑把剩余队列跑下去
 
     # 2026-10-12 用户确认（调整 B）：新增入队的未匹配工厂一并自动建夹，
     # 操作员按标准名放单据后监控即可接手；幂等，失败只 warning 不阻断
@@ -614,7 +630,15 @@ def add_factories_to_batch(
 
     logger.info("[补充工厂] 批次 %s：补入 %d 家 %s（%s）",
                 batch_id, len(added), sorted(added),
-                "挂起中重挂起" if has_interrupt else "已完成续跑")
+                "挂起中重挂起" if has_interrupt else
+                ("aborted 复活续跑" if was_aborted else "已完成续跑"))
+
+    if was_aborted:
+        # 2026-10-14 aborted 复活：解除自愈守卫（pipeline_state 对 aborted
+        # 一律不覆写），后续状态由跑图与自愈驱动；
+        # cancel_requested 在 _mark_batch_aborted 已清，防御性再清一次
+        batch_store.update_status(batch_id, "running")
+        batch_store.clear_cancel_requested(batch_id)
 
     with logging_context(thread_id=batch_id):
         # 输出副本行同步：装箱单尾部追加的新行需先补进 output 副本，
@@ -623,8 +647,13 @@ def add_factories_to_batch(
                                refresh, new_row_map)
 
         # as_node 锚点：pending_review 走 Node4 条件边重回 Node5 重挂起；
-        # completed 走 Node6 条件边重路由（见 docstring 实测结论）
-        graph.update_state(cfg, update, as_node=NODE4 if has_interrupt else NODE6)
+        # completed 走 Node6 条件边重路由（见 docstring 实测结论）；
+        # aborted 无 interrupt 同走 Node6 锚点（next 残留指向 Node2/Node7
+        # 入口，update_state 重算 next 后由条件边路由回 Node2 续跑）；
+        # aborted 且无新工厂可补时 state 无需合并，跳过 update_state 直接
+        # stream(None) 原样恢复 checkpoint 上的挂起任务（实测：Node2 只跑一次）
+        if added or not was_aborted:
+            graph.update_state(cfg, update, as_node=NODE4 if has_interrupt else NODE6)
 
         emit = _make_progress_emitter(on_progress, seed=values)
         try:
@@ -635,18 +664,23 @@ def add_factories_to_batch(
                     _start_pre_extraction(batch_id)
                     current = graph.get_state(cfg)
                     _write_batch_state(batch_id, "pending_review", state=current.values)
-                    return {
+                    result = {
                         "added": len(added),
                         "factories": sorted(added),
                         "status": "pending_human_review",
                         "thread_id": batch_id,
                         "review_data": event["__interrupt__"][0].value,
                     }
+                    if not added:
+                        # aborted 复活无新工厂可补：给前端一句人话而非「已补充 0 家」
+                        result["message"] = "批次已恢复执行，挂起等待审核"
+                    return result
         except batch_store.BatchAbortedError:
             # 用户主动终止（2026-10-14）：控制流异常，不是系统异常——
             # 落 aborted 而非 error，不向上抛；新增跑图路径必须同样处理
             _mark_batch_aborted(batch_id)
-            return {"status": "aborted", "thread_id": batch_id}
+            return {"status": "aborted", "thread_id": batch_id,
+                    "message": "批次已终止，可稍后通过补充工厂恢复执行"}
         except Exception as e:  # noqa: BLE001
             _write_batch_state(batch_id, "error", error=str(e))
             # 与 run_until_interrupt 同一不变量：批次因异常终止必须落原因
@@ -656,13 +690,16 @@ def add_factories_to_batch(
         # 防御性兜底：有待补充工厂正常必在 Node5 挂起；一路跑完则按完成处理
         final = graph.get_state(cfg)
         _write_batch_state(batch_id, "completed", state=final.values)
-        return {
+        result = {
             "added": len(added),
             "factories": sorted(added),
             "status": "completed",
             "thread_id": batch_id,
             "final_output_path": final.values.get("final_output_path"),
         }
+        if not added:
+            result["message"] = "批次已恢复执行并处理完成"
+        return result
 
 
 def _write_batch_state(

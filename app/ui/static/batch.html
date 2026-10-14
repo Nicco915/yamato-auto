@@ -402,8 +402,8 @@ function renderHead(d) {
   btns += '<button class="btn lbtn" onclick="openPivotDir(this)">打开透视目录</button>';
 
   // 补充工厂按钮：completed / pending_review / awaiting_factories（待补充）
-  // 可点；running 禁用；其他状态不显示
-  if (d.status === "completed" || d.status === "pending_review" || d.status === "awaiting_factories") {
+  // / aborted（已终止，2026-10-14 复活）可点；running 禁用；其他状态不显示
+  if (d.status === "completed" || d.status === "pending_review" || d.status === "awaiting_factories" || d.status === "aborted") {
     btns += '<button class="btn lbtn" id="btn-add-factories" onclick="addFactories()">补充工厂</button>';
   } else if (d.status === "running") {
     btns += '<button class="btn lbtn" disabled title="批次正在运行，待挂起审核或完成后再补充">补充工厂</button>';
