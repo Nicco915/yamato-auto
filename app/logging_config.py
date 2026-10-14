@@ -1,9 +1,11 @@
-"""中央日志配置：控制台 + 滚动文件双通道，供 API 服务与 CLI 入口统一接入。
+"""中央日志配置：控制台 + 按日轮转文件双通道，供 API 服务与 CLI 入口统一接入。
 
 用途：
 - 控制台 StreamHandler，级别取环境变量 LOG_LEVEL（默认 INFO）；
-- RotatingFileHandler 全量日志 app/data/logs/app.log（DEBUG 起）；
-- RotatingFileHandler 错误日志 app/data/logs/error.log（WARNING 起）；
+- TimedRotatingFileHandler 全量日志 app/data/logs/app.log（DEBUG 起，
+  每日午夜按日轮转，保留 30 天）；
+- TimedRotatingFileHandler 错误日志 app/data/logs/error.log（WARNING 起，
+  同样按日轮转保留 30 天）；
 - 接管 uvicorn 三个 logger，统一走 root 的 handler/格式。
 
 L2 批次关联（contextvars）：
@@ -19,7 +21,7 @@ import contextlib
 import contextvars
 import logging
 import os
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 # 用 Path(__file__) 推导日志目录（与 llm_client.py 的 .env 推导方式一致），
@@ -29,9 +31,9 @@ _LOG_DIR = Path(__file__).resolve().parent / "data" / "logs"
 # root logger 上的幂等标记：重复调用 setup_logging() 不重复添加 handler
 _SETUP_FLAG = "_yamato_logging_setup"
 
-# 文件滚动参数：单文件 10MB，保留 5 个备份
-_MAX_BYTES = 10 * 1024 * 1024
-_BACKUP_COUNT = 5
+# 按日轮转保留 30 天（2026-10-14，替代原 10MB×5 大小轮转；旧大小轮转遗留的
+# .1~.5 文件不受新 handler 管理，可手动删除）
+_BACKUP_DAYS = 30
 
 
 # 哨兵：区分"record 上本来就没有 context 属性"与"旧值恰好是某个对象"
@@ -213,23 +215,21 @@ def setup_logging() -> None:
     console_handler.setFormatter(formatter)
     console_handler.addFilter(context_filter)
 
-    # b) 全量文件：DEBUG 起，滚动保留
-    app_handler = RotatingFileHandler(
+    # b) 全量文件：DEBUG 起，按日轮转保留 30 天
+    app_handler = TimedRotatingFileHandler(
         _LOG_DIR / "app.log",
-        maxBytes=_MAX_BYTES,
-        backupCount=_BACKUP_COUNT,
-        encoding="utf-8",
+        when="midnight", interval=1, backupCount=_BACKUP_DAYS,
+        encoding="utf-8", utc=False,  # 本地时区，桌面机口径
     )
     app_handler.setLevel(logging.DEBUG)
     app_handler.setFormatter(formatter)
     app_handler.addFilter(context_filter)
 
-    # c) 错误文件：WARNING 起，滚动保留
-    error_handler = RotatingFileHandler(
+    # c) 错误文件：WARNING 起，按日轮转保留 30 天
+    error_handler = TimedRotatingFileHandler(
         _LOG_DIR / "error.log",
-        maxBytes=_MAX_BYTES,
-        backupCount=_BACKUP_COUNT,
-        encoding="utf-8",
+        when="midnight", interval=1, backupCount=_BACKUP_DAYS,
+        encoding="utf-8", utc=False,  # 本地时区，桌面机口径
     )
     error_handler.setLevel(logging.WARNING)
     error_handler.setFormatter(formatter)

@@ -627,20 +627,31 @@ def add_factories_to_batch(
         graph.update_state(cfg, update, as_node=NODE4 if has_interrupt else NODE6)
 
         emit = _make_progress_emitter(on_progress, seed=values)
-        for event in graph.stream(None, cfg, stream_mode="updates"):
-            emit(event)
-            if "__interrupt__" in event:
-                # 挂起后继续后台预提取剩余工厂（幂等，同 resume_order）
-                _start_pre_extraction(batch_id)
-                current = graph.get_state(cfg)
-                _write_batch_state(batch_id, "pending_review", state=current.values)
-                return {
-                    "added": len(added),
-                    "factories": sorted(added),
-                    "status": "pending_human_review",
-                    "thread_id": batch_id,
-                    "review_data": event["__interrupt__"][0].value,
-                }
+        try:
+            for event in graph.stream(None, cfg, stream_mode="updates"):
+                emit(event)
+                if "__interrupt__" in event:
+                    # 挂起后继续后台预提取剩余工厂（幂等，同 resume_order）
+                    _start_pre_extraction(batch_id)
+                    current = graph.get_state(cfg)
+                    _write_batch_state(batch_id, "pending_review", state=current.values)
+                    return {
+                        "added": len(added),
+                        "factories": sorted(added),
+                        "status": "pending_human_review",
+                        "thread_id": batch_id,
+                        "review_data": event["__interrupt__"][0].value,
+                    }
+        except batch_store.BatchAbortedError:
+            # 用户主动终止（2026-10-14）：控制流异常，不是系统异常——
+            # 落 aborted 而非 error，不向上抛；新增跑图路径必须同样处理
+            _mark_batch_aborted(batch_id)
+            return {"status": "aborted", "thread_id": batch_id}
+        except Exception as e:  # noqa: BLE001
+            _write_batch_state(batch_id, "error", error=str(e))
+            # 与 run_until_interrupt 同一不变量：批次因异常终止必须落原因
+            _mark_batch_error(batch_id, e)
+            raise
 
         # 防御性兜底：有待补充工厂正常必在 Node5 挂起；一路跑完则按完成处理
         final = graph.get_state(cfg)
@@ -860,6 +871,12 @@ def _pre_extract_factories(
     progress = _PreExtractProgress(thread_id, factories) if thread_id else None
 
     for idx, factory in enumerate(factories):
+        # 协作式终止检查点（2026-10-14）：逐厂开头查终止标志，命中即静默
+        # 退出——预提取是缓存预热，停了无副作用，靠 reset 清缓存重来
+        if thread_id and batch_store.is_cancel_requested(thread_id):
+            logger.info("[预提取] 批次 %s 收到终止标志，提前退出", thread_id)
+            return
+
         # 缓存已存在且新鲜（路径证据仍在当前批次 upstream_root 之下）则跳过；
         # 新鲜度校验是 rerun_with_paths 改路径重跑场景的兜底：旧根目录留下
         # 的缓存视为陈旧，照常重提，不误用上一批次数据
@@ -956,12 +973,38 @@ def _mark_batch_error(thread_id: str, exc: Exception) -> None:
     mark_error 内部自带 try/except，绝不抛出，不影响原异常上抛。
     """
     if isinstance(exc, FatalLLMError):
-        batch_store.mark_error(
-            thread_id,
-            "LLM 调用被拒绝：模型无访问权限或额度不足，"
-            "请检查百炼账号配置（403 AccessDenied）")
+        # 2026-10-14：按 FatalLLMError.kind 区分指引文案；
+        # kind 为空（历史构造点）落 403 旧文案兜底
+        if getattr(exc, "kind", None) == "401":
+            batch_store.mark_error(
+                thread_id,
+                "LLM 调用被拒绝：API 密钥无效或已过期（401 Unauthorized），"
+                "请检查 .env 中的 API key 配置")
+        else:
+            batch_store.mark_error(
+                thread_id,
+                "LLM 调用被拒绝：模型无访问权限或额度不足，"
+                "请检查百炼账号配置（403 AccessDenied）")
     else:
         batch_store.mark_error(thread_id, f"{type(exc).__name__}: {exc}"[:500])
+
+
+def _mark_batch_aborted(thread_id: str) -> None:
+    """批次被用户终止时落 aborted 状态（2026-10-14 批次终止）。
+
+    三件事：update_status(tid,"aborted") + 清终止标志 + 状态文件落 aborted
+    + info 日志。aborted 不填 completed_at、不触发结案备份
+    （update_status 的备份挂钩只认 completed）。
+    与 _mark_batch_error 同哲学：自带 try/except 绝不抛出。
+    """
+    try:
+        batch_store.update_status(thread_id, "aborted")
+        batch_store.clear_cancel_requested(thread_id)
+        _write_batch_state(thread_id, "aborted")
+        logger.info("批次已终止 | thread_id=%s", thread_id)
+    except Exception:  # noqa: BLE001 收尸是辅助设施，绝不抛出
+        logger.warning("批次终止落状态失败 | thread_id=%s", thread_id,
+                       exc_info=True)
 
 
 def run_until_interrupt(
@@ -999,6 +1042,9 @@ def run_until_interrupt(
         initial_state["batch_id"] = thread_id
         _ensure_batch_session_dir(thread_id)
         snap = graph.get_state(_config(thread_id))
+        # 新一轮运行清掉旧终止标志（2026-10-14）： aborted 退回未执行后
+        # 重启同 thread_id 时，残留标志会在首个 Node2 检查点误拦
+        batch_store.clear_cancel_requested(thread_id)
         _write_batch_state(thread_id, "running", state=initial_state)
 
         emit = _make_progress_emitter(on_progress, seed=initial_state)
@@ -1018,6 +1064,11 @@ def run_until_interrupt(
                         "thread_id": thread_id,
                         "review_data": payload,
                     }
+        except batch_store.BatchAbortedError:
+            # 用户主动终止（2026-10-14）：控制流异常，不是系统异常——
+            # 落 aborted 而非 error，不向上抛；新增跑图路径必须同样处理
+            _mark_batch_aborted(thread_id)
+            return {"status": "aborted", "thread_id": thread_id}
         except Exception as e:  # noqa: BLE001
             _write_batch_state(thread_id, "error", error=str(e))
             # 熔断落状态：批次因异常终止，看板卡片必须能看到原因
@@ -1077,6 +1128,11 @@ def resume_order(thread_id: str, resume_data: dict,
                     }
                     _write_audit(prepared, _audit_result_status(prepared, result))
                     return result
+        except batch_store.BatchAbortedError:
+            # 用户主动终止（2026-10-14）：控制流异常，不是系统异常——
+            # 落 aborted 而非 error，不向上抛；新增跑图路径必须同样处理
+            _mark_batch_aborted(thread_id)
+            return {"status": "aborted", "thread_id": thread_id}
         except Exception as e:  # noqa: BLE001
             _write_batch_state(thread_id, "error", error=str(e))
             # 与 run_until_interrupt 同一不变量：批次因异常终止必须落原因
@@ -1133,15 +1189,26 @@ def rerun_with_paths(
     with logging_context(thread_id=thread_id):
         graph.update_state(cfg, update, as_node=START)
         emit = _make_progress_emitter(on_progress, seed=snap.values)
-        for event in graph.stream(None, cfg, stream_mode="updates"):
-            emit(event)
-            if "__interrupt__" in event:
-                _start_pre_extraction(thread_id)
-                return {
-                    "status": "pending_human_review",
-                    "thread_id": thread_id,
-                    "review_data": event["__interrupt__"][0].value,
-                }
+        try:
+            for event in graph.stream(None, cfg, stream_mode="updates"):
+                emit(event)
+                if "__interrupt__" in event:
+                    _start_pre_extraction(thread_id)
+                    return {
+                        "status": "pending_human_review",
+                        "thread_id": thread_id,
+                        "review_data": event["__interrupt__"][0].value,
+                    }
+        except batch_store.BatchAbortedError:
+            # 用户主动终止（2026-10-14）：控制流异常，不是系统异常——
+            # 落 aborted 而非 error，不向上抛；新增跑图路径必须同样处理
+            _mark_batch_aborted(thread_id)
+            return {"status": "aborted", "thread_id": thread_id}
+        except Exception as e:  # noqa: BLE001
+            _write_batch_state(thread_id, "error", error=str(e))
+            # 与 run_until_interrupt 同一不变量：批次因异常终止必须落原因
+            _mark_batch_error(thread_id, e)
+            raise
 
         final = graph.get_state(cfg)
         return {
@@ -1253,21 +1320,32 @@ def retry_factory_extraction(
                 alias_save_error = f"{type(e).__name__}: {e}"
 
         emit = _make_progress_emitter(on_progress, seed=snap.values)
-        for event in graph.stream(None, cfg, stream_mode="updates"):
-            emit(event)
-            if "__interrupt__" in event:
-                _start_pre_extraction(thread_id)
-                result: dict[str, Any] = {
-                    "status": "pending_human_review",
-                    "thread_id": thread_id,
-                    "factory": factory,
-                    "review_data": event["__interrupt__"][0].value,
-                }
-                if alias_saved is not None:
-                    result["alias_saved"] = alias_saved
-                if alias_save_error is not None:
-                    result["alias_save_error"] = alias_save_error
-                return result
+        try:
+            for event in graph.stream(None, cfg, stream_mode="updates"):
+                emit(event)
+                if "__interrupt__" in event:
+                    _start_pre_extraction(thread_id)
+                    result: dict[str, Any] = {
+                        "status": "pending_human_review",
+                        "thread_id": thread_id,
+                        "factory": factory,
+                        "review_data": event["__interrupt__"][0].value,
+                    }
+                    if alias_saved is not None:
+                        result["alias_saved"] = alias_saved
+                    if alias_save_error is not None:
+                        result["alias_save_error"] = alias_save_error
+                    return result
+        except batch_store.BatchAbortedError:
+            # 用户主动终止（2026-10-14）：控制流异常，不是系统异常——
+            # 落 aborted 而非 error，不向上抛；新增跑图路径必须同样处理
+            _mark_batch_aborted(thread_id)
+            return {"status": "aborted", "thread_id": thread_id}
+        except Exception as e:  # noqa: BLE001
+            _write_batch_state(thread_id, "error", error=str(e))
+            # 与 run_until_interrupt 同一不变量：批次因异常终止必须落原因
+            _mark_batch_error(thread_id, e)
+            raise
 
         final = graph.get_state(cfg)
         result = {
@@ -1402,19 +1480,30 @@ def force_extract_file(
         graph.update_state(cfg, {}, as_node=NODE2)
 
         emit = _make_progress_emitter(on_progress, seed=snap.values)
-        for event in graph.stream(None, cfg, stream_mode="updates"):
-            emit(event)
-            if "__interrupt__" in event:
-                _start_pre_extraction(thread_id)
-                return {
-                    "status": "pending_human_review",
-                    "thread_id": thread_id,
-                    "factory": factory,
-                    "file_path": str(file_path_obj),
-                    "pages": clean_pages,
-                    "review_data": event["__interrupt__"][0].value,
-                    "message": process_result.message,
-                }
+        try:
+            for event in graph.stream(None, cfg, stream_mode="updates"):
+                emit(event)
+                if "__interrupt__" in event:
+                    _start_pre_extraction(thread_id)
+                    return {
+                        "status": "pending_human_review",
+                        "thread_id": thread_id,
+                        "factory": factory,
+                        "file_path": str(file_path_obj),
+                        "pages": clean_pages,
+                        "review_data": event["__interrupt__"][0].value,
+                        "message": process_result.message,
+                    }
+        except batch_store.BatchAbortedError:
+            # 用户主动终止（2026-10-14）：控制流异常，不是系统异常——
+            # 落 aborted 而非 error，不向上抛；新增跑图路径必须同样处理
+            _mark_batch_aborted(thread_id)
+            return {"status": "aborted", "thread_id": thread_id}
+        except Exception as e:  # noqa: BLE001
+            _write_batch_state(thread_id, "error", error=str(e))
+            # 与 run_until_interrupt 同一不变量：批次因异常终止必须落原因
+            _mark_batch_error(thread_id, e)
+            raise
 
         final = graph.get_state(cfg)
         return {
@@ -2252,6 +2341,86 @@ def get_batch_summary(thread_id: str) -> dict[str, Any]:
     graph = get_graph()
     snap = graph.get_state(_config(thread_id))
     return _summarize_snapshot(thread_id, snap, None)
+
+
+def abort_batch(thread_id: str) -> dict[str, Any]:
+    """终止批次（2026-10-14 批次终止）：运行中协作式停止，卡死立即解锁。
+
+    协作路径（有线程存活迹象 / updated_at 新鲜）：置 cancel_requested
+    标志，图内 Node2/Node7 检查点与预提取循环在厂边界停下，由六条
+    graph.stream 包装层捕获 BatchAbortedError 落 aborted——当前厂成果
+    保留、无半厂现场；
+    立即路径（僵尸行：有 checkpoint 但无线程存活且 updated_at 超龄，
+    或无 checkpoint 的启动早期死行）：直接标 aborted 解锁；
+    二次点击（cancel_requested 已置位再点终止）：强制解锁走立即路径。
+
+    已接受残留竞态：立即路径判死瞬间线程其实活着 → 该线程跑到下个
+    检查点被标志拦下再走协作分支，_mark_batch_aborted 幂等重标
+    aborted，最终一致；若它已在最后一个工厂直跑完成，pipeline_state
+    自愈守卫保证状态滞留 aborted 不被覆写——用户退回未执行重跑即可，
+    不追完美。
+
+    异常契约（路由层转 HTTP）：
+    - 批次不存在 → ValueError（404）；
+    - status != "running" → RuntimeError（409，文案按状态区分）；
+    - snap 有 interrupt（挂起审核中，自愈口径下不该是 running，防御）
+      → RuntimeError（409）。
+    """
+    row = batch_store.get_batch(thread_id)
+    if row is None:
+        raise ValueError(f"批次不存在: {thread_id}")
+    status = row.get("status")
+    if status != "running":
+        if status == "pending_review":
+            raise RuntimeError(
+                f"批次 {thread_id} 挂起审核中，无需终止，可退回未执行")
+        if status == "aborted":
+            raise RuntimeError(f"批次 {thread_id} 已终止")
+        raise RuntimeError(
+            f"仅运行中批次可终止（当前状态 {status}）: {thread_id}")
+
+    graph = get_graph()
+    snap = graph.get_state(_config(thread_id))
+    if any(t.interrupts for t in snap.tasks):
+        raise RuntimeError(
+            f"批次 {thread_id} 挂起审核中，无需终止，可退回未执行")
+
+    # 存活探测启发式：看板启动线程 / 预提取线程存活（线程枚举写法照
+    # board.py 僵尸自愈段），或进程级已知在跑集合，或 updated_at 新鲜。
+    # 宽容期 600 秒与 board.STALE_RUNNING_SECONDS 同源，本地重声明避免
+    # orchestrator → api 反向依赖
+    _STALE_RUNNING_SECONDS = 600
+    alive = any(
+        t.name in (f"board-start-{thread_id}", f"pre-extract-{thread_id}")
+        and t.is_alive()
+        for t in threading.enumerate())
+    fresh = False
+    try:
+        updated = datetime.fromisoformat(row.get("updated_at"))
+        fresh = ((datetime.utcnow() - updated).total_seconds()
+                 < _STALE_RUNNING_SECONDS)
+    except (TypeError, ValueError):
+        fresh = False  # 解析失败视为超龄（与 board.py 僵尸自愈同口径）
+
+    already_requested = bool(row.get("cancel_requested"))
+    if (snap.next and not already_requested
+            and (alive or thread_id in _known_running or fresh)):
+        batch_store.set_cancel_requested(thread_id)
+        logger.info("批次终止请求已记录（协作式） | thread_id=%s", thread_id)
+        return {"ok": True, "mode": "cooperative",
+                "message": "终止请求已记录，将在当前工厂处理完成后停止"
+                           "（大模型调用最长约 10 分钟）；如长时间未停止可"
+                           "再次点击终止强制解锁"}
+
+    # 立即路径：僵尸行 / 启动早期死行 / 二次点击强制解锁——置标志防线程
+    # 假死复活漏拦（若真活着，下个检查点被拦下走协作分支，最终一致），
+    # 再直接标 aborted
+    batch_store.set_cancel_requested(thread_id)
+    batch_store.update_status(thread_id, "aborted")
+    _write_batch_state(thread_id, "aborted")
+    logger.info("批次已终止（立即解锁） | thread_id=%s", thread_id)
+    return {"ok": True, "mode": "immediate",
+            "message": "批次已终止，可退回未执行后重新启动"}
 
 
 def get_batch_upstream_root(thread_id: str) -> str | None:

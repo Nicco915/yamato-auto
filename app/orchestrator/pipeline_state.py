@@ -279,6 +279,10 @@ def get_pipeline_state(thread_id: str) -> dict[str, Any]:
         if batch is None:
             # 无 batches 行（旧批次/手动建批）也合成最小信息，让状态栏按钮可用
             batch = {"thread_id": thread_id, "folder_name": None, "status": desired_status}
+        elif batch.get("status") == "aborted":
+            # 2026-10-14 批次终止：已终止批次不被自愈覆写（与 force_completed
+            # 防打回同哲学）——extract/split/stages 仍照常返回供详情页展示
+            pass
         elif batch.get("status") != desired_status:
             if batch_store.update_status(thread_id, desired_status):
                 logger.info(

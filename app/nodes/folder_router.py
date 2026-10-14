@@ -18,6 +18,7 @@ import logging
 from pathlib import Path
 
 from app.config import get_settings
+from app.db import batch_store
 from app.factory_match import (
     load_alias_map, load_folder_match_candidates, match_factory_folder)
 from app.logging_config import bind_context
@@ -31,6 +32,13 @@ SUPPORTED_EXTS = {".pdf", ".xlsx", ".xls", ".jpg", ".jpeg", ".png", ".csv",
 
 
 def folder_router(state: AgentState) -> dict:
+    # 协作式终止检查点（2026-10-14）：厂循环唯一收口（NODE6/NODE4C/NODE4B
+    # 全部回 NODE2），命中则当前厂已完整落妥、下一厂不再开始；
+    # 由 service 六条 stream 包装层捕获转 aborted
+    batch_id = state.get("batch_id")
+    if batch_id and batch_store.is_cancel_requested(batch_id):
+        raise batch_store.BatchAbortedError(batch_id)
+
     settings = get_settings()
     queue = list(state.get("pending_factories") or [])
     deferred = list(state.get("deferred_factories") or [])

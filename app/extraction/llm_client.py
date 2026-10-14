@@ -7,7 +7,8 @@
 - VISION_MODEL          默认 Qwen/Qwen2.5-VL-72B-Instruct
 - TEXT_MODEL            默认 Qwen/Qwen2.5-72B-Instruct
 
-可靠性：超时 300s；429/5xx 指数退避重试最多 3 次；每次调用记录 token 用量。
+可靠性：超时 180s；429/5xx 指数退避重试最多 2 次（SDK 内部重试已关闭）；
+每次调用记录 token 用量。
 
 可观测性（L4）：每次调用记 INFO（用途/模型/耗时/tokens/finish_reason），
 finish_reason=length（max_tokens 截断，历史"假死"事故指纹）单独 WARNING，
@@ -57,8 +58,9 @@ DEFAULT_BASE_URL = "https://api.siliconflow.cn/v1"
 DEFAULT_VISION_MODEL = "Qwen/Qwen2.5-VL-72B-Instruct"
 DEFAULT_TEXT_MODEL = "Qwen/Qwen2.5-72B-Instruct"
 
-REQUEST_TIMEOUT = 300  # 秒
-MAX_API_RETRIES = 3  # 429/5xx/连接错误时最多重试 3 次
+REQUEST_TIMEOUT = 180  # 秒（2026-10-14 由 300 收紧；超时耗尽走既有「提取失败挂人工」路径）
+MAX_API_RETRIES = 2  # 429/5xx/连接错误/超时时最多重试 2 次
+# （SDK 内部重试已显式关闭 max_retries=0，全部重试语义集中在本模块）
 
 DEBUG_TRUNC_LIMIT = 500  # 请求/响应原文 DEBUG 日志的截断长度
 
@@ -168,7 +170,15 @@ class MissingAPIKeyError(RuntimeError):
 
 class FatalLLMError(Exception):
     """LLM 致命错误：账号/配置级问题（403 无权限、401 未认证等），
-    重试无意义，应立即熔断整个批次而非按工厂降级为占位数据。"""
+    重试无意义，应立即熔断整个批次而非按工厂降级为占位数据。
+
+    kind: "401"=密钥无效 / "403"=无权限或额度，供上层区分指引文案
+    （2026-10-14 新增，默认 None 兼容历史构造点，上层落 403 旧文案）。
+    """
+
+    def __init__(self, message: str, kind: str | None = None) -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 @dataclass
@@ -256,7 +266,11 @@ def get_settings() -> dict:
 def _get_client() -> OpenAI:
     s = get_settings()
     return OpenAI(
-        api_key=s["api_key"], base_url=s["base_url"], timeout=REQUEST_TIMEOUT
+        api_key=s["api_key"], base_url=s["base_url"], timeout=REQUEST_TIMEOUT,
+        # 2026-10-14：显式关闭 SDK 内部重试——否则 SDK 默认 max_retries=2
+        # 会在每次 create 内部隐性重试，与应用层 _create_with_retry 相乘，
+        # 重试语义分散、日志对不上；全部重试集中在本模块一处
+        max_retries=0,
     )
 
 
@@ -399,7 +413,10 @@ def _create_with_retry(kwargs: dict, model: str, kind: str,
                     type(e).__name__, label, model, str(e)[:200],
                 )
                 raise FatalLLMError(
-                    f"LLM 调用被拒绝（{type(e).__name__}）：{str(e)[:200]}"
+                    f"LLM 调用被拒绝（{type(e).__name__}）：{str(e)[:200]}",
+                    # 2026-10-14：401=密钥无效 / 403=无权限或额度，
+                    # 供 _mark_batch_error 分支指引文案
+                    kind="401" if isinstance(e, AuthenticationError) else "403",
                 ) from e
             # 部分模型不支持 response_format，降级一次后按正常重试流程走
             if "response_format" in kwargs and "response_format" in str(e).lower():

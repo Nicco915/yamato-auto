@@ -321,6 +321,10 @@ def start_from_board(
             )
             logger.info("看板启动批次完成首段 | thread_id=%s | status=%s",
                         tid, result.get("status"))
+        except batch_store.BatchAbortedError:
+            # 2026-10-14 防御：正常已碰不到（service 六条 stream 包装层
+            # 已吞掉并返回 status=aborted 的 dict），防御造价一行
+            pass
         except Exception as e:  # noqa: BLE001 后台线程异常不抛出，落状态 + 日志
             logger.exception("看板启动批次失败 | thread_id=%s", tid)
             batch_store.mark_error(tid, f"{type(e).__name__}: {e}"[:500])
@@ -411,12 +415,20 @@ def reset_to_todo(folder_name: str) -> dict[str, Any]:
                            f"可重新开始"}
 
     # ---- 防护（与 service.delete_batch 同规则）----
-    graph = service.get_graph()
-    snap = graph.get_state(service._config(tid))
-    if not any(t.interrupts for t in snap.tasks) and snap.next:
-        raise RuntimeError(f"批次正在运行，禁止退回: {tid}")
-    if _pre_extraction_alive(tid):
-        raise RuntimeError("后台预识别仍在运行，请稍后重试")
+    # 2026-10-14 批次终止：已终止（aborted）批次放行退回——协作停止后
+    # checkpoint 残留 next 非空无 interrupt 属预期，不跳过会 409 永远锁死；
+    # 预提取防护一并跳过（预提取线程见终止标志即自行退出，且后续清理 ②
+    # 会删缓存目录，等它退出无必要）
+    batch_row = batch_store.get_batch(tid)
+    if batch_row and batch_row.get("status") == "aborted":
+        pass  # 已终止批次放行退回
+    else:
+        graph = service.get_graph()
+        snap = graph.get_state(service._config(tid))
+        if not any(t.interrupts for t in snap.tasks) and snap.next:
+            raise RuntimeError(f"批次正在运行，禁止退回: {tid}")
+        if _pre_extraction_alive(tid):
+            raise RuntimeError("后台预识别仍在运行，请稍后重试")
 
     cleaned: list[str] = []
     settings = get_settings()

@@ -6,31 +6,31 @@
 
 设计要点：
 - 独立 logger（dispatcher_debug），propagate=False——不进 root 的控制台
-  handler，也不进 app.log/error.log，只写本模块自己的滚动文件；
+  handler，也不进 app.log/error.log，只写本模块自己的按日轮转文件；
 - JSONL（一行一条 JSON）：时间戳 + event 类型 + 事件字段，便于
   grep / jq 按 session、事件类型回放；
 - 序列化绝不抛异常：所有字段 default=str，整体失败静默丢弃（日志
   不能反过来弄挂调度循环）；
 - 敏感参数键（api_key/token/secret/password 类）脱敏为 ***；
-- 超长字段截断保护滚动配额（prompt 100k 字符上限，工具结果 20k）。
+- 超长字段截断保护日志体积（prompt 100k 字符上限，工具结果 20k）。
 """
 from __future__ import annotations
 
 import json
 import logging
 from datetime import datetime
-from logging.handlers import RotatingFileHandler
+from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 # 与 logging_config.py 同一目录约定（app/data/logs/），不 import app.config
 _LOG_DIR = Path(__file__).resolve().parent.parent / "data" / "logs"
 _LOG_FILE = _LOG_DIR / "dispatcher.log"
 
-# 调度日志单行可能很长（完整 prompt）：单文件 20MB，保留 5 个备份
-_MAX_BYTES = 20 * 1024 * 1024
-_BACKUP_COUNT = 5
+# 按日轮转保留 30 天（2026-10-14，替代原 20MB×5 大小轮转；旧大小轮转遗留的
+# .1~.5 文件不受新 handler 管理，可手动删除）
+_BACKUP_DAYS = 30
 
-# 字段截断上限（防爆滚动配额）
+# 字段截断上限（防爆日志体积）
 _PROMPT_CAP = 100_000   # llm_request 的 messages 序列化上限
 _RESULT_CAP = 20_000    # tool_result / confirm_execute 的 result 序列化上限
 
@@ -50,11 +50,10 @@ def _get_logger() -> logging.Logger:
     lg.propagate = False  # 不上抛 root：不进控制台 / app.log / error.log
     if not lg.handlers:
         _LOG_DIR.mkdir(parents=True, exist_ok=True)
-        handler = RotatingFileHandler(
+        handler = TimedRotatingFileHandler(
             _LOG_FILE,
-            maxBytes=_MAX_BYTES,
-            backupCount=_BACKUP_COUNT,
-            encoding="utf-8",
+            when="midnight", interval=1, backupCount=_BACKUP_DAYS,
+            encoding="utf-8", utc=False,  # 本地时区，桌面机口径
         )
         # JSONL 自带时间戳，handler 不再重复格式化
         handler.setFormatter(logging.Formatter("%(message)s"))
@@ -64,7 +63,7 @@ def _get_logger() -> logging.Logger:
 
 
 def _truncate(text: str, cap: int) -> str:
-    """超长截断并标注，保护滚动配额。"""
+    """超长截断并标注，保护日志体积。"""
     if len(text) <= cap:
         return text
     return text[:cap] + f"...<截断，原长 {len(text)} 字符>"

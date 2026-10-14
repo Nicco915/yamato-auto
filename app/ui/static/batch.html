@@ -114,7 +114,8 @@ var STATUS_MAP = {
   completed_with_errors: ["部分失败", "b-orange"],
   awaiting_factories: ["待补充", "b-orange"],
   unknown:        ["未知", "b-gray"],
-  error:          ["异常", "b-gray"]
+  error:          ["异常", "b-gray"],
+  aborted:        ["已终止", "b-gray"]
 };
 var ROLE_MAP = {
   current: ["当前", "b-blue"],
@@ -219,6 +220,26 @@ async function forceComplete() {
     showToast("强制结案失败：" + (e && e.message ? e.message : e));
     try { await load(); } catch (e2) {}   // 恢复渲染与轮询（load 会重建按钮）
     if (btn) { btn.disabled = false; btn.textContent = "强制结案"; }
+  }
+}
+
+/* ---- 终止批次（2026-10-14）：运行中协作式停止，卡死立即解锁；确认门原生 confirm 一次一确认 ---- */
+async function abortBatch() {
+  var btn = document.getElementById("btn-abort-batch");
+  if (!confirm("将终止该批次：正在运行的会在当前工厂处理完成后安全停止，已卡死的会立即解锁。已完成的工厂成果保留，可退回未执行后重新启动。确认？")) return;
+  if (btn) { btn.disabled = true; btn.textContent = "终止中…"; }
+  stopPolling();            // 终止后转 aborted，无需继续轮询（aborted 不在 POLL_ACTIVE_STATUS）
+  try {
+    var r = await api("/api/v1/batches/" + encodeURIComponent(threadId) + "/abort",
+                      { method: "POST" });
+    // cooperative/immediate 两情形文案由后端给
+    alert((r && r.message) || "终止请求已提交");
+    await load();
+  } catch (e) {
+    // 409（已终止/挂起审核中无需终止）/404/其他：alert 后端 detail
+    alert("终止失败：" + (e && e.message ? e.message : e));
+    try { await load(); } catch (e2) {}   // 恢复渲染与轮询（load 会重建按钮）
+    if (btn) { btn.disabled = false; btn.textContent = "终止任务"; }
   }
 }
 
@@ -386,6 +407,12 @@ function renderHead(d) {
     btns += '<button class="btn lbtn" id="btn-add-factories" onclick="addFactories()">补充工厂</button>';
   } else if (d.status === "running") {
     btns += '<button class="btn lbtn" disabled title="批次正在运行，待挂起审核或完成后再补充">补充工厂</button>';
+  }
+
+  // 终止任务按钮（2026-10-14 批次终止需求）：仅运行中显示，原生 confirm 确认门（一次一确认）；
+  // aborted 落「其他状态不显示」分支
+  if (d.status === "running") {
+    btns += '<button class="btn lbtn" id="btn-abort-batch" onclick="abortBatch()">终止任务</button>';
   }
 
   // 强制结案按钮（2026-10-12 需求 2）：仅待补充显示，确认门一次一确认

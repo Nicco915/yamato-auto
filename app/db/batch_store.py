@@ -19,6 +19,21 @@ from app.db.session import get_engine, get_session
 
 logger = logging.getLogger(__name__)
 
+
+class BatchAbortedError(Exception):
+    """用户主动终止批次的控制流异常（2026-10-14 批次终止）。
+
+    图节点（folder_router/export_node）在厂边界检查 cancel_requested 标志
+    命中时抛出，由 service 六条 graph.stream 包装层捕获并转 aborted 状态
+    ——这是用户主动语义，不是系统异常，绝不走 _mark_batch_error。
+
+    定义在本文件的理由：控制流异常与 cancel_requested 标志同源（同一处
+    事实源、同一组读写函数）；nodes 层（folder_router 等）import
+    app.db.batch_store 无循环依赖（folder_router 现已 import app.config /
+    app.factory_match，同层先例）。
+    """
+
+
 # ensure_error_columns 一次性幂等迁移标志（模块级 + 锁，线程安全）
 _columns_ensured = False
 _columns_lock = threading.Lock()
@@ -26,6 +41,10 @@ _columns_lock = threading.Lock()
 # ensure_force_completed_column 一次性幂等迁移标志（同上）
 _force_col_ensured = False
 _force_col_lock = threading.Lock()
+
+# ensure_cancel_requested_column 一次性幂等迁移标志（同上）
+_cancel_col_ensured = False
+_cancel_col_lock = threading.Lock()
 
 
 def ensure_error_columns() -> None:
@@ -96,10 +115,45 @@ def ensure_force_completed_column() -> None:
             logger.error("batches 表补列 force_completed 失败: %s", exc)
 
 
+def ensure_cancel_requested_column() -> None:
+    """老库幂等补列：batches 加 cancel_requested（2026-10-14 协作式终止标志；
+    create_all 不会给已有表加列）。
+
+    与 ensure_force_completed_column 同模式：模块级标志每进程只执行一次；
+    异常只记日志不抛——但加列失败会导致读写 cancel_requested 报错，故失败
+    记 error 级。所有读写路径都调用（读路径也要补列：老库缺列时 SELECT
+    直接报 no such column）。
+    """
+    global _cancel_col_ensured
+    if _cancel_col_ensured:
+        return
+    with _cancel_col_lock:
+        if _cancel_col_ensured:
+            return
+        try:
+            engine = get_engine()
+            with engine.connect() as conn:
+                cols = {
+                    row[1]
+                    for row in conn.execute(text("PRAGMA table_info(batches)")).fetchall()
+                }
+                if "cancel_requested" not in cols:
+                    conn.execute(
+                        text("ALTER TABLE batches ADD COLUMN cancel_requested "
+                             "BOOLEAN DEFAULT 0")
+                    )
+                    logger.info("batches 表补列 cancel_requested 完成")
+                conn.commit()
+            _cancel_col_ensured = True
+        except Exception as exc:  # noqa: BLE001
+            logger.error("batches 表补列 cancel_requested 失败: %s", exc)
+
+
 def get_batch(thread_id: str) -> dict[str, Any] | None:
     """按 thread_id 查询 batch 记录；不存在返回 None。"""
     ensure_error_columns()  # 读路径也要补列：老库缺列时 SELECT 直接报 no such column
     ensure_force_completed_column()
+    ensure_cancel_requested_column()
     try:
         with get_session() as s:
             row = s.get(Batch, thread_id)
@@ -120,6 +174,7 @@ def list_batches(
     """列出 batch 记录，可选按状态/监控目录过滤。"""
     ensure_error_columns()  # 读路径也要补列：老库缺列时 SELECT 直接报 no such column
     ensure_force_completed_column()
+    ensure_cancel_requested_column()
     try:
         with get_session() as s:
             q = s.query(Batch)
@@ -147,6 +202,7 @@ def upsert_batch(
     """创建或更新 batch 记录。thread_id 不存在则插入，存在则更新传入的非空字段。"""
     ensure_error_columns()
     ensure_force_completed_column()
+    ensure_cancel_requested_column()
     try:
         with get_session() as s:
             row = s.get(Batch, thread_id)
@@ -196,9 +252,11 @@ def update_status(
     非 error 状态时清空 error_message/error_at（恢复后不留旧错误）。
     转 completed 时异步触发自动备份（2026-10-12 数据备份机制），
     completed_with_errors 不触发；触发失败只记 warning，不影响返回 True。
+    aborted（2026-10-14 批次终止）不填 completed_at、不触发结案备份。
     """
     ensure_error_columns()
     ensure_force_completed_column()
+    ensure_cancel_requested_column()
     try:
         with get_session() as s:
             row = s.get(Batch, thread_id)
@@ -233,6 +291,7 @@ def mark_error(thread_id: str, message: str) -> bool:
     """将 batch 置为 error 状态并留痕失败原因；行不存在返回 False。"""
     ensure_error_columns()
     ensure_force_completed_column()
+    ensure_cancel_requested_column()
     try:
         with get_session() as s:
             row = s.get(Batch, thread_id)
@@ -255,6 +314,7 @@ def set_force_completed(thread_id: str) -> bool:
     见 force_completed=True 不再把批次打回 awaiting_factories。
     行不存在返回 False；写失败记 error 日志返回 False。"""
     ensure_force_completed_column()
+    ensure_cancel_requested_column()
     try:
         with get_session() as s:
             row = s.get(Batch, thread_id)
@@ -266,6 +326,59 @@ def set_force_completed(thread_id: str) -> bool:
         return True
     except Exception as exc:  # noqa: BLE001
         logger.error("标记 batch %s 强制结案失败: %s", thread_id, exc)
+        return False
+
+
+def set_cancel_requested(thread_id: str) -> bool:
+    """置协作式终止标志（2026-10-14 批次终止）：图内 Node2/Node7 检查点
+    与预提取循环在厂边界见 True 即停。行不存在返回 False；
+    写失败记 error 日志返回 False。"""
+    ensure_cancel_requested_column()
+    try:
+        with get_session() as s:
+            row = s.get(Batch, thread_id)
+            if row is None:
+                return False
+            row.cancel_requested = True
+            row.updated_at = datetime.utcnow()
+            s.commit()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.error("置 batch %s 终止标志失败: %s", thread_id, exc)
+        return False
+
+
+def clear_cancel_requested(thread_id: str) -> bool:
+    """清协作式终止标志（协作停止落 aborted 后 / 新一轮运行起跑时调用）。
+    行不存在返回 False；写失败记 error 日志返回 False。"""
+    ensure_cancel_requested_column()
+    try:
+        with get_session() as s:
+            row = s.get(Batch, thread_id)
+            if row is None:
+                return False
+            row.cancel_requested = False
+            row.updated_at = datetime.utcnow()
+            s.commit()
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.error("清 batch %s 终止标志失败: %s", thread_id, exc)
+        return False
+
+
+def is_cancel_requested(thread_id: str) -> bool:
+    """查询终止标志；行不存在或查询失败一律返回 False（宁可不拦，
+    不把查询故障变成批次停摆）。"""
+    ensure_cancel_requested_column()
+    try:
+        with get_session() as s:
+            row = s.get(Batch, thread_id)
+            if row is None:
+                return False
+            return bool(row.cancel_requested)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("查询 batch %s 终止标志失败（按未请求处理）: %s",
+                       thread_id, exc)
         return False
 
 
@@ -306,6 +419,7 @@ def _to_dict(row: Batch) -> dict[str, Any]:
         "error_message": row.error_message,
         "error_at": row.error_at.isoformat() if row.error_at else None,
         "force_completed": bool(row.force_completed),
+        "cancel_requested": bool(row.cancel_requested),
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "completed_at": row.completed_at.isoformat() if row.completed_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,

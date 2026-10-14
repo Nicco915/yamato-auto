@@ -134,6 +134,19 @@
   </div>
 </div>
 
+<!-- 终止批次确认弹窗（确认门：一次一确认；终止结果在弹窗内展示，2026-10-14） -->
+<div id="abort-mask" class="modal-mask" onclick="if (event.target === this) closeAbortModal()">
+  <div class="modal start-modal">
+    <h3 id="abort-title">终止批次</h3>
+    <p class="hint">将终止该批次：正在运行的会在当前工厂处理完成后安全停止，已卡死的会立即解锁。已完成的工厂成果保留，可退回未执行后重新启动。确认？</p>
+    <div class="field" id="abort-result" style="display:none"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeAbortModal()">取消</button>
+      <button class="btn btn-primary" id="abort-confirm-btn" onclick="confirmAbort()">确认终止</button>
+    </div>
+  </div>
+</div>
+
 <script src="/ui/static/ui.js"></script>
 <script>
 renderTopbar("board");
@@ -201,6 +214,8 @@ function statusBadge(status) {
       return '<span class="badge badge-warn">待补充</span>';
     case "error":
       return '<span class="badge badge-muted">异常</span>';
+    case "aborted":
+      return '<span class="badge badge-muted">已终止</span>';
     default:
       return '<span class="badge badge-muted">' + esc(status || "未知") + '</span>';
   }
@@ -372,6 +387,11 @@ function runningActions(b, i) {
     encodeURIComponent(tid) + '">' + chatText + '</a>' +
     '<a class="btn btn-sm" target="_blank" rel="noopener" href="/batch/' +
     encodeURIComponent(tid) + '">详情</a>';
+  // 终止任务（2026-10-14 批次终止需求）：仅运行中显示，modal-mask 确认门（一次一确认）；
+  // aborted 的「退回未执行」走下方 else 分支天然可点
+  if (b.status === "running") {
+    h += '<button class="btn btn-sm btn-ghost" onclick="openAbortModal(\'r\', ' + i + ')">终止任务</button>';
+  }
   // 退回未执行：运行中置灰防误触，挂起/异常可回退（残留行走到上面 return，无此按钮）
   h += (b.status === "running")
     ? '<button class="btn btn-sm btn-ghost" disabled title="批次正在执行，请等到审核挂起点后再退回">退回未执行</button>'
@@ -849,6 +869,64 @@ async function confirmBackup() {
   }
 }
 
+/* ---------- 终止批次（2026-10-14：确认门弹窗 + cooperative/immediate 结果弹窗内展示） ---------- */
+var _abortTarget = null;   // {tier, i} 当前待终止的执行中卡片
+var _aborting = false;
+
+function openAbortModal(tier, i) {
+  if (_aborting) return;
+  var b = _cardAt(tier, i);
+  if (!b || b.has_checkpoint === false || !b.thread_id) return;
+  _abortTarget = { tier: tier, i: i };
+  $("abort-title").textContent = "终止批次：" + b.folder_name;
+  var res = $("abort-result");
+  res.style.display = "none";
+  res.innerHTML = "";
+  var btn = $("abort-confirm-btn");
+  btn.disabled = false;
+  btn.textContent = "确认终止";
+  $("abort-mask").classList.add("show");
+}
+
+function closeAbortModal() {
+  $("abort-mask").classList.remove("show");
+  _abortTarget = null;
+}
+
+async function confirmAbort() {
+  if (_aborting || !_abortTarget) return;
+  var b = _cardAt(_abortTarget.tier, _abortTarget.i);
+  if (!b || !b.thread_id) return;
+  _aborting = true;
+  var btn = $("abort-confirm-btn");
+  var res = $("abort-result");
+  btn.disabled = true;
+  btn.textContent = "终止中…";
+  res.style.display = "none";
+  res.innerHTML = "";
+  try {
+    var r = await api("/api/v1/batches/" + encodeURIComponent(b.thread_id) + "/abort",
+                      { method: "POST" });
+    // cooperative/immediate 两情形文案由后端给（decision 7），弹窗内展示；
+    // 保留按钮可用：cancel_requested 已置位再次确认即强制解锁（immediate）
+    res.style.display = "";
+    res.innerHTML = '<div style="font-size:13px;line-height:1.8;color:#15803d"><b>' +
+      esc((r && r.message) || "终止请求已提交") + '</b></div>';
+    btn.disabled = false;
+    btn.textContent = "再次终止";
+    loadBoard(false);
+  } catch (e) {
+    res.style.display = "";
+    res.innerHTML = '<div style="font-size:13px;line-height:1.8;color:#b91c1c">' +
+      (e.status === 409 || e.status === 404 ? esc(e.message) : "终止失败：" + esc(e.message)) +
+      '</div>';
+    btn.disabled = false;
+    btn.textContent = "确认终止";
+  } finally {
+    _aborting = false;
+  }
+}
+
 /* ---------- 轮询 ---------- */
 loadBoard(false);
 _pollTimer = setInterval(function () {
@@ -857,6 +935,7 @@ _pollTimer = setInterval(function () {
   if ($("markdone-mask").classList.contains("show")) return;
   if ($("prep-mask").classList.contains("show")) return;
   if ($("backup-mask").classList.contains("show")) return;
+  if ($("abort-mask").classList.contains("show")) return;
   loadBoard(false);
 }, 10000);
 </script>

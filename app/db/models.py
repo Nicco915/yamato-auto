@@ -277,6 +277,11 @@ class Batch(Base):
     # batch_store.ensure_force_completed_column 幂等 ALTER 补列
     force_completed: Mapped[bool | None] = mapped_column(
         Boolean, nullable=True, default=False)
+    # 协作式终止标志（2026-10-14 批次终止）：True 时图内 Node2/Node7 检查点
+    # 与预提取循环在厂边界停下（BatchAbortedError）；老库由
+    # batch_store.ensure_cancel_requested_column 幂等 ALTER 补列
+    cancel_requested: Mapped[bool | None] = mapped_column(
+        Boolean, nullable=True, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(

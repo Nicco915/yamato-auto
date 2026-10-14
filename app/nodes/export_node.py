@@ -10,12 +10,20 @@ import logging
 from datetime import datetime, timezone
 
 from app.config import get_settings
+from app.db import batch_store
 from app.state import AgentState
 
 logger = logging.getLogger(__name__)
 
 
 def export_node(state: AgentState) -> dict:
+    # 协作式终止检查点（2026-10-14）：最后一家厂直走 Node7→END 不再回
+    # Node2 的兜底——导出前命中终止标志同样停下，由 service stream
+    # 包装层捕获转 aborted
+    batch_id = state.get("batch_id")
+    if batch_id and batch_store.is_cancel_requested(batch_id):
+        raise batch_store.BatchAbortedError(batch_id)
+
     settings = get_settings()
     out_path = state.get("final_output_path")
     batch_id = state.get("batch_id") or "unknown"

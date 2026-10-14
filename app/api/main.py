@@ -463,6 +463,25 @@ async def backup_now():
         raise HTTPException(status_code=500, detail=f"备份失败: {e}") from e
 
 
+@app.post("/api/v1/batches/{thread_id}/abort")
+async def abort_batch(thread_id: str):
+    """终止批次：运行中协作式停止（厂边界检查点），卡死立即标 aborted。
+
+    确认门由看板/详情页确认弹窗承担（一次一确认）。返回 mode 区分
+    cooperative（标志已记录，当前工厂完成后停止）/ immediate（已立即
+    终止解锁）；message 为可直接展示的用户文案。
+    """
+    from app.api import service as _svc
+    try:
+        return await asyncio.to_thread(_svc.abort_batch, thread_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"终止失败: {e}") from e
+
+
 @app.post("/api/v1/batches/{thread_id}/advance")
 async def advance_batch_endpoint(thread_id: str, payload: dict = Body(default={})):
     """推进批次到下一阶段。
