@@ -1966,18 +1966,34 @@ async function skipFactory() {
 }
 
 function showDone(data) {
-  $("badge").textContent = isReopen ? "重新编辑已完成" : "已完成"; $("badge").className = "done";
+  data = data || {};
+  // 缺口工厂（其余工厂缺资料待补充）：批次并未全部完成，
+  // badge 文案改「待补充」（className 必须保留 "done"，skipFactory 的
+  // finally 守卫据此判断），toast/done-path 透出缺口名单
+  const gaps = Array.isArray(data.awaiting_factories) ? data.awaiting_factories : [];
+  const hasGaps = gaps.length > 0;
+  $("badge").textContent = isReopen ? "重新编辑已完成" : (hasGaps ? "待补充" : "已完成");
+  $("badge").className = "done";
   $("btn-submit").disabled = true;
   $("btn-skip").disabled = true;
   $("btn-back").style.display = "";
   // 完成后仍可返回上一工厂（如果有）
   updateNavButtons();
   $("done-view").style.display = "block";
-  $("done-path").textContent = data.final_output_path ? ("最终文件：" + data.final_output_path) : (data.message || "");
+  let doneText = data.final_output_path ? ("最终文件：" + data.final_output_path) : (data.message || "");
+  if (hasGaps) {
+    doneText = (data.message ? (data.message + "；") : "") +
+               "待补充工厂：" + gaps.join("、") +
+               (data.final_output_path ? ("；最终文件：" + data.final_output_path) : "");
+  }
+  $("done-path").textContent = doneText;
   $("cards").innerHTML = "";
   $("missing-bar").style.display = "none";
   $("failure-bar").style.display = "none";
-  toast(isReopen ? "重新提交完成" : "本批次全部完成");
+  toast(isReopen ? "重新提交完成"
+        : (hasGaps
+           ? `本工厂已写入；本批次仍有 ${gaps.length} 家工厂待补充（单据到齐后点「补充工厂」继续）`
+           : "本批次全部完成"));
 }
 
 /* 兜底：刷新页面后轮询 state 恢复现场（生产环境用）。
@@ -1988,7 +2004,24 @@ async function pollState() {
     const r = await fetch(`/api/v1/orders/${encodeURIComponent(threadId)}/state`);
     if (!r.ok) return;
     const s = await r.json();
-    if (s.next_nodes && s.next_nodes.length === 0 && $("badge").textContent !== "已完成") {
+    const badgeText = $("badge").textContent;
+    if (s.next_nodes && s.next_nodes.length === 0 &&
+        badgeText !== "已完成" && badgeText !== "待补充") {
+      // 图已跑完不等于「全部完成」：先查权威批次状态（自愈后），
+      // awaiting_factories 时按「待补充」变体展示，避免误报全部完成
+      try {
+        const dr = await fetch(`/api/v1/batches/${encodeURIComponent(threadId)}`);
+        if (dr.ok) {
+          const d = await dr.json();
+          if (d.status === "awaiting_factories") {
+            const gaps = (d.factories || [])
+              .filter((f) => f.role !== "done" && f.role !== "current")
+              .map((f) => f.factory);
+            showDone({ message: "本批次仍有工厂待补充", awaiting_factories: gaps });
+            return;
+          }
+        }
+      } catch (e) { /* 详情接口失败时按原行为兜底 */ }
       showDone({ message: "任务已结束" });
     }
   } catch (e) { /* demo 环境无 state 接口时静默 */ }

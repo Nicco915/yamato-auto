@@ -506,6 +506,21 @@ def _auto_create_factory_folders(
         factory_setup.ensure_factory_folder(upstream, factory)
 
 
+def _gap_factories(final_values: dict) -> list[str]:
+    """图跑完后的缺口工厂名单（口径与 pipeline_state._extract_phase 一致）。
+
+    缺口 = 装箱单工厂全集（有 factory_filter 则取交集）− factory_outputs.keys()
+    （只有 Approved 写入的工厂才进快照）。仅图跑完（next 为空）时有意义——
+    运行中/挂起中差集只是「还没轮到」。返回排序后的名单，可为空。
+    """
+    requirements = final_values.get("downstream_requirements") or {}
+    total = set(requirements)
+    factory_filter = final_values.get("factory_filter")
+    if factory_filter:
+        total &= set(factory_filter)
+    return sorted(total - set((final_values.get("factory_outputs") or {}).keys()))
+
+
 def add_factories_to_batch(
     batch_id: str,
     on_progress: Callable[[dict], None] | None = None,
@@ -690,15 +705,24 @@ def add_factories_to_batch(
         # 防御性兜底：有待补充工厂正常必在 Node5 挂起；一路跑完则按完成处理
         final = graph.get_state(cfg)
         _write_batch_state(batch_id, "completed", state=final.values)
+        gaps = _gap_factories(final.values)
         result = {
             "added": len(added),
             "factories": sorted(added),
             "status": "completed",
             "thread_id": batch_id,
+            "awaiting_factories": gaps,
             "final_output_path": final.values.get("final_output_path"),
         }
         if not added:
             result["message"] = "批次已恢复执行并处理完成"
+        if gaps:
+            # 缺口未补齐（其余工厂仍待补充）：完成文案必须带出来，
+            # 否则审核页/调度会误报「本批次全部完成」
+            hint = (f"本批次仍有 {len(gaps)} 家工厂待补充，"
+                    f"单据到齐后可「补充工厂」继续")
+            base = result.get("message") or "补充的工厂已处理完成"
+            result["message"] = f"{base}；{hint}"
         return result
 
 
@@ -1117,6 +1141,9 @@ def run_until_interrupt(
         return {
             "status": "completed",
             "thread_id": thread_id,
+            # 缺口工厂名单（全程无挂起跑完也可能有跳过/缺资料的工厂），
+            # 调度端摘要据此避免误报「全部工厂处理完成」
+            "awaiting_factories": _gap_factories(final.values),
             "final_output_path": final.values.get("final_output_path"),
         }
 
@@ -1178,9 +1205,19 @@ def resume_order(thread_id: str, resume_data: dict,
 
         final = graph.get_state(_config(thread_id))
         _write_batch_state(thread_id, "completed", state=final.values)
+        gaps = _gap_factories(final.values)
+        if gaps:
+            # 图跑到 END 但缺口未补齐（其余工厂缺资料待补充）：
+            # status 保持 "success"（接口契约不变），靠 awaiting_factories
+            # 字段 + message 把「未全部完成」透给审核页/调度
+            message = (f"当前工厂已落库并写入下游表格；本批次仍有 {len(gaps)} 家"
+                       f"工厂待补充，单据到齐后可「补充工厂」继续")
+        else:
+            message = "数据已成功落库并写入下游表格"
         result = {
             "status": "success",
-            "message": "数据已成功落库并写入下游表格",
+            "message": message,
+            "awaiting_factories": gaps,
             "final_validation_status": final.values.get("validation_status"),
             "final_output_path": final.values.get("final_output_path"),
         }
@@ -1251,6 +1288,7 @@ def rerun_with_paths(
         return {
             "status": "completed",
             "thread_id": thread_id,
+            "awaiting_factories": _gap_factories(final.values),
             "final_output_path": final.values.get("final_output_path"),
         }
 

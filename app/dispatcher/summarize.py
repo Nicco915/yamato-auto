@@ -83,7 +83,15 @@ def _sum_batch_like(tool: str, result: dict) -> dict:
                 "links": _links_for(str(tid) if tid else None)}
 
     if status == "completed":
-        message = f"批次 {tid} {verb}，全部工厂处理完成，无需人工审核。"
+        gaps = result.get("awaiting_factories") or []
+        if gaps:
+            names = "、".join(str(g) for g in gaps)
+            message = (f"批次 {tid} {verb}，已处理的工厂无需人工审核；"
+                       f"仍有 {len(gaps)} 家工厂待补充（{names}），"
+                       f"单据到齐后可补充工厂继续。")
+            lines.append(f"待补充工厂：{names}")
+        else:
+            message = f"批次 {tid} {verb}，全部工厂处理完成，无需人工审核。"
         out = result.get("final_output_path")
         if out:
             lines.append(f"最终输出：{out}")
@@ -114,9 +122,19 @@ def _sum_submit_review(args: dict, result: dict) -> dict:
         return {"message": message, "summary_lines": lines,
                 "links": _links_for(str(tid) if tid else None)}
 
-    # success：全部工厂审核完毕、落库 + 写回完成
-    message = f"批次 {tid} 审核已全部完成：数据已落库并写入下游表格。"
+    # success：当前工厂审核完毕、落库 + 写回完成；
+    # 但缺口工厂未补齐时（awaiting_factories 非空）批次并非全部完成，
+    # 文案必须透出待补充名单，不能误报「审核已全部完成」
+    gaps = result.get("awaiting_factories") or []
     lines = []
+    if gaps:
+        names = "、".join(str(g) for g in gaps)
+        message = (f"批次 {tid} 当前工厂审核已提交并落库写回；"
+                   f"仍有 {len(gaps)} 家工厂待补充（{names}），"
+                   f"单据到齐后可补充工厂继续。")
+        lines.append(f"待补充工厂：{names}")
+    else:
+        message = f"批次 {tid} 审核已全部完成：数据已落库并写入下游表格。"
     final_msg = result.get("message")
     if final_msg and final_msg not in message:
         lines.append(str(final_msg))
