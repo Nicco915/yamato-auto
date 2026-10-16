@@ -167,6 +167,7 @@ var ROLE_MAP = {
   done:    ["已完成", "b-green"],
   skipped: ["已跳过", "b-gray"],
   auto_skipped: ["缺资料自动跳过", "b-gray"],
+  manually_removed: ["人工剔除", "b-gray"],
   failed:  ["提取失败待补录", "b-red"]
 };
 var SESS_STATUS_MAP = {
@@ -864,10 +865,18 @@ function renderFactories(d) {
         encodeURIComponent(threadId) + '&factory=' + encodeURIComponent(fname) +
         '" style="margin-left:8px">重新打开</a>';
     }
+    // 人工剔除（写入侧人工改动感知 阶段四）：操作员把该厂行从输出副本全部删除，
+    // 系统视同不要该厂——卡片内补一句说明，与 skipped/auto_skipped 视觉一致（灰系）
+    var removedNote = "";
+    if (f.role === "manually_removed") {
+      removedNote = '<div class="note" style="margin-top:8px">' +
+        '该厂行已被人工从输出副本删除，本批次不再等待它；加回行可重新纳入。</div>';
+    }
     return '<details class="card fcard' + (f.role === "current" ? " cur" : "") + '"' + open + ">" +
       "<summary><span class=\"fname\">" + _esc(fname) + "</span>" +
       badge(role[0], role[1]) + sessBadge + reopenLink + "</summary>" +
       '<div class="fbody">' +
+      removedNote +
       '<div class="note" style="margin-top:8px">会话为该工厂最近一次提取记录，不专属本批次</div>' +
       renderSession(sess) +
       "</div></details>";
@@ -880,6 +889,17 @@ function auditDetailHtml(a) {
   var h = "";
   var changes = a.changes || [];
   var nskus = a.new_skus || [];
+  // 整厂剔除留痕的 changes_json 形如 [{"factory_removed": true, "rows": N}]，
+  // 不走「数值修改」明细渲染（无 sku/field，否则显示成乱行），单列一段说明
+  var removedEntries = changes.filter(function (c) { return c && c.factory_removed; });
+  if (removedEntries.length) {
+    h += '<div class="ad-sec">整厂剔除</div><ul class="ad-list">' +
+      removedEntries.map(function (c) {
+        var n = (c.rows != null) ? c.rows : "?";
+        return "<li>该厂全部行（共 " + _esc(n) + " 行）已从输出副本删除，本批次不再等待它；加回行可重新纳入</li>";
+      }).join("") + "</ul>";
+    changes = changes.filter(function (c) { return !(c && c.factory_removed); });
+  }
   if (changes.length) {
     h += '<div class="ad-sec">数值修改（' + changes.length + "）</div><ul class=\"ad-list\">" +
       changes.map(function (c) {
@@ -919,6 +939,8 @@ function renderAudit(d) {
           res = '<span class="c-gray">自动跳过(缺资料)</span>';   // 缺资料自动跳过留痕（2026-10-12 需求 1）
         } else if (a.result_status === "batch_force_completed") {
           res = '<span class="c-gray">强制结案</span>';   // 待补充批次人工强制结案留痕（2026-10-12 需求 2）
+        } else if (a.result_status === "factory_manually_removed") {
+          res = '<span class="c-gray">人工剔除</span>';   // 整厂剔除留痕（写入侧人工改动感知 阶段四）：approved=false，单列文案
         } else {
           res = a.approved ? '<span class="c-green">通过</span>' : '<span class="c-red">未通过</span>';
         }

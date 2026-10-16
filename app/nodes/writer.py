@@ -234,6 +234,11 @@ def _write_excel(
                             for c in diff.value_conflicts}
             protected_cells = set(diff.protected_cells)
             qty_change_map = {q["row_key"]: q for q in diff.qty_changes}
+            # 决策 2（阶段四）：写前 diff 后检出整厂剔除/对称恢复
+            # （审计留痕，幂等；检出失败包死不影响写入）
+            copy_snapshot._detect_factory_removals(
+                batch_id, diff,
+                (state.get("downstream_requirements") or {}).keys())
 
     # 通道留痕字段复位（随 cur 快照进 factory_outputs，供 service 审计/摘要）
     cur["manual_conflicts"] = []

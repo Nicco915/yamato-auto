@@ -153,6 +153,11 @@ def _scan_batch(tid: str) -> None:
     requirements = values.get("downstream_requirements") or {}
     outputs = values.get("factory_outputs") or {}
     gap = [f for f in requirements if f not in outputs]
+    # 决策 2（阶段四）：人工剔除厂减除出缺口——不再监控其文件夹
+    # （操作员已明确不要它，资料到达也不触发补充）
+    removed = service._manually_removed_factories(tid)
+    if removed:
+        gap = [f for f in gap if f not in removed]
     if not gap:
         # 无缺口（自愈即将转 completed），顺手清掉本批残留快照与触发快照
         _prune_snapshots(alive_tids=None, keep_tid=tid)

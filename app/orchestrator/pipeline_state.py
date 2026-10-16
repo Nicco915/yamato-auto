@@ -200,6 +200,8 @@ def _classify_incomplete_batch(thread_id: str, failed_factories: list[str],
 
     - 人工强制结案（batches.force_completed）→ 保持 "completed"
       （自愈不得打回待补充）；
+    - 人工剔除厂（最新审计 factory_manually_removed，决策 2/阶段四）先减除
+      出缺口再分类——剔除厂不再算缺口，唯一缺口=剔除厂时批次正常 completed；
     - 缺口工厂**全部**为人工驳回（有审计、approved=False、result_status
       非跳过类）→ "completed_with_errors"（语义收窄：仅剩「提取出错且
       经人工处理仍有失败」）；
@@ -227,6 +229,14 @@ def _classify_incomplete_batch(thread_id: str, failed_factories: list[str],
         logger.warning("批次 %s 待补充分类查询审计失败: %s（按待补充处理）",
                        thread_id, exc)
         return "awaiting_factories"
+
+    # 决策 2（阶段四）：人工剔除厂先减除出缺口名单再分类（不再 awaiting）
+    failed_factories = [
+        f for f in failed_factories
+        if (latest.get(f) is None
+            or latest[f].result_status != "factory_manually_removed")]
+    if not failed_factories:
+        return "completed"
 
     saw_rejected = False
     for name in failed_factories:

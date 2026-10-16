@@ -452,6 +452,13 @@ def _sync_output_copy_rows(
                  int(k.get("seq") or 0))))
         tombstones = set(snap.get("tombstones") or [])
 
+    # 决策 2（阶段四）：写前 diff 检出整厂剔除/对称恢复（审计留痕，幂等）。
+    # row_map 为重解析原件全集，键即 requirements 口径；diff/检出失败
+    # 返回 None/[] 时静默放行，绝不阻塞同步主流程
+    _diff = copy_snapshot.diff_against_copy(batch_id)
+    if _diff is not None:
+        copy_snapshot._detect_factory_removals(batch_id, _diff, set(row_map))
+
     wb_src = load_workbook(src)
     ws_src = wb_src[wb_src.sheetnames[0]]
     wb_dst = load_workbook(dst)
@@ -613,19 +620,63 @@ def _auto_create_factory_folders(
         factory_setup.ensure_factory_folder(upstream, factory)
 
 
+def _manually_removed_factories(thread_id: str) -> set[str]:
+    """人工剔除名单（写入侧人工改动感知 决策 2/阶段四）：review_audits
+    每厂最新一条审计口径（遍历抄 pipeline_state._classify_incomplete_batch），
+    最新一条 result_status == "factory_manually_removed" 即在名单中；
+    对称恢复的 factory_manually_readded 成为最新一条即自动出名单。
+    零新表零新列，与批次详情页 role 推导同口径。
+
+    辅助设施口径：查询失败只 warning 返回空集（按无剔除处理，缺口判定
+    退回旧行为），绝不阻塞主流程。
+    """
+    try:
+        with get_session() as session:
+            rows = session.scalars(
+                select(ReviewAudit)
+                .where(ReviewAudit.thread_id == thread_id)
+                .order_by(ReviewAudit.audit_id)
+            ).all()
+        latest: dict[str, Any] = {}
+        for r in rows:  # audit_id 升序遍历，后者覆盖前者 = 每厂最新一条
+            if r.factory_name:
+                latest[r.factory_name] = r
+        return {name for name, r in latest.items()
+                if r.result_status == "factory_manually_removed"}
+    except Exception as e:  # noqa: BLE001 辅助设施失败静默降级
+        logger.warning("批次 %s 人工剔除名单查询失败（按无剔除处理）: %s: %s",
+                       thread_id, type(e).__name__, e)
+        return set()
+
+
+def _removed_factories_hint(newly_removed: list[str]) -> str:
+    """剔除透出文案（决策 2/阶段四）：「工厂 X 已被人工剔除，本批次不再
+    等待它」；多厂用「它们」。"""
+    names = "、".join(newly_removed)
+    pronoun = "它" if len(newly_removed) == 1 else "它们"
+    return f"工厂 {names} 已被人工剔除，本批次不再等待{pronoun}"
+
+
 def _gap_factories(final_values: dict) -> list[str]:
     """图跑完后的缺口工厂名单（口径与 pipeline_state._extract_phase 一致）。
 
     缺口 = 装箱单工厂全集（有 factory_filter 则取交集）− factory_outputs.keys()
     （只有 Approved 写入的工厂才进快照）。仅图跑完（next 为空）时有意义——
     运行中/挂起中差集只是「还没轮到」。返回排序后的名单，可为空。
+
+    决策 2（阶段四）：人工剔除厂减除出缺口——完成文案不再把它算进
+    「仍有 N 家待补充」。
     """
     requirements = final_values.get("downstream_requirements") or {}
     total = set(requirements)
     factory_filter = final_values.get("factory_filter")
     if factory_filter:
         total &= set(factory_filter)
-    return sorted(total - set((final_values.get("factory_outputs") or {}).keys()))
+    gaps = total - set((final_values.get("factory_outputs") or {}).keys())
+    batch_id = final_values.get("batch_id")
+    if batch_id:
+        gaps -= _manually_removed_factories(batch_id)
+    return sorted(gaps)
 
 
 def _manual_write_traces(
@@ -975,7 +1026,13 @@ def add_factories_to_batch(
 
     # 待补充 = 装箱单全集 − 已写入（factory_outputs 只有 Approved 工厂才进）
     done = set((values.get("factory_outputs") or {}).keys())
-    to_add = [f for f in new_requirements if f not in done]
+    # 决策 2（阶段四）：人工剔除厂不自动补回（名单=每厂最新一条审计），
+    # 同时作为「剔除发生时」完成文案的对比基线
+    removed_before = _manually_removed_factories(batch_id)
+    for f in sorted(set(new_requirements) & removed_before):
+        logger.info("[补充工厂] 工厂「%s」已被人工剔除，不再补回", f)
+    to_add = [f for f in new_requirements
+              if f not in done and f not in removed_before]
 
     # pending 去重：已在主队列 / 暂缓队列的不重复加；挂起中的当前工厂
     # （仅 pending_review 时有意义——completed 的 current 是上一轮的残留，
@@ -1128,6 +1185,11 @@ def add_factories_to_batch(
                 else source_diff.parse_source_rows(config["downstream_file_path"]),
                 new_row_map)
 
+        # 决策 2（阶段四）：本次调用期间新检出的整厂剔除（sync/absorb 写前
+        # diff 检出），完成/挂起文案透出「不再等待」
+        newly_removed = sorted(
+            _manually_removed_factories(batch_id) - removed_before)
+
         # as_node 锚点：pending_review 走 Node4 条件边重回 Node5 重挂起；
         # completed 走 Node6 条件边重路由（见 docstring 实测结论）；
         # aborted 无 interrupt 同走 Node6 锚点（next 残留指向 Node2/Node7
@@ -1174,6 +1236,12 @@ def add_factories_to_batch(
                         result["message"] = "批次已恢复执行，挂起等待审核"
                     if absorbed_factories:
                         result["source_changes_absorbed"] = sorted(absorbed_factories)
+                    if newly_removed:
+                        # 决策 2（阶段四）：剔除发生透出（本批次不再等待它）
+                        result["manually_removed_factories"] = newly_removed
+                        base = result.get("message") or "批次已恢复执行"
+                        result["message"] = (
+                            f"{base}；{_removed_factories_hint(newly_removed)}")
                     return result
         except batch_store.BatchAbortedError:
             # 用户主动终止（2026-10-14）：控制流异常，不是系统异常——
@@ -1226,6 +1294,12 @@ def add_factories_to_batch(
             result["message"] = (
                 f"{base}；行 {q.get('row')} 数量被人工改过"
                 f"（{q.get('old')}→{q.get('new')}），已按新数量写入")
+        if newly_removed:
+            # 决策 2（阶段四）：剔除发生透出（本批次不再等待它）
+            result["manually_removed_factories"] = newly_removed
+            base = result.get("message") or "补充的工厂已处理完成"
+            result["message"] = (
+                f"{base}；{_removed_factories_hint(newly_removed)}")
         if gaps:
             # 缺口未补齐（其余工厂仍待补充）：完成文案必须带出来，
             # 否则审核页/调度会误报「本批次全部完成」
@@ -1678,6 +1752,8 @@ def resume_order(thread_id: str, resume_data: dict,
     # 工厂名从挂起现场取（首次运行的绑定已随 logging_context 退出恢复），
     # 保证审核后续节点（Node5 收尾/Node6 写回）日志仍带工厂名
     factory = (state.values.get("current_factory_data") or {}).get("factory_name")
+    # 决策 2（阶段四）：剔除发生时的完成文案对比基线（Node6 写前 diff 检出）
+    removed_before = _manually_removed_factories(thread_id)
     with logging_context(thread_id=thread_id, factory=factory):
         prepared = _prepare_audit(thread_id, resume_data)
 
@@ -1746,6 +1822,11 @@ def resume_order(thread_id: str, resume_data: dict,
         for q in qty_changes:
             message += (f"；行 {q.get('row')} 数量被人工改过"
                         f"（{q.get('old')}→{q.get('new')}），已按新数量写入")
+        # 决策 2（阶段四）：本次 resume 期间检出整厂剔除 → 完成文案透出
+        newly_removed = sorted(
+            _manually_removed_factories(thread_id) - removed_before)
+        if newly_removed:
+            message += f"；{_removed_factories_hint(newly_removed)}"
         result = {
             "status": "success",
             "message": message,
@@ -1755,6 +1836,8 @@ def resume_order(thread_id: str, resume_data: dict,
             "final_validation_status": final.values.get("validation_status"),
             "final_output_path": final.values.get("final_output_path"),
         }
+        if newly_removed:
+            result["manually_removed_factories"] = newly_removed
         _write_audit(prepared, _audit_result_status(prepared, result))
         return result
 
@@ -3373,6 +3456,9 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
     # 失败口径与 export_node 的 factories_failed 一致（requirements 全集 −
     # factory_outputs；只有 Approved 工厂才进快照），再排除还会跑的
     # pending/current/暂缓（deferred 等待二遍重试，尚未定论）：
+    #   - 最新审计为 factory_manually_removed → manually_removed（整厂人工
+    #     剔除，决策 2/阶段四；total_set 即 requirements∩filter 天然满足
+    #     「在 requirements 中」，前端渲染「人工剔除」徽章）；
     #   - 在快照里 → done（可 reopen）；
     #   - 不在快照但最新审计 approved（老批次/历史数据无快照）→ done 且
     #     can_reopen=False（前端据此不渲染「重新打开」，堵 reopen 404）；
@@ -3388,7 +3474,13 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
     }
     factories = []
     for name in sorted(total_set):
-        if name == current and snap.next:
+        last = latest_audit.get(name)
+        if (last is not None
+                and last.result_status == "factory_manually_removed"):
+            # 决策 2（阶段四）：整厂人工剔除（最新审计 removed 且在
+            # requirements 中）——剔除是操作员最新意图，优先于 done/pending
+            role = "manually_removed"
+        elif name == current and snap.next:
             role = "current"
         elif name in pending or name in deferred_names:
             # 主队列待处理 / 暂缓待二遍重试：还没定论，不算失败
@@ -3396,7 +3488,6 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
         elif name in outputs:
             role = "done"
         else:
-            last = latest_audit.get(name)
             if last is not None and last.approved:
                 role = "done"
             elif last is not None and last.result_status == "factory_auto_skipped":

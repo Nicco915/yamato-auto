@@ -16,6 +16,13 @@
 结转（决策 5 重建算法，防「遗忘漏洞」——快照重建绝不盲目采纳现状：
 protected 逐列结转、消失行键入墓碑、墓碑只增不减、加回出碑）。
 
+阶段四落地（决策 2）：_detect_factory_removals 整厂剔除/对称恢复检出——
+按工厂聚合 diff.deleted_rows，某厂在 requirements 中且其快照行全灭 → 写
+factory_manually_removed 审计（剔除名单权威源 = review_audits 每厂最新
+一条，零新表零新列）；diff.added_rows 命中最新审计为 removed 的厂 → 写
+factory_manually_readded 审计，自动出名单。与 tombstones 双轨印证（该厂
+全部 row_key 入碑/出碑由 refresh 结转负责）。
+
 容错哲学（与 _write_audit 同）：快照/diff 是辅助设施，refresh/diff 任何
 失败只记 error 日志并退化为「无快照」（保守放行写入+warning），绝不阻塞
 写入主流程。
@@ -543,3 +550,139 @@ def refresh_snapshot(
             logger.error("[快照] 批次 %s 快照刷新失败（写入主流程不受影响）",
                          batch_id, exc_info=True)
             return None
+
+
+# ---------------------------------------------------------------------------
+# 决策 2 / 阶段四：整厂剔除 + 对称恢复检出（审计留痕，名单权威源 = 审计表）
+# ---------------------------------------------------------------------------
+
+# 剔除/恢复审计的 result_status（剔除名单 = 每厂最新一条审计为 REMOVED）
+MEMBERSHIP_REMOVED = "factory_manually_removed"
+MEMBERSHIP_READDED = "factory_manually_readded"
+
+
+def _latest_audit_statuses(batch_id: str) -> dict[str, str | None]:
+    """review_audits 每厂最新一条审计的 result_status（audit_id 升序遍历，
+    后者覆盖前者；口径抄 pipeline_state._classify_incomplete_batch）。
+
+    DB 访问用函数内 import：本模块保持只依赖 app.config 的静态依赖
+    （source_diff 同哲学，避免 orchestrator → db/graph 的反向依赖）。
+    """
+    from sqlalchemy import select
+
+    from app.db.models import ReviewAudit
+    from app.db.session import get_session
+
+    with get_session() as session:
+        rows = session.scalars(
+            select(ReviewAudit)
+            .where(ReviewAudit.thread_id == batch_id)
+            .order_by(ReviewAudit.audit_id)
+        ).all()
+    latest: dict[str, str | None] = {}
+    for r in rows:
+        if r.factory_name:
+            latest[r.factory_name] = r.result_status
+    return latest
+
+
+def _write_membership_audit(batch_id: str, factory: str,
+                            result_status: str, changes: list[dict]) -> None:
+    """剔除/恢复审计落库（service._write_audit 同哲学包死：失败只 warning，
+    绝不阻塞写入主流程）。"""
+    from app.db.models import ReviewAudit
+    from app.db.session import get_session
+
+    try:
+        with get_session() as session:
+            session.add(ReviewAudit(
+                thread_id=batch_id,
+                factory_name=factory,
+                approved=False,
+                edited_count=0,
+                changes_json=json.dumps(changes, ensure_ascii=False),
+                new_skus_json="[]",
+                result_status=result_status,
+            ))
+            session.commit()
+    except Exception:  # noqa: BLE001 故意包死，见 docstring
+        logger.warning("[快照] 批次 %s 工厂「%s」%s 审计落库失败"
+                       "（主流程不受影响）",
+                       batch_id, factory, result_status, exc_info=True)
+
+
+def _detect_factory_removals(
+    batch_id: str,
+    diff: CopyDiff | None,
+    requirements,
+) -> list[str]:
+    """整厂剔除 / 对称恢复检出（决策 2，阶段四；写前 diff 后调用）。
+
+    - 剔除：按工厂聚合 diff.deleted_rows，某厂在 requirements 中且其快照行
+      全灭（一行不剩）→ 写 factory_manually_removed 审计
+      （changes_json=[{"factory_removed": true, "rows": N}]）。幂等：最新
+      审计已是 removed 不重复写。与墓碑双轨印证：该厂全部 row_key 由随后的
+      refresh 结转入碑（检出发生在写前，此时墓碑尚未含本次删除键）。
+    - 对称恢复：diff.added_rows 命中「该厂最新审计为 removed」→ 写
+      factory_manually_readded 审计（changes_json 记行数）→ 最新一条不再
+      是 removed，自动离开剔除名单（与墓碑出碑逻辑呼应：行重新出现即出碑；
+      新增行纳入主流程在阶段五）。
+
+    辅助设施包死：任何失败只记 error 返回 []，绝不阻塞写入主流程。
+    返回本次新检出剔除的工厂名单（排序），供完成摘要透出。
+    """
+    if diff is None:
+        return []
+    batch_id = str(batch_id)
+    try:
+        req = set(requirements or [])
+        latest = _latest_audit_statuses(batch_id)
+        newly: list[str] = []
+        if diff.deleted_rows:
+            snap = load_snapshot(batch_id) or {}
+            deleted = set(diff.deleted_rows)
+            deleted_by_factory: dict[str, int] = {}
+            alive_factories: set[str] = set()
+            for r in snap.get("rows") or []:
+                factory = str((r.get("key") or {}).get("factory") or "")
+                if not factory:
+                    continue
+                if row_key_str(_row_key_of(r)) in deleted:
+                    deleted_by_factory[factory] = (
+                        deleted_by_factory.get(factory, 0) + 1)
+                else:
+                    alive_factories.add(factory)
+            for factory in sorted(deleted_by_factory):
+                if factory in alive_factories or factory not in req:
+                    continue  # 快照行未全灭 / 不在需求集，不判定剔除
+                if latest.get(factory) == MEMBERSHIP_REMOVED:
+                    continue  # 幂等：最新审计已是 removed 不重复写
+                rows_n = deleted_by_factory[factory]
+                _write_membership_audit(
+                    batch_id, factory, MEMBERSHIP_REMOVED,
+                    [{"factory_removed": True, "rows": rows_n}])
+                latest[factory] = MEMBERSHIP_REMOVED
+                newly.append(factory)
+                logger.warning(
+                    "[快照] 批次 %s 检出整厂人工剔除：工厂「%s」快照 %d 行"
+                    "在副本中全灭（本批次不再等待它）",
+                    batch_id, factory, rows_n)
+        if diff.added_rows:
+            readded: dict[str, int] = {}
+            for a in diff.added_rows:
+                factory = a.get("factory")
+                if factory and latest.get(factory) == MEMBERSHIP_REMOVED:
+                    readded[factory] = readded.get(factory, 0) + 1
+            for factory in sorted(readded):
+                _write_membership_audit(
+                    batch_id, factory, MEMBERSHIP_READDED,
+                    [{"factory_readded": True, "rows": readded[factory]}])
+                latest[factory] = MEMBERSHIP_READDED
+                logger.info(
+                    "[快照] 批次 %s 检出人工加回：工厂「%s」%d 行重新出现"
+                    "（自动离开剔除名单）", batch_id, factory, readded[factory])
+        return newly
+    except Exception:  # noqa: BLE001 辅助设施失败静默降级，见模块 docstring
+        logger.error("[快照] 批次 %s 整厂剔除检出失败（不影响写入主流程）",
+                     batch_id, exc_info=True)
+        return []
