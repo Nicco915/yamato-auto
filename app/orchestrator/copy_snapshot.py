@@ -12,12 +12,13 @@
   形态），仅作辅助校验列记入快照；同 (工厂, SKU) 组内按行号升序取 seq
   （从 1 起），与 row_map[工厂][SKU] 列表一一对应。
 
-阶段一边界：快照 version=2 字段一次到位（qty/protected/protected_fields/
-tombstones 全部预留），但 protected/tombstones 恒为默认值——结转合并
-逻辑随阶段二 diff 一起落地；本阶段不含任何冲突语义。
+阶段二落地：diff_against_copy 全量五分类 diff（决策 6）+ protected/tombstones
+结转（决策 5 重建算法，防「遗忘漏洞」——快照重建绝不盲目采纳现状：
+protected 逐列结转、消失行键入墓碑、墓碑只增不减、加回出碑）。
 
-容错哲学（与 _write_audit 同）：快照是辅助设施，refresh_snapshot 任何
-失败只记 error 日志并退化为「无快照」，绝不阻塞写入主流程。
+容错哲学（与 _write_audit 同）：快照/diff 是辅助设施，refresh/diff 任何
+失败只记 error 日志并退化为「无快照」（保守放行写入+warning），绝不阻塞
+写入主流程。
 """
 from __future__ import annotations
 
@@ -25,6 +26,7 @@ import json
 import logging
 import os
 import threading
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -75,6 +77,11 @@ def _find_copy(batch_id: str) -> Path | None:
     if not filled:
         return None
     return max(filled, key=lambda p: p.stat().st_mtime)
+
+
+def find_copy(batch_id: str) -> Path | None:
+    """_find_copy 的公开别名（service 层覆盖写入入口等跨模块调用用）。"""
+    return _find_copy(batch_id)
 
 
 def norm_key_text(v) -> str:
@@ -280,8 +287,236 @@ def load_snapshot(batch_id: str) -> dict | None:
     return snap
 
 
-def refresh_snapshot(batch_id: str) -> dict | None:
-    """build + save 一体入口（快照三更新点统一调它）。
+def _row_key_of(row: dict) -> tuple[str, str, int]:
+    """快照行 dict → row_key 元组。"""
+    k = row.get("key") or {}
+    return (str(k.get("factory") or ""), str(k.get("sku") or ""),
+            int(k.get("seq") or 0))
+
+
+# diff 逐列独立判定的三列（决策 1）：中文品名/净重/毛重
+DIFF_FIELDS = ("name_cn", "net", "gross")
+
+
+def field_equal(a, b) -> bool:
+    """字段值相等判定：None 与 None 相等；数值按 float 容差 1e-9 比较
+    （openpyxl 读回 2 位小数浮点，避免 12.3 vs 12.30 误判）。"""
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return abs(float(a) - float(b)) < 1e-9
+    return str(a) == str(b)
+
+
+@dataclass(frozen=True)
+class CopyDiff:
+    """写前 diff 结果（决策 6 全量分类；frozen，七字段）。
+
+    - value_conflicts: 逐字段人工改非空冲突 [{row_key, factory, sku, seq,
+      row_no, field, snapshot, copy}]——快照值与副本值均非空且不等，或快照空
+      副本非空（人工抢先填）。命中 protected 列的变更不视为新冲突（保护中的
+      人工最终值，由 refresh 结转更新记录值）；「快照非空 × 副本空」= 人工
+      改空等重新录入，不是冲突（所有通道一律正常覆盖）。
+    - qty_changes: [{row_key, factory, sku, seq, row_no, snapshot_qty,
+      copy_qty}]——数量列被人工改（告警不阻断，写入仍按副本当前数量）。
+    - deleted_rows: [row_key_str]——快照有、副本无（人工删除；refresh 结转
+      时全部入墓碑）。
+    - added_rows: [{row_key, row_no, factory, sku, seq, kanri_no,
+      in_tombstones}]——副本有、快照无；in_tombstones=True 即人工加回（出碑，
+      阶段五纳入流程的输入）。
+    - moved_rows: [{row_key, old_row_no, new_row_no}]——信息项（row_key
+      重定位本就免疫移位）。
+    - mtime_changed: 副本 mtime/size 是否与快照记录不一致（诊断用；
+      短路命中时为 False 且其余全空）。
+    - protected_cells: ((row_key_str, field), ...)——快照中保护中的单元格
+      全集（无论 mtime 是否短路都给出，writer 通道 C 跳过判定用）。
+    """
+
+    value_conflicts: tuple = ()
+    qty_changes: tuple = ()
+    deleted_rows: tuple = ()
+    added_rows: tuple = ()
+    moved_rows: tuple = ()
+    mtime_changed: bool = False
+    protected_cells: tuple = ()
+
+
+def diff_against_copy(batch_id: str) -> CopyDiff | None:
+    """快照 vs 副本当前状态的全量 diff（决策 6）。
+
+    返回 None 的退化场景（保守放行写入 + 日志）：无快照 / 无副本 / 任何
+    扫描异常——快照是辅助设施，绝不阻塞写入主流程。
+    mtime+size 与快照一致 → 空 diff 短路（错过短路只是多扫一次，无正确性
+    风险；反向「mtime 没变内容变了」在现代文件系统实际不可发生）。
+    """
+    batch_id = str(batch_id)
+    with _batch_lock(batch_id):
+        try:
+            snap = load_snapshot(batch_id)
+            copy_path = _find_copy(batch_id)
+            if snap is None or copy_path is None:
+                return None
+            protected_cells = tuple(
+                (row_key_str(_row_key_of(r)), f)
+                for r in snap.get("rows") or []
+                for f in (r.get("protected_fields") or [])
+            )
+            st = copy_path.stat()
+            mtime_changed = not (
+                st.st_mtime_ns == snap.get("copy_mtime_ns")
+                and st.st_size == snap.get("copy_size"))
+            if not mtime_changed:
+                return CopyDiff(mtime_changed=False,
+                                protected_cells=protected_cells)
+
+            cur = build_snapshot(batch_id)
+            if cur is None:
+                return None
+            snap_by_key = {row_key_str(_row_key_of(r)): r
+                           for r in snap.get("rows") or []}
+            cur_by_key = {row_key_str(_row_key_of(r)): r
+                          for r in cur.get("rows") or []}
+            tombstones = set(snap.get("tombstones") or [])
+
+            conflicts: list[dict] = []
+            qty_changes: list[dict] = []
+            deleted: list[str] = []
+            added: list[dict] = []
+            moved: list[dict] = []
+
+            for k, srow in snap_by_key.items():
+                crow = cur_by_key.get(k)
+                if crow is None:
+                    deleted.append(k)  # 人工删除（refresh 结转入墓碑）
+                    continue
+                if crow.get("row_no") != srow.get("row_no"):
+                    moved.append({"row_key": k,
+                                  "old_row_no": srow.get("row_no"),
+                                  "new_row_no": crow.get("row_no")})
+                protected_fields = set(srow.get("protected_fields") or [])
+                for f in DIFF_FIELDS:
+                    sv, cv = srow.get(f), crow.get(f)
+                    if field_equal(sv, cv):
+                        continue
+                    if sv is not None and cv is None:
+                        continue  # 人工改空 = 等重新录入，所有通道正常覆盖
+                    if f in protected_fields:
+                        continue  # 保护中的人工最终值：不视为新冲突
+                    conflicts.append({
+                        "row_key": k,
+                        "factory": crow["key"]["factory"],
+                        "sku": crow["key"]["sku"],
+                        "seq": crow["key"]["seq"],
+                        "row_no": crow.get("row_no"),
+                        "field": f, "snapshot": sv, "copy": cv,
+                    })
+                if not field_equal(srow.get("qty"), crow.get("qty")):
+                    qty_changes.append({
+                        "row_key": k,
+                        "factory": crow["key"]["factory"],
+                        "sku": crow["key"]["sku"],
+                        "seq": crow["key"]["seq"],
+                        "row_no": crow.get("row_no"),
+                        "snapshot_qty": srow.get("qty"),
+                        "copy_qty": crow.get("qty"),
+                    })
+            for k, crow in cur_by_key.items():
+                if k not in snap_by_key:
+                    added.append({
+                        "row_key": k,
+                        "row_no": crow.get("row_no"),
+                        "factory": crow["key"]["factory"],
+                        "sku": crow["key"]["sku"],
+                        "seq": crow["key"]["seq"],
+                        "kanri_no": crow.get("kanri_no"),
+                        "in_tombstones": k in tombstones,
+                    })
+
+            if deleted or added or conflicts:
+                logger.info("[快照] 批次 %s 副本 diff：冲突 %d 处 / 删行 %d / "
+                            "新增 %d / 移位 %d / 数量改动 %d",
+                            batch_id, len(conflicts), len(deleted),
+                            len(added), len(moved), len(qty_changes))
+            return CopyDiff(
+                value_conflicts=tuple(conflicts),
+                qty_changes=tuple(qty_changes),
+                deleted_rows=tuple(deleted),
+                added_rows=tuple(added),
+                moved_rows=tuple(moved),
+                mtime_changed=True,
+                protected_cells=protected_cells,
+            )
+        except Exception:  # noqa: BLE001 辅助设施失败静默降级，见模块 docstring
+            logger.error("[快照] 批次 %s 副本 diff 失败（按无 diff 放行写入）",
+                         batch_id, exc_info=True)
+            return None
+
+
+def _carry_over(new: dict, old: dict,
+                mark_protected: set[tuple[str, str]] | None,
+                unprotect: set[tuple[str, str]] | None,
+                mark_manual: set[str] | None) -> None:
+    """protected/tombstones/origin 结转（决策 5 重建算法，防遗忘漏洞核心）。
+
+    - origin：旧快照已有键沿用旧 origin；新出现的键保留 build 给的默认
+      （"system"），mark_manual 命中的键打 "manual_added"（阶段五）；
+    - protected 逐列结转：旧 protected 行键仍在 → 逐被保护列检查：副本当前
+      值非空 → 记录值更新为副本当前值（build 已读副本，天然满足）、保护
+      标记不变；已被人工清空 → 该列保护解除（等重新录入，下次写入覆盖）；
+      全部列解除 → protected 回 false。unprotect（通道 A 覆盖）优先解除；
+      mark_protected（通道 B/C 保留）最后并入；
+    - tombstones 只增不减：旧行键消失 → 入碑（系统自身不删行，行消失只
+      可能是人工删除）；副本中重新出现的墓碑键 → 出碑（人工加回）。
+    """
+    mark_protected = mark_protected or set()
+    unprotect = unprotect or set()
+    mark_manual = mark_manual or set()
+
+    old_rows = {row_key_str(_row_key_of(r)): r for r in old.get("rows") or []}
+    new_keys: set[str] = set()
+    for r in new.get("rows") or []:
+        k = row_key_str(_row_key_of(r))
+        new_keys.add(k)
+        old_r = old_rows.get(k)
+        carried: list[str] = []
+        if old_r is not None:
+            r["origin"] = old_r.get("origin") or r.get("origin") or "system"
+            for f in (old_r.get("protected_fields") or []):
+                if (k, f) in unprotect:
+                    continue  # 通道 A 已覆盖/补写系统值，保护解除
+                if r.get(f) is not None:
+                    carried.append(f)  # 副本当前值非空 → 保护结转
+                # else 人工清空 → 该列保护解除（等重新录入）
+        if k in mark_manual:
+            r["origin"] = "manual_added"
+        for f in carried:
+            if f not in r["protected_fields"]:
+                r["protected_fields"].append(f)
+        for mk, mf in mark_protected:
+            if mk == k and mf not in r["protected_fields"]:
+                r["protected_fields"].append(mf)
+        r["protected"] = bool(r["protected_fields"])
+
+    tombstones = set(old.get("tombstones") or [])
+    tombstones |= set(old_rows) - new_keys  # 本次消失的旧行键全部入碑
+    tombstones -= new_keys                  # 重新出现 → 出碑（人工加回）
+    new["tombstones"] = sorted(tombstones)
+
+
+def refresh_snapshot(
+    batch_id: str,
+    mark_protected: set[tuple[str, str]] | None = None,
+    unprotect: set[tuple[str, str]] | None = None,
+    mark_manual: set[str] | None = None,
+) -> dict | None:
+    """build + 结转 + save 一体入口（快照四更新点统一调它）。
+
+    参数（均为可选，键 = (row_key_str, field) / row_key_str）：
+    - mark_protected：本次写入被保留的人工值单元格（通道 B/C），打保护标；
+    - unprotect：本次被系统覆盖/补写的单元格（通道 A），解除保护；
+    - mark_manual：本次纳入管理的人工新增行（阶段五），origin 打 manual_added。
 
     无快照迁移（决策 7）：副本存在但无快照文件 → 以当前副本现状为基线，
     全行 origin="baseline" + warning（此前人工改动不可追溯，一次性取舍）。
@@ -291,10 +526,13 @@ def refresh_snapshot(batch_id: str) -> dict | None:
     with _batch_lock(batch_id):
         try:
             existed = snapshot_path(batch_id).exists()
+            old = load_snapshot(batch_id) if existed else None
             snap = build_snapshot(
                 batch_id, origin="system" if existed else "baseline")
             if snap is None:
                 return None
+            if old is not None:
+                _carry_over(snap, old, mark_protected, unprotect, mark_manual)
             if not existed:
                 logger.warning(
                     "[快照] 批次 %s 无写入快照，以副本现状为基线（baseline），"

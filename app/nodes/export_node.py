@@ -36,6 +36,18 @@ def export_node(state: AgentState) -> dict:
     factory_outputs = state.get("factory_outputs") or {}
     factories_failed = len(set(requirements) - set(factory_outputs))
 
+    # 人工改动透出（写入侧人工改动感知 决策 1，阶段二 §2.7）：
+    # 通道 C 保留未覆盖 / 通道 A 覆写 / 数量列人工改动，逐工厂计数汇总
+    manual_overrides_kept = 0
+    manual_values_overwritten = 0
+    qty_manual_changes = 0
+    for fo in factory_outputs.values():
+        if not isinstance(fo, dict):
+            continue
+        manual_overrides_kept += int(fo.get("manual_override_kept") or 0)
+        manual_values_overwritten += int(fo.get("manual_values_overwritten") or 0)
+        qty_manual_changes += len(fo.get("qty_manual_changes") or [])
+
     # 单批次摘要
     batch_summary = {
         "exported_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
@@ -44,6 +56,9 @@ def export_node(state: AgentState) -> dict:
         "factories_processed": list(requirements.keys()),
         "factories_failed": factories_failed,
         "validation_status": state.get("validation_status"),
+        "manual_overrides_kept": manual_overrides_kept,
+        "manual_values_overwritten": manual_values_overwritten,
+        "qty_manual_changes": qty_manual_changes,
     }
 
     # 1) 批次级：output/{batch_id}/export_summary.json

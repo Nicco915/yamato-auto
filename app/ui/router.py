@@ -16,7 +16,10 @@ API（路由极薄，逻辑全在 app.api.service；全部 asyncio.to_thread 防
 - DELETE /api/v1/batches/{thread_id} 删除过往批次（404 不存在 / 409 进行中）
 - PATCH /api/v1/batches/{thread_id}/paths  更新批次路径配置（404 不存在）
 - POST /api/v1/batches/{thread_id}/rerun   完全重跑批次（404 不存在）
-- POST /api/v1/batches/{thread_id}/add-factories  补充工厂（400 失败）
+- POST /api/v1/batches/{thread_id}/add-factories  补充工厂（400 失败 /
+  409 运行中或检测到人工修改待确认）
+- POST /api/v1/batches/{thread_id}/overwrite-protected  覆盖写入人工保留的
+  protected 单元格（400 无 protected 行）
 - POST /api/v1/batches/{thread_id}/force-complete 强制结案（400 非待补充）
 - POST /api/v1/batches/{batch_id}/export-pivot   生成 XD 透视导出（404 批次不存在 / 409 装箱单不存在）
 - GET  /api/v1/batches/{batch_id}/pivot/download 下载最新 XD 透视文件（404 未导出过）
@@ -436,19 +439,65 @@ async def rerun_batch_endpoint(thread_id: str):
         raise HTTPException(status_code=404, detail=str(e)) from e
 
 
+class AddFactoriesRequest(BaseModel):
+    """补充工厂请求体（可选）。
+
+    confirm_overwrite：通道 B 确认门（写入侧人工改动感知 决策 1）——
+    首次调用若检测到人工非空修改返回 409 结构体；操作员确认后带
+    confirm_overwrite=true 重发本端点，冲突单元格按系统值覆写
+    （被盖旧值留痕 manual_value_overwritten）。
+    """
+
+    confirm_overwrite: bool = False
+
+
 @router.post("/api/v1/batches/{thread_id}/add-factories")
-async def add_factories_endpoint(thread_id: str):
+async def add_factories_endpoint(
+    thread_id: str,
+    request: Optional[AddFactoriesRequest] = None,
+):
     """补充工厂：重新解析装箱单，把未处理（新增/跳过/驳回）的工厂补进本批次。
 
     completed 批次从 Node6 条件边重入续跑；pending_review 批次合并后重挂起，
     均执行到下一个 Node5 interrupt 返回（可能耗时数十秒）。
+
+    409 两种形态（前端按 detail 类型区分）：
+    - detail 为字符串：批次正在运行中（既有契约，保持兼容）；
+    - detail 为对象 {"code": "manual_conflicts", "message", "conflicts",
+      "count"}：检测到人工非空修改待确认（确认后带 confirm_overwrite=true
+      重发覆写）。
     """
     try:
-        result = await asyncio.to_thread(service.add_factories_to_batch, thread_id)
+        result = await asyncio.to_thread(
+            service.add_factories_to_batch,
+            thread_id,
+            confirm_overwrite=bool(request and request.confirm_overwrite),
+        )
         return result
+    except service.ManualConflictError as e:
+        # 通道 B 确认门：人工非空修改待确认（结构体 detail）
+        raise HTTPException(status_code=409, detail={
+            "code": "manual_conflicts",
+            "message": f"检测到 {len(e.conflicts)} 行人工修改",
+            "conflicts": e.conflicts,
+            "count": len(e.conflicts),
+        }) from e
     except RuntimeError as e:
-        # 批次正在运行中（无 interrupt 且 next 非空）
+        # 批次正在运行中（无 interrupt 且 next 非空）——纯字符串 detail 兼容契约
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@router.post("/api/v1/batches/{thread_id}/overwrite-protected")
+async def overwrite_protected_endpoint(thread_id: str):
+    """覆盖写入：对「人工值保留未覆盖」的 protected 单元格按通道 A 语义补写
+    系统值（被盖人工旧值留痕 manual_value_overwritten）。
+
+    200 {"ok": true, "overwritten": N}；400 无 protected 行/无输出副本。
+    """
+    try:
+        return await asyncio.to_thread(service.overwrite_protected_rows, thread_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 

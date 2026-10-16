@@ -162,12 +162,39 @@ def _ensure_three_columns(ws) -> None:
                 list(NEW_COL_NAMES), INSERT_AFTER_COL)
 
 
-def _write_excel(state: AgentState, out_path: Path) -> tuple[int, int]:
-    """按行号精准写回 中文品名/净重/毛重 单元格。
+def _cell_non_empty(v) -> bool:
+    """副本单元格「非空」判定（通道 C 保护跳过用）：None/空白字符串为空。"""
+    if v is None:
+        return False
+    if isinstance(v, str):
+        return bool(v.strip())
+    return True
+
+
+def _write_excel(
+    state: AgentState,
+    out_path: Path,
+    channel: str = "first_write",
+) -> tuple[int, int]:
+    """按行标识精准写回 中文品名/净重/毛重 单元格。
 
     返回 (写入的行数, 跳过的占位行数)：无有效单重且无中文品名的条目
     （提取失败占位/Error 项）逐条记 warning 并计数，供导出摘要统计
     （提取失败告警闭环 §1.5）。
+
+    写前 diff 通道分流（写入侧人工改动感知 决策 1，阶段二）：
+    - channel="first_write"（默认，通道 C：resume_order 图内首次写入，
+      无法中途弹窗）——检测到人工非空修改（快照×副本冲突）或保护中的
+      人工最终值（protected 且副本非空）→ 跳过保留 + warning + 明细塞
+      cur["manual_conflicts"]（service 审计留痕 manual_override_kept、
+      完成摘要透出），被保留单元格在落盘后的快照重建打 protected；
+    - channel="rework"（通道 A：reopen/补充工厂确认覆写）——不加保护
+      直接覆盖，被盖掉的人工旧值逐单元格记 cur["manual_overwritten_cells"]
+      （service 审计留痕 manual_value_overwritten），protected 相应解除；
+    - 快照非空 × 副本空（人工改空等重新录入）→ 两通道一律正常覆盖；
+    - 数量列被人工改（快照 qty ≠ 副本 qty）→ warning + 明细塞
+      cur["qty_manual_changes"]，写入仍按副本当前数量计算（告警不阻断）。
+    diff/快照失败返回 None 时保守放行（无冲突语义），绝不阻塞写入主流程。
     """
     settings = get_settings()
     cur = state.get("current_factory_data") or {}
@@ -194,6 +221,29 @@ def _write_excel(state: AgentState, out_path: Path) -> tuple[int, int]:
     from app.orchestrator import copy_snapshot
     row_index = copy_snapshot.build_row_index(ws)
 
+    # 写前 diff（决策 1/6）：value_conflicts 逐字段冲突 + protected 单元格
+    # 全集 + qty 改动。快照不存在/损坏/扫描失败 → diff None，保守放行。
+    batch_id = state.get("batch_id")
+    conflict_map: dict[tuple[str, str], dict] = {}
+    protected_cells: set[tuple[str, str]] = set()
+    qty_change_map: dict[str, dict] = {}
+    if batch_id:
+        diff = copy_snapshot.diff_against_copy(batch_id)
+        if diff is not None:
+            conflict_map = {(c["row_key"], c["field"]): c
+                            for c in diff.value_conflicts}
+            protected_cells = set(diff.protected_cells)
+            qty_change_map = {q["row_key"]: q for q in diff.qty_changes}
+
+    # 通道留痕字段复位（随 cur 快照进 factory_outputs，供 service 审计/摘要）
+    cur["manual_conflicts"] = []
+    cur["manual_override_kept"] = 0
+    cur["manual_overwritten_cells"] = []
+    cur["manual_values_overwritten"] = 0
+    cur["qty_manual_changes"] = []
+    mark_protected: set[tuple[str, str]] = set()
+    unprotect: set[tuple[str, str]] = set()
+
     written = 0
     skipped_mx = 0
     skipped_placeholder = 0
@@ -217,8 +267,7 @@ def _write_excel(state: AgentState, out_path: Path) -> tuple[int, int]:
             excel_row = row_index.get(
                 (copy_snapshot.norm_key_text(factory), sku_key, seq))
             if excel_row is None:
-                # 副本中找不到该 row_key（人工删行等）：本阶段只记 warning
-                # 跳过，不加复活/冲突语义（阶段二接 diff 处理）
+                # 副本中找不到该 row_key（人工删行进墓碑）：绝不复活，记 warning
                 logger.warning(
                     "[Node6] 工厂「%s」SKU「%s」第 %d 行在副本中未找到"
                     "（可能被人工删除），跳过该行写入", factory, sku, seq)
@@ -228,23 +277,91 @@ def _write_excel(state: AgentState, out_path: Path) -> tuple[int, int]:
                 # MX 行三列是人工已填并核对好的值，绝不覆盖
                 skipped_mx += 1
                 continue
+            key_str = copy_snapshot.row_key_str(
+                (copy_snapshot.norm_key_text(factory), sku_key, seq))
+
+            # 数量列告警（决策 1 附则）：人工改数量 → warning + 摘要透出，
+            # 写入仍按副本当前数量吸收（人工数量优先，绝不静默）
+            qty_change = qty_change_map.get(key_str)
+            if qty_change is not None:
+                logger.warning(
+                    "[Node6] 行 %d（%s/%s）数量被人工改过（%s→%s），"
+                    "已按新数量写入", excel_row, factory, sku,
+                    qty_change.get("snapshot_qty"), qty_change.get("copy_qty"))
+                cur["qty_manual_changes"].append({
+                    "factory": factory, "sku": sku, "row": excel_row,
+                    "old": qty_change.get("snapshot_qty"),
+                    "new": qty_change.get("copy_qty"),
+                })
+
             qty = ws.cell(row=excel_row, column=col_qty).value
             qty = float(qty) if isinstance(qty, (int, float)) else 0.0
+            # 逐列独立判定（同一行可部分列覆盖、部分列跳过/保护）
+            pending_writes: list[tuple[str, int, object]] = []
             if name_cn:
-                cell = ws.cell(row=excel_row, column=col_cn, value=name_cn)
-                _apply_write_format(cell)
+                pending_writes.append(("name_cn", col_cn, name_cn))
             if unit_net is not None:
-                cell = ws.cell(row=excel_row, column=col_net, value=round(unit_net * qty, 2))
-                _apply_write_format(cell)
+                pending_writes.append(("net", col_net, round(unit_net * qty, 2)))
             if unit_gross is not None:
-                cell = ws.cell(row=excel_row, column=col_gross, value=round(unit_gross * qty, 2))
+                pending_writes.append(("gross", col_gross, round(unit_gross * qty, 2)))
+            row_written = False
+            for field, col, new_val in pending_writes:
+                ck = (key_str, field)
+                conflict = conflict_map.get(ck)
+                old_raw = ws.cell(row=excel_row, column=col).value
+                is_protected = ck in protected_cells and _cell_non_empty(old_raw)
+                if channel != "rework" and (conflict is not None or is_protected):
+                    # 通道 C：默认跳过保留人工值 + 快照打 protected
+                    cur["manual_override_kept"] += 1
+                    cur["manual_conflicts"].append({
+                        "factory": factory, "sku": sku, "row": excel_row,
+                        "field": field,
+                        "old": conflict["snapshot"] if conflict else None,
+                        "new": conflict["copy"] if conflict else old_raw,
+                    })
+                    mark_protected.add(ck)
+                    logger.warning(
+                        "[Node6] 行 %d（%s/%s）%s 列检测到人工修改"
+                        "（快照 %r → 副本 %r），保留人工值未覆盖",
+                        excel_row, factory, sku, field,
+                        conflict["snapshot"] if conflict else None,
+                        conflict["copy"] if conflict else old_raw)
+                    continue
+                cell = ws.cell(row=excel_row, column=col, value=new_val)
                 _apply_write_format(cell)
-            written += 1
+                row_written = True
+                if conflict is not None:
+                    # 通道 A：覆盖人工非空值，被盖旧值留痕 manual_value_overwritten
+                    cur["manual_overwritten_cells"].append({
+                        "factory": factory, "sku": sku, "row": excel_row,
+                        "field": field, "old": conflict["copy"], "new": new_val,
+                    })
+                    cur["manual_values_overwritten"] += 1
+                    unprotect.add(ck)
+                    logger.info(
+                        "[Node6] 行 %d（%s/%s）%s 列人工值 %r 已被系统值 %r 覆盖"
+                        "（通道 A 确认覆写）", excel_row, factory, sku, field,
+                        conflict["copy"], new_val)
+                elif is_protected:
+                    # 通道 A 覆盖保护中的人工最终值：解除保护；值不同才留痕
+                    unprotect.add(ck)
+                    if not copy_snapshot.field_equal(old_raw, new_val):
+                        cur["manual_overwritten_cells"].append({
+                            "factory": factory, "sku": sku, "row": excel_row,
+                            "field": field, "old": old_raw, "new": new_val,
+                        })
+                        cur["manual_values_overwritten"] += 1
+            if row_written:
+                written += 1
     if skipped_mx:
         logger.info("[Node6] 跳过 MX 行写回 %d 行（人工已填值）", skipped_mx)
     if skipped_placeholder:
         logger.warning("[Node6] 工厂「%s」共跳过 %d 条占位行（未写入 Excel）",
                        factory, skipped_placeholder)
+    if cur["manual_override_kept"]:
+        logger.warning("[Node6] 工厂「%s」%d 处人工修改的单元格已保留未覆盖"
+                       "（详见批次详情审计，可在详情页「覆盖写入」）",
+                       factory, cur["manual_override_kept"])
     # 落盘前可写探测：让 Excel 独占锁导致的失败尽早冒泡，避免做完耗时写操作才报错
     _probe_writable(out_path)
     try:
@@ -253,21 +370,34 @@ def _write_excel(state: AgentState, out_path: Path) -> tuple[int, int]:
         if _is_file_lock_error(e):
             raise RuntimeError(_format_file_busy_msg(out_path)) from e
         raise
-    # 快照更新点 2（决策 5）：写回落盘后全量重扫重建快照；
-    # 覆盖 writer() 与 apply_reopen_payload 两条调用链
-    batch_id = state.get("batch_id")
+    # 快照更新点 2（决策 5）：写回落盘后全量重扫重建快照（含 protected
+    # 结转——被保留的人工值打标，被覆盖的解除）；覆盖 writer() 与
+    # apply_reopen_payload 两条调用链
     if batch_id:
-        copy_snapshot.refresh_snapshot(batch_id)
+        copy_snapshot.refresh_snapshot(
+            batch_id,
+            mark_protected=mark_protected or None,
+            unprotect=unprotect or None)
     return written, skipped_placeholder
 
 
-def clear_sku_rows(state: AgentState, out_path: Path, skus: list[str]) -> int:
+def clear_sku_rows(
+    state: AgentState,
+    out_path: Path,
+    skus: list[str],
+    channel: str = "first_write",
+) -> int:
     """清空指定 SKU 在下游表中的 中文品名/净重/毛重 三列单元格，返回清除的行数。
 
     用于 reopen 模式下人工删除条目：该 SKU 此前已写入输出 Excel，删除后
     需把已写值清空（三列本就是本系统追加的，清空即回到写前状态）。
     MX 行（PURCHASE_ORDER 以 "MX" 开头）三列为人工填写，不在清空之列。
     主库历史单重记录不动（其他批次仍可能引用，删除主库记录不在此语义内）。
+
+    通道 A 留痕（决策 1）：channel="rework"（reopen 链路）时，被清掉的
+    人工非空修改（快照×副本冲突单元格）逐单元格记
+    cur["manual_overwritten_cells"]（old=人工值，new=None），由 service
+    层入审计 changes_json（source="manual_value_overwritten"）。
     """
     if not skus:
         return 0
@@ -290,6 +420,16 @@ def clear_sku_rows(state: AgentState, out_path: Path, skus: list[str]) -> int:
     from app.orchestrator import copy_snapshot
     row_index = copy_snapshot.build_row_index(ws)
 
+    # 通道 A 留痕：写前 diff 取快照×副本冲突（人工非空值），清空时旧值入审计
+    batch_id = state.get("batch_id")
+    conflict_map: dict[tuple[str, str], dict] = {}
+    if channel == "rework" and batch_id:
+        diff = copy_snapshot.diff_against_copy(batch_id)
+        if diff is not None:
+            conflict_map = {(c["row_key"], c["field"]): c
+                            for c in diff.value_conflicts}
+    field_by_col = {cols[0]: "name_cn", cols[1]: "net", cols[2]: "gross"}
+
     cleared = 0
     skipped_mx = 0
     for sku in skus:
@@ -307,7 +447,19 @@ def clear_sku_rows(state: AgentState, out_path: Path, skus: list[str]) -> int:
                     ws.cell(row=excel_row, column=col_po).value):
                 skipped_mx += 1
                 continue
+            key_str = copy_snapshot.row_key_str(
+                (copy_snapshot.norm_key_text(factory), sku_key, seq))
             for col in cols:
+                conflict = conflict_map.get((key_str, field_by_col[col]))
+                if conflict is not None:
+                    # 通道 A：人工非空值随 reopen 删除直接清空，旧值留痕
+                    cur.setdefault("manual_overwritten_cells", []).append({
+                        "factory": factory, "sku": str(sku), "row": excel_row,
+                        "field": field_by_col[col],
+                        "old": conflict["copy"], "new": None,
+                    })
+                    cur["manual_values_overwritten"] = (
+                        cur.get("manual_values_overwritten") or 0) + 1
                 ws.cell(row=excel_row, column=col).value = None
             cleared += 1
     if skipped_mx:
@@ -527,7 +679,13 @@ def writer(state: AgentState) -> dict:
         return {}
 
     out_path = _ensure_output_copy(state)
-    written, skipped_placeholder = _write_excel(state, out_path)
+    # 通道分流（决策 1）：补充工厂确认门（通道 B）操作员确认覆写后，
+    # add_factories_to_batch 把确认工厂写入 state.overwrite_manual_factories，
+    # 本厂按通道 A（rework）语义覆盖人工修改；其余走通道 C 默认跳过保留。
+    # 消费后自清（防止残留确认污染后续写入）。
+    overwrite_facs = set(state.get("overwrite_manual_factories") or [])
+    channel = "rework" if factory in overwrite_facs else "first_write"
+    written, skipped_placeholder = _write_excel(state, out_path, channel=channel)
     inserted, updated = _upsert_db(state)
 
     logger.info("[Node6] 工厂「%s」：写入 %d 行 Excel（跳过占位 %d 条）；"
@@ -540,4 +698,9 @@ def writer(state: AgentState) -> dict:
     # 存完整 current_factory_data 快照（reopen 时全文恢复，与首次审核字段一致）；
     # 旧格式列表（仅 calculated_items）由 reopen 层兼容读取
     factory_outputs[factory] = dict(cur)
-    return {"final_output_path": str(out_path), "factory_outputs": factory_outputs}
+    result = {"final_output_path": str(out_path),
+              "factory_outputs": factory_outputs}
+    if factory in overwrite_facs:
+        # 确认标记消费后自清（其余未消费工厂保留）
+        result["overwrite_manual_factories"] = sorted(overwrite_facs - {factory})
+    return result

@@ -311,9 +311,10 @@ def test_refresh_baseline_when_no_snapshot(caplog):
                for r in caplog.records if r.levelno >= logging.WARNING)
     assert copy_snapshot.snapshot_path(batch).exists()
 
-    # 第二次 refresh：快照已存在 → 常规重建 origin 回 system
+    # 第二次 refresh：快照已存在 → origin 结转沿用旧快照记录（决策 5 重建
+    # 算法：baseline 行的来源不可考属性跨重建保留，不回 system）
     snap2 = copy_snapshot.refresh_snapshot(batch)
-    assert all(r["origin"] == "system" for r in snap2["rows"])
+    assert all(r["origin"] == "baseline" for r in snap2["rows"])
 
 
 # ---------------------------------------------------------------------------

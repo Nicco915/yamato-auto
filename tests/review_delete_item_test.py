@@ -223,14 +223,14 @@ def patched_reopen(monkeypatch):
     monkeypatch.setattr(writer_mod, "_ensure_output_copy",
                         lambda state: TMP / "out.xlsx")
 
-    def fake_write(state, path):
+    def fake_write(state, path, channel="first_write"):
         captured["written_items"] = (
             state["current_factory_data"]["calculated_items"])
-        return 1
+        return (1, 0)  # 契约为 (written, skipped_placeholder)
     monkeypatch.setattr(writer_mod, "_write_excel", fake_write)
     monkeypatch.setattr(writer_mod, "_upsert_db", lambda state: (0, 0))
 
-    def fake_clear(state, path, skus):
+    def fake_clear(state, path, skus, channel="first_write"):
         captured["cleared_skus"] = list(skus)
         return len(skus)
     monkeypatch.setattr(writer_mod, "clear_sku_rows", fake_clear)

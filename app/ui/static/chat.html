@@ -488,6 +488,20 @@
 
 </div><!-- /.chat-shell -->
 
+<!-- 补充工厂-人工修改确认弹窗（确认门：一次一确认；409 manual_conflicts 触发，
+     列出冲突明细，确认后带 confirm_overwrite 重发同一端点；取消则不动） -->
+<div id="mc-mask" class="modal-mask" onclick="if (event.target === this) closeMcModal()">
+  <div class="modal">
+    <h3 id="mc-title">检测到人工修改</h3>
+    <p id="mc-hint" style="font-size:13px;color:#4b5563;line-height:1.7;margin:0 0 10px"></p>
+    <div id="mc-list" style="max-height:40vh;overflow-y:auto"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeMcModal()">取消（保留人工值）</button>
+      <button class="btn btn-primary" id="mc-confirm-btn" onclick="confirmMcOverwrite()">确认覆盖写入</button>
+    </div>
+  </div>
+</div>
+
 <script src="/ui/static/ui.js?v=2"></script>
 <script>
 "use strict";
@@ -791,7 +805,49 @@ function renderPipelineSteps(stages) {
 
 /* ---- 状态栏按钮动作（与批次详情页同一批后端端点） ---- */
 
-/* 补充工厂：重新解析装箱单，把未处理（新增/跳过/驳回）的工厂补进本批次 */
+/* 补充工厂 POST（裸 fetch 版，2026-10-15 写入侧人工改动感知）：
+   409 冲突响应的 detail 是对象 {code:"manual_conflicts", conflicts:[...], count:N}，
+   而 ui.js 的 api() 只透传字符串 detail（对象会被吞成 "HTTP 409"），
+   这里保留原始 detail 供确认窗使用；旧版字符串 detail（如「批次运行中」）不受影响 */
+async function _postAddFactories(tid, confirmOverwrite) {
+  const resp = await fetch("/api/v1/batches/" + encodeURIComponent(tid) + "/add-factories", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ thread_id: tid, confirm_overwrite: !!confirmOverwrite }),
+  });
+  let data = null;
+  try { data = await resp.json(); } catch (e) { data = null; }
+  if (!resp.ok) {
+    const detail = data && data.detail;
+    const err = new Error((typeof detail === "string" && detail) ? detail : ("HTTP " + resp.status));
+    err.status = resp.status;
+    err.detail = detail;
+    throw err;
+  }
+  return data;
+}
+
+/* 补充工厂成功后的公共文案：结果 toast + 人工值保留提示（manual_overrides_kept 透出，
+   延时播放避免覆盖主 toast） */
+function _afterAddFactoriesOk(r) {
+  if (r && r.added > 0) {
+    toast("已补充 " + r.added + " 家工厂：" + (r.factories || []).join("、"));
+  } else {
+    toast((r && r.message) || "没有待补充的工厂");
+  }
+  if (r && r.added > 0 && r.status === "pending_human_review") {
+    toast("批次已转入待审核，请点击「去审核」继续处理");
+  }
+  if (r && (r.manual_overrides_kept || 0) > 0) {
+    setTimeout(function () {
+      toast(r.manual_overrides_kept + " 行人工修改的值已保留未覆盖，可在批次详情页确认覆盖", 6000);
+    }, 3000);
+  }
+}
+
+/* 补充工厂：重新解析装箱单，把未处理（新增/跳过/驳回）的工厂补进本批次。
+   409 manual_conflicts（检测到人工修改待写入行）→ 弹确认窗；确认后带
+   confirm_overwrite 重发同一端点；取消则不动（人工值保留、本次不覆盖） */
 async function chatAddFactories() {
   const tid = getChatThreadId();
   if (!tid) return;
@@ -799,18 +855,70 @@ async function chatAddFactories() {
   const btn = $("bsb-add-factories");
   if (btn) { btn.disabled = true; btn.textContent = "补充识别中…"; }
   try {
-    const r = await api("/api/v1/batches/" + encodeURIComponent(tid) + "/add-factories",
-                        { method: "POST" });
-    if (r && r.added > 0) {
-      toast("已补充 " + r.added + " 家工厂：" + (r.factories || []).join("、"));
+    const r = await _postAddFactories(tid, false);
+    _afterAddFactoriesOk(r);
+  } catch (e) {
+    if (e && e.status === 409 && e.detail && typeof e.detail === "object" && e.detail.code === "manual_conflicts") {
+      openMcModal(tid, e.detail);
     } else {
-      toast((r && r.message) || "没有待补充的工厂");
+      toast("补充工厂失败：" + (e && e.message ? e.message : e));
     }
-    if (r && r.added > 0 && r.status === "pending_human_review") {
-      toast("批次已转入待审核，请点击「去审核」继续处理");
-    }
+  } finally {
+    loadPipelineState(tid);
+  }
+}
+
+/* ---------- 人工修改确认门（409 manual_conflicts） ---------- */
+let _mcPending = null;   // {tid} 待确认的补充工厂请求
+const MC_FIELD_TEXT = { name_cn: "中文品名", net: "净重", gross: "毛重", qty: "数量" };
+function _mcFieldText(f) { return MC_FIELD_TEXT[f] || f || "-"; }
+function _mcValText(v) { return (v === null || v === undefined || v === "") ? "（空）" : String(v); }
+
+function openMcModal(tid, detail) {
+  _mcPending = { tid: tid };
+  const conflicts = (detail && detail.conflicts) || [];
+  const count = (detail && detail.count) || conflicts.length;
+  $("mc-title").textContent = "检测到 " + count + " 行人工修改";
+  $("mc-hint").textContent =
+    "以下单元格在输出表格中被人工修改过。确认覆盖将用系统计算值覆写这些人工值（原值留痕可查）；" +
+    "取消则本次不写入，人工值保留。";
+  $("mc-list").innerHTML = conflicts.length
+    ? '<table class="table" style="font-size:12px"><thead><tr>' +
+      '<th>工厂</th><th>SKU</th><th>行</th><th>字段</th><th>人工值</th><th>将写入</th>' +
+      '</tr></thead><tbody>' +
+      conflicts.map(function (c) {
+        c = c || {};
+        return "<tr><td>" + escHtml(c.factory || "-") + "</td><td>" + escHtml(c.sku || "-") +
+          "</td><td>" + escHtml(c.row != null ? String(c.row) : "-") + "</td><td>" +
+          escHtml(_mcFieldText(c.field)) + "</td><td>" + escHtml(_mcValText(c.old)) +
+          "</td><td>" + escHtml(_mcValText(c.new)) + "</td></tr>";
+      }).join("") + "</tbody></table>"
+    : '<span style="color:var(--muted)">（无明细）</span>';
+  const btn = $("mc-confirm-btn");
+  btn.disabled = false;
+  btn.textContent = "确认覆盖写入";
+  $("mc-mask").classList.add("show");
+}
+
+function closeMcModal() {
+  $("mc-mask").classList.remove("show");
+  _mcPending = null;
+}
+
+async function confirmMcOverwrite() {
+  if (!_mcPending) return;
+  const tid = _mcPending.tid;
+  const btn = $("mc-confirm-btn");
+  btn.disabled = true;
+  btn.textContent = "覆盖写入中…";
+  try {
+    const r = await _postAddFactories(tid, true);
+    closeMcModal();
+    _afterAddFactoriesOk(r);
   } catch (e) {
     toast("补充工厂失败：" + (e && e.message ? e.message : e));
+    btn.disabled = false;
+    btn.textContent = "确认覆盖写入";
   } finally {
     loadPipelineState(tid);
   }

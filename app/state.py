@@ -64,6 +64,12 @@ class AgentState(TypedDict, total=False):
     # retry_factory_extraction 写入）；Node3 消费后必须自清（所有返回分支
     # 的 update 都带 False），防止残留污染后续工厂的提取流程
     force_reextract: bool
+    # 补充工厂确认门（写入侧人工改动感知 决策 1 通道 B）：操作员确认覆写
+    # 人工修改后由 add_factories_to_batch 写入确认工厂名单；Node6 writer
+    # 对名单内工厂按通道 A（rework）语义覆盖（旧值留痕
+    # manual_value_overwritten），writer 消费本厂后自清，防止残留确认
+    # 污染后续写入
+    overwrite_manual_factories: Optional[List[str]]
 
     # ----- Node7 产物 -----
     final_output_path: str                # 最终输出的 Excel 副本路径
