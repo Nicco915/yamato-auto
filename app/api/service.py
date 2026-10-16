@@ -31,7 +31,7 @@ from app.db import batch_store
 from app.db.models import ReviewAudit
 from app.db.session import get_session
 from app.extraction.llm_client import FatalLLMError, usage_tracker
-from app.orchestrator import copy_snapshot, discovery, factory_setup
+from app.orchestrator import copy_snapshot, discovery, factory_setup, source_diff
 from app.extraction.session import SESSIONS_DIR
 from app.graph import NODE2, NODE4, NODE5, NODE6, NODE7, get_graph
 from app.logging_config import logging_context
@@ -240,6 +240,10 @@ def update_batch_paths(
 
     _write_batch_config(batch_id, config)
 
+    # 决策 9：换了原件 → 指纹基线跟随新文件（旧文件指纹对新文件无意义）
+    if downstream_file_path:
+        source_diff.record_fingerprint(batch_id, config["downstream_file_path"])
+
     checkpoint_reset = False
     if reset_checkpoint:
         from langgraph.graph import START
@@ -263,6 +267,7 @@ def update_batch_paths(
 def rerun_batch(
     batch_id: str,
     on_progress: Callable[[dict], None] | None = None,
+    confirm_discard_manual: bool = False,
 ) -> dict[str, Any]:
     """完全重跑批次：先归档当前 output 产物到 _history/，再清空 sessions，再重置 checkpoint 重跑。
 
@@ -273,6 +278,11 @@ def rerun_batch(
     然后清空 data/sessions/{safe(batch_id)}/*.json（不删目录）。
 
     这样每批次独立缓存；rerun 不污染历史产物，所有历史 run 可审计回看。
+
+    决策 10（完全重跑警告确认门）：副本快照检测到人工改动痕迹（diff 非空或
+    protected/tombstones 非空）且 confirm_discard_manual=False → 抛
+    ManualDiscardError 拒绝执行（路由层转 409 code=discard_manual_changes，
+    dispatcher 工具转 needs_confirm）；操作员确认后带 True 重入才放行。
     """
     import shutil
 
@@ -282,6 +292,16 @@ def rerun_batch(
     if config is None:
         raise ValueError(f"批次不存在: {batch_id}")
     run_count = config.get("run_count", 1)
+
+    # 决策 10 确认门：副本人工改动痕迹未确认 → 拒绝（归档前先拦截，
+    # 不产生任何副作用）
+    if not confirm_discard_manual:
+        traces = detect_manual_traces(batch_id)
+        if traces:
+            logger.warning(
+                "[rerun] 批次 %s 副本检测到人工改动痕迹 %s，未确认拒绝重跑",
+                batch_id, traces)
+            raise ManualDiscardError(traces)
 
     settings = get_settings()
     batch_output_dir = settings.batch_output_dir(batch_id)
@@ -326,6 +346,9 @@ def rerun_batch(
     config["last_run_at"] = datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
     config["run_count"] = run_count + 1
     _write_batch_config(batch_id, config)
+    # 决策 9：新 run 以当前原件为基准重记指纹（旧指纹已随 output 归档；
+    # config dict 是归档前读的，残留旧指纹键必须覆盖）
+    source_diff.record_fingerprint(batch_id, config["downstream_file_path"])
 
     return run_until_interrupt(
         thread_id=batch_id,
@@ -333,6 +356,39 @@ def rerun_batch(
         upstream_root=config["upstream_root"],
         on_progress=on_progress,
     )
+
+
+class SourceChangesError(Exception):
+    """原件差异确认门信号（写入侧人工改动感知 决策 9）。
+
+    原件在批次运行后被人工改单（已完成/重试工厂有增行/删行/数量改）且
+    未确认 → 不入图/不重试，路由层转 HTTP 409 结构体
+    （{"code": "source_changes", ...}）；操作员确认后带
+    confirm_source_changes=True 重发才吸收。
+    changes 按厂明细：[{"factory", "added", "removed", "qty_changed"}]。
+    """
+
+    def __init__(self, changes: list[dict]):
+        self.changes = list(changes)
+        sdiff = source_diff.SourceDiff(changes=tuple(self.changes))
+        super().__init__(
+            f"原件中已完成工厂有变更（{sdiff.describe()}），是否吸收重新写入")
+
+
+class ManualDiscardError(Exception):
+    """完全重跑警告确认门信号（写入侧人工改动感知 决策 10）。
+
+    rerun_batch 会重建 output 副本（旧副本整体归档 _history/），副本快照
+    检测到人工改动痕迹（diff 非空或 protected/tombstones 非空）且未确认
+    → 拒绝执行；操作员确认后带 confirm_discard_manual=True 重发才放行。
+    traces 为计数摘要 dict（detect_manual_traces 的返回）。
+    """
+
+    def __init__(self, traces: dict):
+        self.traces = dict(traces)
+        super().__init__(
+            "完全重跑将重建 output 副本，副本上的全部人工改动将丢失"
+            "（旧副本归档至 _history/ 可查回），是否继续")
 
 
 class ManualConflictError(Exception):
@@ -603,15 +659,249 @@ def _manual_write_traces(
     return kept, overwritten, qty_changes
 
 
+def _diff_factory_source_changes(
+    batch_id: str,
+    values: dict,
+    factories,
+) -> list[dict]:
+    """决策 9 共用：对指定工厂做原件行级 diff（指纹变了才解析，零成本短路）。
+
+    返回 SourceDiff.changes 的 list（[{"factory","added","removed",
+    "qty_changed"}]）；指纹未变/无差异/无法判定 → []。辅助设施包死：
+    任何失败只记 error 并按无差异放行，绝不阻塞主流程。
+    """
+    if not factories:
+        return []
+    try:
+        if not source_diff.source_fingerprint_changed(batch_id):
+            return []
+        src_path = (values.get("downstream_file_path")
+                    or (_read_batch_config(batch_id) or {}).get(
+                        "downstream_file_path"))
+        if not src_path:
+            return []
+        new_rows = source_diff.parse_source_rows(src_path)
+        fp = source_diff.read_fingerprint(batch_id) or {}
+        sdiff = source_diff.diff_source_requirements(
+            values.get("downstream_row_map") or {},
+            new_rows,
+            old_qty_map=fp.get("qty_map") or {},
+            factories=factories,
+        )
+        return list(sdiff.changes)
+    except Exception:  # noqa: BLE001 辅助设施失败静默降级
+        logger.error("[原件diff] 批次 %s 原件差异检测失败（按无差异放行）",
+                     batch_id, exc_info=True)
+        return []
+
+
+def _source_changes_warning(
+    thread_id: str,
+    factory_name: str,
+    values: dict,
+) -> dict | None:
+    """reopen 警告条数据（决策 9 入口三）：指纹变了且该厂有结构差异时给出，
+    不阻断编辑。无差异/检测失败 → None（包死，绝不影响 reopen 主流程）。
+    """
+    try:
+        changes = _diff_factory_source_changes(thread_id, values, [factory_name])
+        if not changes:
+            return None
+        desc = source_diff.SourceDiff(changes=tuple(changes)).describe()
+        return {
+            "message": f"原件已在批次运行后被修改（{desc}），请核对后再提交",
+            "changes": changes,
+        }
+    except Exception:  # noqa: BLE001
+        logger.warning("[原件diff] reopen 警告检测失败（不阻断）"
+                       "thread=%s factory=%s", thread_id, factory_name,
+                       exc_info=True)
+        return None
+
+
+def factory_source_changes_summary(
+    thread_id: str,
+    factory_name: str,
+) -> str | None:
+    """dispatcher 写工具 preview 用的单厂原件差异一句化警告（决策 9）。
+
+    返回 None = 无差异/批次不存在/检测失败（preview 静默略过）。
+    """
+    try:
+        graph = get_graph()
+        values = graph.get_state(_config(thread_id)).values or {}
+        warning = _source_changes_warning(thread_id, factory_name, values)
+        return warning["message"] if warning else None
+    except Exception:  # noqa: BLE001 preview 辅助，绝不抛出
+        logger.warning("[原件diff] 单厂差异摘要失败 thread=%s factory=%s",
+                       thread_id, factory_name, exc_info=True)
+        return None
+
+
+def detect_manual_traces(batch_id: str) -> dict | None:
+    """决策 10：副本快照中的人工改动痕迹计数（完全重跑警告的数据源）。
+
+    痕迹口径（任一非零即需确认）：写前 diff 非空（改值/数量/删行/新增）
+    或快照 protected/tombstones 非空。返回计数 dict；无痕迹/无快照/无副本/
+    检测失败 → None（放行重跑；旧副本归档 _history/ 本身已是兜底）。
+    """
+    try:
+        snap = copy_snapshot.load_snapshot(batch_id)
+        if snap is None:
+            return None
+        protected = sum(len(r.get("protected_fields") or [])
+                        for r in snap.get("rows") or [])
+        tombstones = len(snap.get("tombstones") or [])
+        diff = copy_snapshot.diff_against_copy(batch_id)
+        traces = {
+            "value_conflicts": len(diff.value_conflicts) if diff else 0,
+            "qty_changes": len(diff.qty_changes) if diff else 0,
+            "deleted_rows": len(diff.deleted_rows) if diff else 0,
+            "added_rows": len(diff.added_rows) if diff else 0,
+            "protected_cells": protected,
+            "tombstones": tombstones,
+        }
+        return traces if any(traces.values()) else None
+    except Exception:  # noqa: BLE001 辅助设施失败静默降级（放行重跑）
+        logger.error("[rerun] 批次 %s 人工改动痕迹检测失败（按无痕迹放行）",
+                     batch_id, exc_info=True)
+        return None
+
+
+def _absorb_source_changes(
+    batch_id: str,
+    values: dict,
+    factories: list[str],
+    new_rows: dict,
+    new_row_map: dict,
+) -> dict:
+    """决策 9 吸收：已完成工厂原件变更确认后的副本重写（决策 1 通道 A 语义）。
+
+    每厂三步：
+    1. 数量列回写：按 row_key 索引把原件新数量写进副本对应行
+       （人工插删行移位免疫；新增行已被 _sync_output_copy_rows 追加）；
+    2. 快照重建（让 writer 写前 diff 以新数量为基准，避免把系统自己
+       回写的数量误判为「人工改数量」告警）；
+    3. writer._write_excel(channel="rework") 用 factory_outputs 的
+       calculated_items 重写三列（按新数量重算；被盖人工旧值逐单元格
+       留痕 manual_value_overwritten），审计 result_status="source_absorbed"。
+
+    原件整厂消失/副本不存在/单厂重写失败 → 记日志跳过该厂，绝不阻塞主流程
+    （吸收是确认后的辅助动作，失败可由 reopen/单厂重试兜底）。
+    """
+    from app.nodes import writer as writer_mod  # 延迟导入避免循环
+
+    absorbed = {"factories": [], "qty_cells_updated": 0}
+    copy_path = copy_snapshot.find_copy(batch_id)
+    if copy_path is None:
+        logger.warning("[原件吸收] 批次 %s 无输出副本，跳过副本重写", batch_id)
+        return absorbed
+    settings = get_settings()
+    outputs = values.get("factory_outputs") or {}
+
+    # ① 数量列回写（原件 → 副本）
+    try:
+        wb = load_workbook(copy_path)
+        ws = wb[wb.sheetnames[0]]
+        header = [c.value for c in ws[1]]
+        col_qty = (header.index(settings.col_qty) + 1
+                   if settings.col_qty in header else None)
+        if col_qty is not None:
+            row_index = copy_snapshot.build_row_index(ws)
+            dirty = False
+            for factory in factories:
+                for sku, qtys in (new_rows.get(factory) or {}).items():
+                    key_base = (copy_snapshot.norm_key_text(factory),
+                                copy_snapshot.norm_key_text(sku))
+                    for seq, new_qty in enumerate(qtys, start=1):
+                        row_no = row_index.get((*key_base, seq))
+                        if row_no is None:
+                            continue  # 原件删行/未同步行：副本侧不动
+                        cell = ws.cell(row=row_no, column=col_qty)
+                        cur_qty = copy_snapshot.round2(cell.value)
+                        if not source_diff._qty_equal(cur_qty, new_qty):
+                            cell.value = new_qty
+                            absorbed["qty_cells_updated"] += 1
+                            dirty = True
+                            logger.info(
+                                "[原件吸收] 批次 %s 行 %d（%s/%s）数量按原件回写"
+                                "（%s→%s）", batch_id, row_no, factory, sku,
+                                cur_qty, new_qty)
+            if dirty:
+                wb.save(copy_path)
+        wb.close()
+    except Exception:  # noqa: BLE001 单步失败不阻塞后续重写
+        logger.error("[原件吸收] 批次 %s 数量列回写失败", batch_id,
+                     exc_info=True)
+
+    # ② 快照重建：以新数量为写前 diff 基准（防误报「人工改数量」）
+    copy_snapshot.refresh_snapshot(batch_id)
+
+    # ③ 逐厂通道 A 重写三列 + 审计留痕
+    for factory in factories:
+        try:
+            raw = outputs.get(factory)
+            items = (raw.get("calculated_items")
+                     if isinstance(raw, dict) else raw) or []
+            if not items:
+                logger.warning("[原件吸收] 批次 %s 工厂「%s」无已审核数据快照，"
+                               "跳过三列重写（可 reopen/单厂重试补齐）",
+                               batch_id, factory)
+                continue
+            fake_state: dict[str, Any] = {
+                "batch_id": batch_id,
+                "downstream_file_path": values.get("downstream_file_path"),
+                "downstream_row_map": {factory: new_row_map.get(factory) or {}},
+                "validation_status": "Approved",
+                "current_factory_data": {
+                    "factory_name": factory,
+                    "calculated_items": items,
+                },
+            }
+            writer_mod._write_excel(fake_state, copy_path, channel="rework")
+            overwritten = list(
+                fake_state["current_factory_data"].get(
+                    "manual_overwritten_cells") or [])
+            absorbed["factories"].append(factory)
+            _write_audit({
+                "thread_id": batch_id,
+                "factory_name": factory,
+                "approved": True,
+                "edited_count": len(overwritten),
+                "changes": ([{"factory_absorbed": True,
+                              "note": "原件变更确认吸收，按通道 A 语义重写副本"}]
+                            + [{**c, "source": "manual_value_overwritten"}
+                               for c in overwritten]),
+                "new_skus": [],
+            }, "source_absorbed")
+        except Exception:  # noqa: BLE001 单厂失败不拖累其余工厂
+            logger.error("[原件吸收] 批次 %s 工厂「%s」重写失败",
+                         batch_id, factory, exc_info=True)
+
+    logger.info("[原件吸收] 批次 %s 吸收完成：%s（数量回写 %d 格）",
+                batch_id, absorbed["factories"], absorbed["qty_cells_updated"])
+    return absorbed
+
+
 def add_factories_to_batch(
     batch_id: str,
     on_progress: Callable[[dict], None] | None = None,
     confirm_overwrite: bool = False,
+    confirm_source_changes: bool = False,
 ) -> dict[str, Any]:
     """补充工厂：重新解析装箱单，把「未写入」的工厂补进本批次继续处理。
 
     待补充工厂 = 装箱单工厂全集 − factory_outputs.keys()（已 approve 写入的）。
     装箱单新增的、被「跳过本工厂」的、被驳回的工厂都能补进来；已写入的绝不重复。
+
+    决策 9 入口一（原件差异检测，先于通道 B）：利用本函数既有全文件重解析，
+    对已完成工厂（factory_outputs）与 state 比对——有增行/删行/数量改且
+    confirm_source_changes=False → 抛 SourceChangesError（路由转 409
+    code=source_changes）；确认后吸收：state 合并该厂最新 requirements/row_map
+    + 副本重写（sync 追加新行 + 数量列回写 + writer 通道 A 语义重写三列）
+    + 审计 source_absorbed + 指纹基线更新。
+    门槛顺序契约（前端）：一次 409 只报一种 code，先 source_changes 后
+    manual_conflicts。
 
     通道 B 确认门（写入侧人工改动感知 决策 1）：跑图前对 output 副本做
     写前 diff，待写入工厂的行存在人工非空修改且 confirm_overwrite=False
@@ -699,7 +989,43 @@ def add_factories_to_batch(
     added = [f for f in to_add
              if f not in queued and f not in deferred_names and f != current_name]
 
-    if not added and not (was_aborted and snap.next):
+    # 决策 9 入口一（原件差异检测，门槛顺序契约：先 source_changes 后
+    # manual_conflicts）：已完成工厂的原件行级 diff（增行/删行/数量改）。
+    # 指纹没变 → 零成本跳过解析；检测失败 → 按无差异放行（辅助设施包死）。
+    absorbed_factories: list[str] = []
+    new_source_rows: dict | None = None
+    if done:
+        try:
+            if source_diff.source_fingerprint_changed(batch_id):
+                new_source_rows = source_diff.parse_source_rows(
+                    config["downstream_file_path"])
+                fp = source_diff.read_fingerprint(batch_id) or {}
+                sdiff = source_diff.diff_source_requirements(
+                    values.get("downstream_row_map") or {},
+                    new_source_rows,
+                    old_qty_map=fp.get("qty_map") or {},
+                    factories=done)
+                if sdiff.any():
+                    if not confirm_source_changes:
+                        logger.warning(
+                            "[补充工厂] 批次 %s 原件中已完成工厂有变更（%s），"
+                            "未确认不入图", batch_id, sdiff.describe())
+                        raise SourceChangesError(list(sdiff.changes))
+                    absorbed_factories = [c["factory"] for c in sdiff.changes]
+                    logger.info(
+                        "[补充工厂] 批次 %s 原件变更已确认吸收：%s",
+                        batch_id, sdiff.describe())
+        except SourceChangesError:
+            raise
+        except Exception:  # noqa: BLE001 原件 diff 是辅助设施，不阻塞补充主流程
+            logger.error("[原件diff] 批次 %s 入口一检测失败（按无差异放行）",
+                         batch_id, exc_info=True)
+            absorbed_factories = []
+
+    if not added and not absorbed_factories and not (was_aborted and snap.next):
+        # 无新工厂且无待吸收变更：顺手把指纹基线对齐当前原件
+        # （mtime 抖动/仅非业务列改动场景下次零成本短路）
+        source_diff.record_fingerprint(batch_id, config["downstream_file_path"])
         return {"added": 0, "factories": [], "message": "没有待补充的工厂"}
     # aborted 复活且图还有未跑节点（停在 Node2 入口时主/暂缓队列未消，
     # 或停在 Node7 入口）：即使无新工厂可补，也照走续跑把剩余队列跑下去
@@ -748,6 +1074,13 @@ def add_factories_to_batch(
     for f in refresh:
         merged_requirements[f] = new_requirements[f]
         merged_row_map[f] = new_row_map[f]
+    # 决策 9 吸收：确认变更的已完成工厂一并用重解析值覆盖 state 基准
+    # （原件整厂消失的工厂不在 new_requirements → state 保留原样，
+    #  副本行不删，由人工 reopen/剔除流程处理）
+    for f in absorbed_factories:
+        if f in new_requirements:
+            merged_requirements[f] = new_requirements[f]
+            merged_row_map[f] = new_row_map[f]
     merged_pending = existing_pending + added
 
     update: dict[str, Any] = {
@@ -781,18 +1114,41 @@ def add_factories_to_batch(
 
     with logging_context(thread_id=batch_id):
         # 输出副本行同步：装箱单尾部追加的新行需先补进 output 副本，
-        # 否则 writer 按新 row_map 行号写回会写出幽灵数据
+        # 否则 writer 按新 row_map 行号写回会写出幽灵数据；
+        # 决策 9 吸收工厂一并入同步范围（原件新增行追加副本尾部）
         _sync_output_copy_rows(batch_id, config["downstream_file_path"],
-                               refresh, new_row_map)
+                               refresh | set(absorbed_factories), new_row_map)
+
+        # 决策 9 吸收副本重写（通道 A 语义）：数量列回写 + writer 重写三列
+        # （被盖人工旧值留痕 manual_value_overwritten，审计 source_absorbed）
+        if absorbed_factories:
+            _absorb_source_changes(
+                batch_id, values, absorbed_factories,
+                new_source_rows if new_source_rows is not None
+                else source_diff.parse_source_rows(config["downstream_file_path"]),
+                new_row_map)
 
         # as_node 锚点：pending_review 走 Node4 条件边重回 Node5 重挂起；
         # completed 走 Node6 条件边重路由（见 docstring 实测结论）；
         # aborted 无 interrupt 同走 Node6 锚点（next 残留指向 Node2/Node7
         # 入口，update_state 重算 next 后由条件边路由回 Node2 续跑）；
         # aborted 且无新工厂可补时 state 无需合并，跳过 update_state 直接
-        # stream(None) 原样恢复 checkpoint 上的挂起任务（实测：Node2 只跑一次）
-        if added or not was_aborted:
-            graph.update_state(cfg, update, as_node=NODE4 if has_interrupt else NODE6)
+        # stream(None) 原样恢复 checkpoint 上的挂起任务（实测：Node2 只跑一次）；
+        # completed 纯吸收（决策 9，无新工厂）锚 NODE7 终点——只合并 state，
+        # next 重算为空，stream(None) 空转直接落完成分支，不触发导出重跑
+        if added or absorbed_factories or not was_aborted:
+            if has_interrupt:
+                anchor = NODE4
+            elif added or was_aborted:
+                anchor = NODE6
+            else:
+                anchor = NODE7
+            graph.update_state(cfg, update, as_node=anchor)
+
+        # 决策 9：state 已反映当前原件（补充合并 + 确认吸收），更新指纹基线
+        # （rerun/换路径/建批外的唯一常规更新点；未确认吸收时抛错到不了这里，
+        #  指纹保持旧值，下次调用仍能检出）
+        source_diff.record_fingerprint(batch_id, config["downstream_file_path"])
 
         emit = _make_progress_emitter(on_progress, seed=values)
         try:
@@ -816,6 +1172,8 @@ def add_factories_to_batch(
                     if not added:
                         # aborted 复活无新工厂可补：给前端一句人话而非「已补充 0 家」
                         result["message"] = "批次已恢复执行，挂起等待审核"
+                    if absorbed_factories:
+                        result["source_changes_absorbed"] = sorted(absorbed_factories)
                     return result
         except batch_store.BatchAbortedError:
             # 用户主动终止（2026-10-14）：控制流异常，不是系统异常——
@@ -851,6 +1209,13 @@ def add_factories_to_batch(
             result["qty_manual_changes"] = len(qty_changes)
         if not added:
             result["message"] = "批次已恢复执行并处理完成"
+        if absorbed_factories:
+            # 决策 9 吸收透出：已完成工厂的原件变更已吸收重写
+            result["source_changes_absorbed"] = sorted(absorbed_factories)
+            absorb_hint = (f"已吸收原件变更并重写副本："
+                           f"{len(absorbed_factories)} 家已完成工厂")
+            base = result.get("message") or "补充的工厂已处理完成"
+            result["message"] = f"{base}；{absorb_hint}"
         if kept:
             base = result.get("message") or "补充的工厂已处理完成"
             result["message"] = (
@@ -1467,12 +1832,20 @@ def retry_factory_extraction(
     folder: str | None = None,
     save: bool = False,
     on_progress: Callable[[dict], None] | None = None,
+    confirm_source_changes: bool = False,
 ) -> dict[str, Any]:
     """单厂重试：只重跑当前挂起工厂的 Node3→Node5，已审核工厂不受影响。
 
     机制同 rerun_with_paths（langgraph 1.2.9 坑）：update_state(as_node=NODE2)
     作废 Node5 interrupt 现场，invoke 从 Node3 继续。Node2 仅作锚点不会重跑，
     current_factory_data 仍在 state 中供 Node3 使用。
+
+    决策 9 入口二（原件差异检测）：触发前查原件指纹，变了且该厂有行级差异
+    （增行/删行/数量改）→ 未确认抛 SourceChangesError（dispatcher 工具转
+    needs_confirm 提示，操作员确认后带 confirm_source_changes=True 重入）；
+    确认后吸收该厂最新需求进 state（requirements/row_map 合并 + 副本行同步）。
+    注意：指纹基线不在此更新——单厂吸收不代表 state 已反映整份原件，
+    其余工厂的差异仍应由入口一检出。
 
     对照注入（W6b）：
     - folder 非 None 时，先经 factory_match.validate_subfolder 校验
@@ -1499,6 +1872,31 @@ def retry_factory_extraction(
 
     if save and folder is None:
         raise ValueError("save=true 必须同时提供 folder（无对照可保存）")
+
+    # 决策 9 入口二：原件指纹变了且该厂有行级差异 → 确认门（未确认抛
+    # SourceChangesError；确认后吸收该厂最新需求进 state + 副本行同步）
+    src_changes = _diff_factory_source_changes(thread_id, snap.values, [factory])
+    if src_changes and not confirm_source_changes:
+        logger.warning(
+            "[单厂重试] 批次 %s 工厂「%s」原件有变更（%s），未确认不重试",
+            thread_id, factory,
+            source_diff.SourceDiff(changes=tuple(src_changes)).describe())
+        raise SourceChangesError(src_changes)
+    src_absorb: tuple | None = None
+    if src_changes and confirm_source_changes:
+        src_path = (snap.values.get("downstream_file_path")
+                    or (_read_batch_config(thread_id) or {}).get(
+                        "downstream_file_path"))
+        if src_path:
+            from app.nodes.parse_downstream import parse_downstream_file
+            try:
+                src_absorb = parse_downstream_file(src_path)
+                logger.info("[单厂重试] 批次 %s 工厂「%s」原件变更已确认吸收",
+                            thread_id, factory)
+            except Exception:  # noqa: BLE001 吸收失败不阻塞重试主流程
+                logger.warning("[单厂重试] 批次 %s 原件重解析失败"
+                               "（按旧需求继续重试）", thread_id, exc_info=True)
+                src_absorb = None
 
     # 对照注入 / 自动重匹配：先尝试确定 folder_path
     validated_path: Path | None = None
@@ -1548,6 +1946,25 @@ def retry_factory_extraction(
             overrides = dict(snap.values.get("factory_alias_overrides") or {})
             overrides[factory] = matched_folder_name
             update["factory_alias_overrides"] = overrides
+        if src_absorb is not None:
+            # 决策 9 入口二吸收：该厂最新需求/行映射并入 state；
+            # 原件新增行先同步进副本（追加尾部），Node6 写回才能定位
+            new_reqs, new_rm = src_absorb
+            if factory in new_reqs:
+                merged_reqs = dict(
+                    snap.values.get("downstream_requirements") or {})
+                merged_rm = dict(snap.values.get("downstream_row_map") or {})
+                merged_reqs[factory] = new_reqs[factory]
+                merged_rm[factory] = new_rm.get(factory) or {}
+                update["downstream_requirements"] = merged_reqs
+                update["downstream_row_map"] = merged_rm
+                try:
+                    _sync_output_copy_rows(thread_id, src_path, {factory},
+                                           new_rm)
+                except Exception:  # noqa: BLE001 同步失败不阻塞重试主流程
+                    logger.warning("[单厂重试] 批次 %s 副本行同步失败"
+                                   "（新增行写回将按缺失跳过）",
+                                   thread_id, exc_info=True)
         graph.update_state(cfg, update, as_node=NODE2)
 
         alias_saved: dict | None = None
@@ -1579,6 +1996,8 @@ def retry_factory_extraction(
                         result["alias_saved"] = alias_saved
                     if alias_save_error is not None:
                         result["alias_save_error"] = alias_save_error
+                    if src_absorb is not None:
+                        result["source_changes_absorbed"] = src_changes
                     return result
         except batch_store.BatchAbortedError:
             # 用户主动终止（2026-10-14）：控制流异常，不是系统异常——
@@ -1602,6 +2021,8 @@ def retry_factory_extraction(
             result["alias_saved"] = alias_saved
         if alias_save_error is not None:
             result["alias_save_error"] = alias_save_error
+        if src_absorb is not None:
+            result["source_changes_absorbed"] = src_changes
         return result
 
 
@@ -1932,6 +2353,10 @@ def reopen_factory_for_edit(thread_id: str, factory_name: str) -> dict[str, Any]
     from app.nodes.review_payload import build_review_payload
     payload = build_review_payload(snapshot)
     payload["reopen_mode"] = True
+    # 决策 9 入口三：原件指纹变了且该厂有结构差异 → 警告条数据（不阻断编辑，
+    # 前端按「提取失败待补录」黄条先例渲染）；无差异/检测失败 → None
+    payload["source_changes_warning"] = _source_changes_warning(
+        thread_id, factory_name, values)
     return payload
 
 
@@ -3400,6 +3825,10 @@ def create_batch(
         "run_count": 1,
     }
     _write_batch_config(thread_id, batch_config)
+
+    # 决策 9：建批即记录原件指纹基线（mtime_ns+size+数量基线，
+    # 供补充工厂/单厂重试/reopen 三入口的原件差异检测短路比对）
+    source_diff.record_fingerprint(thread_id, str(d_path))
 
     # 同步 batches 业务表（端到端升级新增）；路径落进监控目录子文件夹时
     # 顺带写 folder_name/watch_dir 显式关联（与扫描建批同口径）

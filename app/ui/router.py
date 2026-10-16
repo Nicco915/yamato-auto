@@ -429,12 +429,38 @@ async def update_batch_paths_endpoint(thread_id: str, req: UpdateBatchPathsReque
         raise HTTPException(status_code=404, detail=str(e)) from e
 
 
+class RerunRequest(BaseModel):
+    """完全重跑请求体（可选）。
+
+    confirm_discard_manual：决策 10 确认门——副本快照检测到人工改动痕迹时
+    首次调用返回 409 结构体；操作员确认「副本上的全部人工改动将丢失
+    （旧副本归档至 _history/ 可查回）」后带 true 重发本端点放行。
+    """
+
+    confirm_discard_manual: bool = False
+
+
 @router.post("/api/v1/batches/{thread_id}/rerun")
-async def rerun_batch_endpoint(thread_id: str):
-    """完全重跑批次：清空 containers/，重置 checkpoint，从 Node1 重新执行。"""
+async def rerun_batch_endpoint(thread_id: str, request: Optional[RerunRequest] = None):
+    """完全重跑批次：清空 containers/，重置 checkpoint，从 Node1 重新执行。
+
+    409 结构体 detail {"code": "discard_manual_changes", "message",
+    "traces"}：副本检测到人工改动痕迹待确认（确认后带
+    confirm_discard_manual=true 重发）。
+    """
     try:
-        result = await asyncio.to_thread(service.rerun_batch, thread_id)
+        result = await asyncio.to_thread(
+            service.rerun_batch, thread_id,
+            confirm_discard_manual=bool(request and request.confirm_discard_manual),
+        )
         return result
+    except service.ManualDiscardError as e:
+        # 决策 10 确认门：副本人工改动丢失警告（结构体 detail）
+        raise HTTPException(status_code=409, detail={
+            "code": "discard_manual_changes",
+            "message": str(e),
+            "traces": e.traces,
+        }) from e
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
@@ -446,9 +472,16 @@ class AddFactoriesRequest(BaseModel):
     首次调用若检测到人工非空修改返回 409 结构体；操作员确认后带
     confirm_overwrite=true 重发本端点，冲突单元格按系统值覆写
     （被盖旧值留痕 manual_value_overwritten）。
+
+    confirm_source_changes：决策 9 确认门——原件中已完成工厂有结构/数量
+    变化时首次调用返回 409 结构体（code=source_changes，先于
+    manual_conflicts 门）；操作员确认后带 confirm_source_changes=true
+    重发（可与 confirm_overwrite 同发），系统吸收变化重写该厂副本。
+    前端每次调用都会携带本字段（缺省 false）。
     """
 
     confirm_overwrite: bool = False
+    confirm_source_changes: bool = False
 
 
 @router.post("/api/v1/batches/{thread_id}/add-factories")
@@ -461,8 +494,12 @@ async def add_factories_endpoint(
     completed 批次从 Node6 条件边重入续跑；pending_review 批次合并后重挂起，
     均执行到下一个 Node5 interrupt 返回（可能耗时数十秒）。
 
-    409 两种形态（前端按 detail 类型区分）：
+    409 三种形态（前端按 detail 类型区分）：
     - detail 为字符串：批次正在运行中（既有契约，保持兼容）；
+    - detail 为对象 {"code": "source_changes", "message", "changes",
+      "count"}：原件中已完成工厂有变化待确认（决策 9；门槛顺序先于
+      manual_conflicts，一次 409 只报一种 code；确认后带
+      confirm_source_changes=true 重发吸收）；
     - detail 为对象 {"code": "manual_conflicts", "message", "conflicts",
       "count"}：检测到人工非空修改待确认（确认后带 confirm_overwrite=true
       重发覆写）。
@@ -472,8 +509,17 @@ async def add_factories_endpoint(
             service.add_factories_to_batch,
             thread_id,
             confirm_overwrite=bool(request and request.confirm_overwrite),
+            confirm_source_changes=bool(request and request.confirm_source_changes),
         )
         return result
+    except service.SourceChangesError as e:
+        # 决策 9 确认门：原件中已完成工厂有变化（结构体 detail，先于人工冲突门）
+        raise HTTPException(status_code=409, detail={
+            "code": "source_changes",
+            "message": str(e),
+            "changes": e.changes,
+            "count": len(e.changes),
+        }) from e
     except service.ManualConflictError as e:
         # 通道 B 确认门：人工非空修改待确认（结构体 detail）
         raise HTTPException(status_code=409, detail={

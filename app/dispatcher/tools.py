@@ -836,6 +836,14 @@ def _preview_retry_factory(args: dict, session_id: str | None = None) -> dict:
         # Pinned scope 防御
         warnings = _merge_pinned_warning(args, session_id, warnings)
 
+        # 决策 9：原件在批次运行后被人工改过且该厂有差异 → preview 警告条
+        # （不阻断；execute 侧有确认门兜底）
+        src_warn = service.factory_source_changes_summary(thread_id, factory)
+        if src_warn:
+            warnings.append(
+                f"{src_warn}；操作员确认吸收原件变更后，execute 需传 "
+                "confirm_source_changes=true，否则执行会被拒绝")
+
         # 对照注入（W6b）：操作员告知的对应文件夹，预览展示注入内容
         folder = args.get("folder")
         if folder:
@@ -861,13 +869,19 @@ def _exec_retry_factory(args: dict,
                         ) -> dict:
     """retry_factory 执行：service.retry_factory_extraction 内部校验挂起状态，
     异常转 {"error": ...}。folder/save（W6b 对照注入）原样透传。
-    on_progress（W4a）包装成 exec_progress 透传。"""
+    on_progress（W4a）包装成 exec_progress 透传。
+
+    决策 9 确认门：原件中该厂有变更且未传 confirm_source_changes=true 时，
+    service 抛 SourceChangesError → 返回 needs_confirm 结构（引擎回喂 LLM
+    转述操作员，确认后带确认标记重发本工具）。
+    """
     try:
         thread_id = args["thread_id"]
         result = service.retry_factory_extraction(
             thread_id,
             folder=args.get("folder"),
             save=bool(args.get("save")),
+            confirm_source_changes=bool(args.get("confirm_source_changes")),
             on_progress=_wrap_on_progress("retry_factory", args, on_progress),
         )
         if result.get("status") in ("pending_review", "pending_human_review"):
@@ -875,6 +889,11 @@ def _exec_retry_factory(args: dict,
                 {"label": "去审核", "href": f"/review?thread_id={thread_id}"},
             ])
         return result
+    except service.SourceChangesError as e:
+        return {"status": "needs_confirm", "code": "source_changes",
+                "message": f"{e}。操作员确认后请重新调用本工具并传 "
+                           "confirm_source_changes=true",
+                "changes": e.changes}
     except ValueError as e:
         return {"error": str(e)}
     except Exception as e:  # noqa: BLE001
@@ -3045,6 +3064,19 @@ def _exec_add_factories(args: dict,
             args["thread_id"],
             on_progress=_wrap_on_progress("add_factories", args, on_progress),
         )
+    except service.SourceChangesError as e:
+        # 决策 9 确认门：原件中已完成工厂有变更待确认。本工具不带确认参数
+        # （与 manual_conflicts 同先例），引导操作员走网页端确认弹窗。
+        return {"status": "needs_confirm", "code": "source_changes",
+                "message": f"{e}。请到批次看板页点「补充工厂」按钮，"
+                           "在确认弹窗中确认吸收原件变更。",
+                "changes": e.changes}
+    except service.ManualConflictError as e:
+        # 通道 B 确认门（决策 1）：副本检测到人工非空修改待确认，同上引导网页端
+        return {"status": "needs_confirm", "code": "manual_conflicts",
+                "message": f"检测到 {len(e.conflicts)} 行人工修改待确认。"
+                           "请到批次看板页点「补充工厂」按钮，在确认弹窗中确认覆写。",
+                "conflicts": e.conflicts}
     except (ValueError, RuntimeError) as e:
         return {"error": str(e)}
     except Exception as e:  # noqa: BLE001
@@ -3462,8 +3494,15 @@ def _preview_update_downstream(args: dict, session_id: str | None) -> dict:
         lines.append(f"未变化工厂：{', '.join(result['unchanged_factories'])}")
 
     warnings = []
-    if result["recommendation"] == "full":
+    if result["recommendation"] == "full" or result["changed_factories"]:
         warnings.append("建议全量重识别：将归档当前 output 并从头 rerun。")
+        # 决策 10：副本检测到人工改动痕迹 → 警告文案（execute 侧有确认门兜底）
+        if service.detect_manual_traces(thread_id):
+            warnings.append(
+                "检测到 output 副本上有人工改动痕迹：完全重跑将重建 output "
+                "副本，副本上的全部人工改动将丢失（旧副本归档至 _history/ "
+                "可查回）；操作员确认后 execute 需传 "
+                "confirm_discard_manual=true，否则执行会被拒绝")
 
     return _preview(
         summary="下游装箱单更新预览",
@@ -3496,8 +3535,31 @@ def _execute_update_downstream(
 
     # 列结构变化 或 有工厂内容变化：走全量（当前版本没有安全的单工厂 diff 重提）
     if diff["recommendation"] == "full" or diff["changed_factories"]:
+        # 决策 10 确认门：副本有人工改动痕迹且未确认 → 拦在路径更新之前
+        # （先确认再 update_batch_paths，避免未确认就改动批次配置）
+        confirm_discard = bool(args.get("confirm_discard_manual"))
+        if not confirm_discard:
+            traces = service.detect_manual_traces(thread_id)
+            if traces:
+                return {"status": "needs_confirm",
+                        "code": "discard_manual_changes",
+                        "message": "检测到 output 副本上有人工改动痕迹。完全重跑"
+                                   "将重建 output 副本，副本上的全部人工改动将丢失"
+                                   "（旧副本归档至 _history/ 可查回）。操作员确认后"
+                                   "请重新调用本工具并传 confirm_discard_manual=true",
+                        "traces": traces}
         service.update_batch_paths(thread_id, new_path, reset_checkpoint=True)
-        result = service.rerun_batch(thread_id, on_progress=on_progress)
+        try:
+            result = service.rerun_batch(
+                thread_id, on_progress=on_progress,
+                confirm_discard_manual=confirm_discard)
+        except service.ManualDiscardError as e:
+            # 兜底：预检后痕迹发生变化（极端并发）——同 needs_confirm 语义
+            return {"status": "needs_confirm",
+                    "code": "discard_manual_changes",
+                    "message": f"{e}。操作员确认后请重新调用本工具并传 "
+                               "confirm_discard_manual=true",
+                    "traces": e.traces}
         return {
             "status": "applied",
             "message": "已全量重识别",
@@ -4050,7 +4112,10 @@ TOOLS: dict[str, Tool] = {
                     "操作员要求重试该工厂。"
                     "写操作：须先向操作员展示 preview 并获得确认后才执行。"
                     "仅挂起待审核批次可用；未挂起批次会报错。"
-                    "注意：批次已完成时应改用 add_factories 补入跳过/未处理的工厂。",
+                    "注意：批次已完成时应改用 add_factories 补入跳过/未处理的工厂。"
+                    "若执行返回 needs_confirm/code=source_changes（原件中该厂"
+                    "在批次运行后被改单），须先向操作员转述变更明细并获得确认，"
+                    "再带 confirm_source_changes=true 重新调用本工具。",
         parameters={
             "type": "object",
             "properties": {
@@ -4067,6 +4132,13 @@ TOOLS: dict[str, Tool] = {
                     "description": "可选，默认 false。true=把 工厂→folder 对照"
                                    "永久保存到 alias_map.json（后续批次自动生效）；"
                                    "false=仅本次批次生效",
+                },
+                "confirm_source_changes": {
+                    "type": "boolean",
+                    "description": "可选，默认 false。原件差异确认门标记：仅当"
+                                   "上一次调用返回 needs_confirm/code=source_changes"
+                                   " 且操作员已明确确认吸收原件变更时才传 true；"
+                                   "true=吸收该厂原件增删行/数量变化后继续重试",
                 },
             },
             "required": ["thread_id"],
@@ -4550,7 +4622,11 @@ TOOLS: dict[str, Tool] = {
         description="下游装箱单更新后重新识别：对比新旧 Content 表，按差异大小"
                     "选择全量重识别或仅补充新增工厂。列结构变化或已有工厂内容变化"
                     "时走全量；仅新增工厂时走差异补充。"
-                    "写操作：须先向操作员展示 preview 并获得确认后才执行。",
+                    "写操作：须先向操作员展示 preview 并获得确认后才执行。"
+                    "若执行返回 needs_confirm/code=discard_manual_changes"
+                    "（副本上检测到人工改动痕迹、全量重跑将丢失这些改动），"
+                    "须先向操作员转述警告并获得确认，再带 "
+                    "confirm_discard_manual=true 重新调用本工具。",
         parameters={
             "type": "object",
             "properties": {
@@ -4558,6 +4634,13 @@ TOOLS: dict[str, Tool] = {
                 "downstream_file_path": {
                     "type": "string",
                     "description": "新的下游 ContentsOfTheContainer 装箱单路径",
+                },
+                "confirm_discard_manual": {
+                    "type": "boolean",
+                    "description": "可选，默认 false。完全重跑确认门标记：仅当"
+                                   "上一次调用返回 needs_confirm/code="
+                                   "discard_manual_changes 且操作员已明确确认"
+                                   "「副本上的全部人工改动将丢失」时才传 true",
                 },
             },
             "required": ["thread_id", "downstream_file_path"],

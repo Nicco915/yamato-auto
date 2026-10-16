@@ -84,6 +84,22 @@
   </div>
 </div>
 
+<!-- 补充工厂-原件变更确认弹窗（确认门：一次一确认；409 source_changes 触发，
+     列每家工厂原件变更摘要（新增/删除/数量改动），确认后带 confirm_source_changes
+     重发同一端点；若再收到 manual_conflicts 409 则顺序衔接人工冲突确认窗
+     （确认时两个标志都带上）；取消则不动） -->
+<div id="sc-mask" class="modal-mask" onclick="if (event.target === this) closeScModal()">
+  <div class="modal">
+    <h3 id="sc-title">检测到原件变更</h3>
+    <p id="sc-hint" style="font-size:13px;color:#4b5563;line-height:1.7;margin:0 0 10px"></p>
+    <div id="sc-list" style="max-height:40vh;overflow-y:auto"></div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeScModal()">取消（不吸收变更）</button>
+      <button class="btn btn-primary" id="sc-confirm-btn" onclick="confirmScAbsorb()">确认吸收并重写</button>
+    </div>
+  </div>
+</div>
+
 <!-- 覆盖写入确认弹窗（确认门：一次一确认；manual_protected 行用系统值覆写，
      人工原值留痕可查） -->
 <div id="ow-mask" class="modal-mask" onclick="if (event.target === this) closeOverwriteModal()">
@@ -209,14 +225,18 @@ async function startSplit() {
 /* ---- 补充工厂：重新解析装箱单，把未处理（新增/跳过/驳回）的工厂补进本批次 ---- */
 
 /* 补充工厂 POST（裸 fetch 版，2026-10-15 写入侧人工改动感知）：
-   409 冲突响应的 detail 是对象 {code:"manual_conflicts", conflicts:[...], count:N}，
+   409 冲突响应的 detail 是对象 {code:"manual_conflicts"|"source_changes", ...}，
    而 ui.js 的 api() 只透传字符串 detail（对象会被吞成 "HTTP 409"），
    这里保留原始 detail 供确认窗使用；旧版字符串 detail（如「批次运行中」）不受影响 */
-async function _postAddFactories(tid, confirmOverwrite) {
+async function _postAddFactories(tid, confirmOverwrite, confirmSourceChanges) {
   var resp = await fetch("/api/v1/batches/" + encodeURIComponent(tid) + "/add-factories", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ thread_id: tid, confirm_overwrite: !!confirmOverwrite }),
+    body: JSON.stringify({
+      thread_id: tid,
+      confirm_overwrite: !!confirmOverwrite,
+      confirm_source_changes: !!confirmSourceChanges,
+    }),
   });
   var data = null;
   try { data = await resp.json(); } catch (e) { data = null; }
@@ -251,19 +271,22 @@ async function _afterAddFactoriesOk(r) {
   }
 }
 
-/* 409 manual_conflicts（检测到人工修改待写入行）→ 弹确认窗；确认后带
-   confirm_overwrite 重发同一端点；取消则不动（人工值保留、本次不覆盖） */
+/* 门槛顺序：先 409 source_changes（原件中已完成工厂有变更）→ 确认吸收后重发；
+   再可能 409 manual_conflicts（检测到人工修改待写入行）→ 确认覆盖后重发
+   （两个标志都带上，防后端复核）；任一取消则不动 */
 async function addFactories() {
   var btn = document.getElementById("btn-add-factories");
   if (!confirm("重新解析装箱单，把未处理的工厂补进本批次继续识别？")) return;
   if (btn) { btn.disabled = true; btn.textContent = "补充识别中…"; }
   stopPolling();            // 补充可能耗时数十秒，期间暂停轮询避免渲染抖动
   try {
-    var r = await _postAddFactories(threadId, false);
+    var r = await _postAddFactories(threadId, false, false);
     await _afterAddFactoriesOk(r);
   } catch (e) {
-    if (e && e.status === 409 && e.detail && typeof e.detail === "object" && e.detail.code === "manual_conflicts") {
-      openMcModal(threadId, e.detail);
+    if (e && e.status === 409 && e.detail && typeof e.detail === "object" && e.detail.code === "source_changes") {
+      openScModal(threadId, e.detail);
+    } else if (e && e.status === 409 && e.detail && typeof e.detail === "object" && e.detail.code === "manual_conflicts") {
+      openMcModal(threadId, e.detail, false);
     } else {
       showToast("补充工厂失败：" + (e && e.message ? e.message : e));
     }
@@ -272,14 +295,78 @@ async function addFactories() {
   }
 }
 
+/* ---------- 原件变更确认门（409 source_changes，决策 9 入口一） ---------- */
+var _scPending = null;   // {tid} 待确认的吸收原件变更请求
+
+/* 每家工厂变更摘要文案：新增 N 行 / 删除 N 行 / 数量改动 N 处 */
+function _scChangeText(c) {
+  c = c || {};
+  var parts = [];
+  if (c.added > 0) parts.push("新增 " + c.added + " 行");
+  if (c.removed > 0) parts.push("删除 " + c.removed + " 行");
+  if (c.qty_changed > 0) parts.push("数量改动 " + c.qty_changed + " 处");
+  return parts.join("；") || "有变更";
+}
+
+function openScModal(tid, detail) {
+  _scPending = { tid: tid };
+  var changes = (detail && detail.changes) || [];
+  var count = (detail && detail.count) || changes.length;
+  $id("sc-title").textContent = "检测到原件变更（" + count + " 家工厂）";
+  $id("sc-hint").textContent =
+    ((detail && detail.message) ? String(detail.message) + "。" : "") +
+    "确认后将吸收这些原件变更，并重新写入对应工厂的输出表格；取消则本次不补充，原件变更不吸收。";
+  $id("sc-list").innerHTML = changes.length
+    ? '<table class="table ltbl"><tr><th>工厂</th><th>变更摘要</th></tr>' +
+      changes.map(function (c) {
+        return "<tr><td>" + _esc((c && c.factory) || "-") + "</td><td>" +
+          _esc(_scChangeText(c)) + "</td></tr>";
+      }).join("") + "</table>"
+    : '<span class="c-gray">（无明细）</span>';
+  var btn = $id("sc-confirm-btn");
+  btn.disabled = false;
+  btn.textContent = "确认吸收并重写";
+  $id("sc-mask").classList.add("show");
+}
+
+function closeScModal() {
+  $id("sc-mask").classList.remove("show");
+  _scPending = null;
+}
+
+async function confirmScAbsorb() {
+  if (!_scPending) return;
+  var tid = _scPending.tid;
+  var btn = $id("sc-confirm-btn");
+  btn.disabled = true;
+  btn.textContent = "吸收变更中…";
+  try {
+    var r = await _postAddFactories(tid, false, true);
+    closeScModal();
+    await _afterAddFactoriesOk(r);
+  } catch (e) {
+    if (e && e.status === 409 && e.detail && typeof e.detail === "object" && e.detail.code === "manual_conflicts") {
+      /* 顺序衔接第二道确认门：原件变更已确认，改弹人工冲突窗；
+         其确认时 confirm_overwrite 与 confirm_source_changes 两标志都带上 */
+      closeScModal();
+      openMcModal(tid, e.detail, true);
+    } else {
+      showToast("补充工厂失败：" + (e && e.message ? e.message : e));
+      closeScModal();
+      try { await load(); } catch (e2) {}   // 恢复渲染与轮询
+    }
+  }
+}
+
 /* ---------- 人工修改确认门（409 manual_conflicts） ---------- */
-var _mcPending = null;   // {tid} 待确认的补充工厂请求
+var _mcPending = null;   // {tid, sourceConfirmed} 待确认的补充工厂请求
+                       // （sourceConfirmed=原件变更已确认，重发时两个标志都带上）
 var MC_FIELD_TEXT = { name_cn: "中文品名", net: "净重", gross: "毛重", qty: "数量" };
 function _mcFieldText(f) { return MC_FIELD_TEXT[f] || f || "-"; }
 function _mcValText(v) { return (v === null || v === undefined || v === "") ? "（空）" : String(v); }
 
-function openMcModal(tid, detail) {
-  _mcPending = { tid: tid };
+function openMcModal(tid, detail, sourceConfirmed) {
+  _mcPending = { tid: tid, sourceConfirmed: !!sourceConfirmed };
   var conflicts = (detail && detail.conflicts) || [];
   var count = (detail && detail.count) || conflicts.length;
   $id("mc-title").textContent = "检测到 " + count + " 行人工修改";
@@ -313,7 +400,7 @@ async function confirmMcOverwrite() {
   btn.disabled = true;
   btn.textContent = "覆盖写入中…";
   try {
-    var r = await _postAddFactories(_mcPending.tid, true);
+    var r = await _postAddFactories(_mcPending.tid, true, _mcPending.sourceConfirmed);
     closeMcModal();
     await _afterAddFactoriesOk(r);
   } catch (e) {

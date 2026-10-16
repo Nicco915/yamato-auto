@@ -75,6 +75,13 @@
   #failure-bar details { margin-top: 6px; font-weight: 400; }
   #failure-bar summary { cursor: pointer; font-size: 12px; color: #991b1b; }
   #failure-bar ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: #7f1d1d; }
+  /* reopen 原件差异警告条（决策 9 入口三）：黄色警示，置顶展示但不阻断编辑 */
+  #source-bar { background: #fef3c7; color: #92400e; border: 1px solid #f59e0b;
+                border-left: 5px solid #f59e0b; border-radius: 6px; padding: 8px 12px;
+                margin-bottom: 10px; font-size: 13px; font-weight: 600; }
+  #source-bar details { margin-top: 6px; font-weight: 400; }
+  #source-bar summary { cursor: pointer; font-size: 12px; color: #92400e; }
+  #source-bar ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: #78350f; }
   /* 提交被拦截时的顶栏提示（深色顶栏用浅红） */
   #submit-block-hint { font-size: 12px; color: #fca5a5; white-space: nowrap; }
   /* 工厂对照确认卡（alias_suggestion）：默认蓝色提示，conflict 时琥珀色警告 */
@@ -230,6 +237,7 @@
   <!-- 右屏：审核工作区 -->
   <div id="right">
     <div id="failure-bar" style="display:none"></div>
+    <div id="source-bar" style="display:none"></div>
     <div id="alias-bar" style="display:none"></div>
     <div id="missing-bar" style="display:none"></div>
     <div id="cards"></div>
@@ -355,6 +363,7 @@ async function loadPayload() {
   $("done-view").style.display = "none";
   renderAliasBar();
   renderFailureBar();
+  renderSourceBar();
   renderMissingBar();
   renderCards();
   renderDocSelect();
@@ -606,6 +615,33 @@ function renderFailureBar() {
       return `<li>${esc(file + msg)}</li>`;
     }).join("");
     html += `<details><summary>提取问题明细（${issues.length} 条）</summary>` +
+      `<ul>${lis}</ul></details>`;
+  }
+  bar.innerHTML = html;
+  bar.style.display = "block";
+}
+
+/* reopen 原件差异警告条（2026-10-15 决策 9 入口三）：reopen 响应新增可选字段
+   source_changes_warning（null 或 {message, changes:[{factory, added, removed,
+   qty_changed}]}）——非空时页面顶部黄色警告条提示原件已被修改，不阻断编辑 */
+function renderSourceBar() {
+  const bar = $("source-bar");
+  if (!bar) return;
+  const warn = (isReopen && payload && payload.source_changes_warning) || null;
+  if (!warn || typeof warn !== "object") { bar.style.display = "none"; bar.innerHTML = ""; return; }
+  let html = "⚠ " + esc(warn.message || "原件已在批次运行后被修改，请核对后再提交");
+  const changes = Array.isArray(warn.changes) ? warn.changes : [];
+  if (changes.length) {
+    const lis = changes.map((c) => {
+      c = c || {};
+      const parts = [];
+      if (c.added > 0) parts.push("新增 " + c.added + " 行");
+      if (c.removed > 0) parts.push("删除 " + c.removed + " 行");
+      if (c.qty_changed > 0) parts.push("数量改动 " + c.qty_changed + " 处");
+      const fname = c.factory || (payload && payload.factory_name) || "-";
+      return `<li>${esc(fname + "：" + (parts.join("；") || "有变更"))}</li>`;
+    }).join("");
+    html += `<details><summary>变更明细（${changes.length} 项）</summary>` +
       `<ul>${lis}</ul></details>`;
   }
   bar.innerHTML = html;
