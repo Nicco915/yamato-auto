@@ -95,6 +95,10 @@ def _ensure_output_copy(state: AgentState) -> Path:
                 raise RuntimeError(_format_file_busy_msg(src)) from e
             raise
         logger.info("[Node6] 已复制原件到 %s（绝不覆盖原件）", dst)
+        # 快照更新点 1（写入侧人工改动感知 决策 5）：新建副本后建基线快照；
+        # 延迟 import 避免 app.graph → writer → orchestrator 循环导入
+        from app.orchestrator import copy_snapshot
+        copy_snapshot.refresh_snapshot(batch_id)
     return dst
 
 
@@ -183,6 +187,13 @@ def _write_excel(state: AgentState, out_path: Path) -> tuple[int, int]:
     # MX 人工行识别列：无 PURCHASE_ORDER 列视为无 MX，全部照常写
     col_po = header.index(PO_COL_NAME) + 1 if PO_COL_NAME in header else None
 
+    # 行标识重定位（写入侧人工改动感知 决策 3）：row_map 从此只提供
+    # 「该 SKU 应有几行」（len = 行数需求），行号值不再消费；实际行号按
+    # (工厂, SKU, seq) 在副本中现扫定位，人工插删行移位后仍写对位置。
+    # 延迟 import 避免 app.graph → writer → orchestrator 循环导入
+    from app.orchestrator import copy_snapshot
+    row_index = copy_snapshot.build_row_index(ws)
+
     written = 0
     skipped_mx = 0
     skipped_placeholder = 0
@@ -199,7 +210,19 @@ def _write_excel(state: AgentState, out_path: Path) -> tuple[int, int]:
                 "（原因：%s）", factory, item.get("sku"),
                 item.get("source_file") or item.get("review_reason") or "无有效数据")
             continue
-        for excel_row in row_map.get(str(item.get("sku")), []):
+        sku = str(item.get("sku"))
+        sku_key = copy_snapshot.norm_key_text(sku)
+        rows_need = len(row_map.get(sku, []))
+        for seq in range(1, rows_need + 1):
+            excel_row = row_index.get(
+                (copy_snapshot.norm_key_text(factory), sku_key, seq))
+            if excel_row is None:
+                # 副本中找不到该 row_key（人工删行等）：本阶段只记 warning
+                # 跳过，不加复活/冲突语义（阶段二接 diff 处理）
+                logger.warning(
+                    "[Node6] 工厂「%s」SKU「%s」第 %d 行在副本中未找到"
+                    "（可能被人工删除），跳过该行写入", factory, sku, seq)
+                continue
             if col_po is not None and _is_mx_po(
                     ws.cell(row=excel_row, column=col_po).value):
                 # MX 行三列是人工已填并核对好的值，绝不覆盖
@@ -230,6 +253,11 @@ def _write_excel(state: AgentState, out_path: Path) -> tuple[int, int]:
         if _is_file_lock_error(e):
             raise RuntimeError(_format_file_busy_msg(out_path)) from e
         raise
+    # 快照更新点 2（决策 5）：写回落盘后全量重扫重建快照；
+    # 覆盖 writer() 与 apply_reopen_payload 两条调用链
+    batch_id = state.get("batch_id")
+    if batch_id:
+        copy_snapshot.refresh_snapshot(batch_id)
     return written, skipped_placeholder
 
 
@@ -257,10 +285,24 @@ def clear_sku_rows(state: AgentState, out_path: Path, skus: list[str]) -> int:
     # MX 人工行识别列：三列是人工填的值（非本系统写入），reopen 删除不得清掉
     col_po = header.index(PO_COL_NAME) + 1 if PO_COL_NAME in header else None
 
+    # 行标识重定位（决策 3，与 _write_excel 同口径）：row_map 行号值不消费，
+    # 实际行号按 (工厂, SKU, seq) 现扫定位
+    from app.orchestrator import copy_snapshot
+    row_index = copy_snapshot.build_row_index(ws)
+
     cleared = 0
     skipped_mx = 0
     for sku in skus:
-        for excel_row in row_map.get(str(sku), []):
+        sku_key = copy_snapshot.norm_key_text(sku)
+        rows_need = len(row_map.get(str(sku), []))
+        for seq in range(1, rows_need + 1):
+            excel_row = row_index.get(
+                (copy_snapshot.norm_key_text(factory), sku_key, seq))
+            if excel_row is None:
+                logger.warning(
+                    "[Node6] reopen 删除清空：工厂「%s」SKU「%s」第 %d 行"
+                    "在副本中未找到（可能被人工删除），跳过", factory, sku, seq)
+                continue
             if col_po is not None and _is_mx_po(
                     ws.cell(row=excel_row, column=col_po).value):
                 skipped_mx += 1
@@ -276,6 +318,10 @@ def clear_sku_rows(state: AgentState, out_path: Path, skus: list[str]) -> int:
         wb.save(out_path)
         logger.info("[Node6] reopen 删除条目：工厂「%s」清空 %d 行（SKU：%s）",
                     factory, cleared, "、".join(str(s) for s in skus))
+        # 快照更新点 3（决策 5）：清空落盘后重建快照
+        batch_id = state.get("batch_id")
+        if batch_id:
+            copy_snapshot.refresh_snapshot(batch_id)
     return cleared
 
 

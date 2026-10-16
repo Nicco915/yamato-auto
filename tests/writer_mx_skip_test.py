@@ -52,12 +52,16 @@ NORMAL_PO = "272752"
 # MX 行人工已填好的三列值（断言写回后原样未动）
 MX_NAME_CN, MX_NET, MX_GROSS = "人工品名MX", 12.34, 23.45
 
-HEADERS = ["PURCHASE_ORDER", "SHOHIN_MEI_E", "中文品名", "净重", "毛重",
-           "SOTOBAKO_D_HACCHU_SU"]
+HEADERS = ["MAKER_MEI_KJ", "SHOHIN_CD", "PURCHASE_ORDER", "SHOHIN_MEI_E",
+           "中文品名", "净重", "毛重", "SOTOBAKO_D_HACCHU_SU"]
 
 
 def _make_xlsx(path: Path, *, with_po_col: bool = True) -> None:
-    """造两行事单：row2 = MX 人工行（三列已填），row3 = 普通行（三列待写）。"""
+    """造两行事单：row2 = MX 人工行（三列已填），row3 = 普通行（三列待写）。
+
+    行标识重定位（决策 3）后 writer 按 (工厂, SKU, seq) 现扫定位，
+    MAKER_MEI_KJ/SHOHIN_CD 两列必须有值才进索引。
+    """
     wb = Workbook()
     ws = wb.active
     headers = HEADERS if with_po_col else [h for h in HEADERS
@@ -67,6 +71,10 @@ def _make_xlsx(path: Path, *, with_po_col: bool = True) -> None:
     def put(row: int, name: str, value) -> None:
         ws.cell(row=row, column=headers.index(name) + 1, value=value)
 
+    put(2, "MAKER_MEI_KJ", FACTORY)
+    put(2, "SHOHIN_CD", SKU_MX)
+    put(3, "MAKER_MEI_KJ", FACTORY)
+    put(3, "SHOHIN_CD", SKU_NORMAL)
     if with_po_col:
         put(2, "PURCHASE_ORDER", MX_PO)
         put(3, "PURCHASE_ORDER", NORMAL_PO)
@@ -80,7 +88,8 @@ def _make_xlsx(path: Path, *, with_po_col: bool = True) -> None:
 
 
 def _state() -> dict:
-    """最小 state：MX SKU 映射 row2、普通 SKU 映射 row3。"""
+    """最小 state：row_map 只提供「每 SKU 行数需求」（len=1），
+    行号值自决策 3 重定位改造后不再被消费。"""
     return {
         "current_factory_data": {
             "factory_name": FACTORY,

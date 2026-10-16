@@ -139,14 +139,18 @@ def test_prepare_audit_deleted_uses_orig_sku(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def _make_filled_xlsx(path: Path):
-    """造一份「已写入三列」的输出表：表头含三列，两行 SKU 均已填值。"""
+    """造一份「已写入三列」的输出表：表头含三列，两行 SKU 均已填值。
+
+    行标识重定位（决策 3）后 clear_sku_rows 按 (工厂, SKU, seq) 现扫定位，
+    MAKER_MEI_KJ 列必须有值才进索引。
+    """
     from openpyxl import Workbook
     wb = Workbook()
     ws = wb.active
-    ws.append(["SHOHIN_CD", "SHOHIN_MEI_E", "SOTOBAKO_D_HACCHU_SU",
+    ws.append(["MAKER_MEI_KJ", "SHOHIN_CD", "SHOHIN_MEI_E", "SOTOBAKO_D_HACCHU_SU",
                "中文品名", "净重", "毛重"])
-    ws.append([SKU_GOOD, "ITEM-A", 10, "好货", 168.0, 180.0])
-    ws.append([SKU_BAD, "ITEM-B", 5, "垃圾卡", 50.0, 55.0])
+    ws.append([FACTORY, SKU_GOOD, "ITEM-A", 10, "好货", 168.0, 180.0])
+    ws.append([FACTORY, SKU_BAD, "ITEM-B", 5, "垃圾卡", 50.0, 55.0])
     wb.save(path)
 
 
@@ -166,12 +170,12 @@ def test_clear_sku_rows_clears_three_columns():
     assert cleared == 1
 
     ws = load_workbook(xlsx).active
-    # 被删 SKU 行：三列全空
-    assert [ws.cell(row=3, column=c).value for c in (4, 5, 6)] == [None, None, None]
+    # 被删 SKU 行：三列全空（表头新增 MAKER_MEI_KJ 后三列在 5/6/7 列）
+    assert [ws.cell(row=3, column=c).value for c in (5, 6, 7)] == [None, None, None]
     # 其余列不动（SKU/品名/件数原样）
-    assert ws.cell(row=3, column=1).value == SKU_BAD
+    assert ws.cell(row=3, column=2).value == SKU_BAD
     # 未删 SKU 行不受影响
-    assert [ws.cell(row=2, column=c).value for c in (4, 5, 6)] == ["好货", 168.0, 180.0]
+    assert [ws.cell(row=2, column=c).value for c in (5, 6, 7)] == ["好货", 168.0, 180.0]
 
 
 def test_clear_sku_rows_empty_skus_noop():
@@ -188,7 +192,7 @@ def test_clear_sku_rows_unknown_sku_noop():
                                         ["0000000000000"])
     assert cleared == 0
     ws = load_workbook(xlsx).active
-    assert ws.cell(row=3, column=5).value == 50.0  # 原值未动
+    assert ws.cell(row=3, column=6).value == 50.0  # 原值未动
 
 
 # ---------------------------------------------------------------------------
