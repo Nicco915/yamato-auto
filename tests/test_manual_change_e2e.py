@@ -507,12 +507,19 @@ def test_e2e_04_channel_b_confirm_gate(monkeypatch):
     assert _cell(copy_path, 3, "净重") == 10.0      # 2.0 × 副本数量 5
     assert _cell(copy_path, 3, "中文品名") == "扳手"
     assert node_result["overwrite_manual_factories"] == []   # 消费后自清
-    # 已知行为边界（阶段六偏差说明记录）：确认后 add_factories_to_batch 的
-    # sync 在跑图前 refresh_snapshot 重建快照，把人工值 66 并入基线 → Node6
-    # 写前 diff 干净，通道 A 覆写成立但 manual_value_overwritten 留痕为空
-    # （service.py「旧值留痕」注释与实际链路存在落差，留待热修复决策）。
-    # 此处钉死现状：覆写生效 + 确认标记消费自清。
+    # 通道 B 审计链（2026-10-19 热修后）：③ 确认时 service 已在 sync 收编
+    # 快照前落 manual_value_overwritten 审计（old=人工值 66.0，new=系统侧
+    # 快照值 None）；Node6 写前 diff 因快照已收编而干净，writer 侧不留痕
+    # （manual_values_overwritten=0 仍是现状契约，审计权威源在 service 层）。
     assert node_state["current_factory_data"]["manual_values_overwritten"] == 0
+    audits = [a for a in _audits(batch)
+              if a.result_status == "overwrite_confirmed"]
+    assert len(audits) == 1
+    assert audits[0].factory_name == FB
+    assert json.loads(audits[0].changes_json) == [
+        {"sku": SKU2, "row": 3, "field": "net",
+         "old": 66.0, "new": None,
+         "source": "manual_value_overwritten"}]
 
 
 # ---------------------------------------------------------------------------

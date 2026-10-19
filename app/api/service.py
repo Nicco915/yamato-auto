@@ -1024,8 +1024,9 @@ def add_factories_to_batch(
     写前 diff，待写入工厂的行存在人工非空修改且 confirm_overwrite=False
     → 不入图，抛 ManualConflictError（路由层转 HTTP 409 结构体，前端弹
     确认窗）；操作员确认后带 confirm_overwrite=True 重发 → 冲突工厂写入
-    state.overwrite_manual_factories，Node6 按通道 A（rework）语义覆写，
-    被盖旧值留痕 manual_value_overwritten。
+    state.overwrite_manual_factories，Node6 按通道 A（rework）语义覆写；
+    被盖人工旧值由本函数在 sync 收编快照前逐厂落审计
+    （source="manual_value_overwritten"，result_status="overwrite_confirmed"）。
 
     续跑语义（langgraph 1.2.9 实测）：
     - completed（next 为空）：update_state(as_node=NODE6) 让 Node6 条件边
@@ -1244,6 +1245,28 @@ def add_factories_to_batch(
         # 覆盖人工修改（旧值留痕 manual_value_overwritten），消费后自清
         update["overwrite_manual_factories"] = sorted(
             {c["factory"] for c in manual_conflicts})
+        # 审计留痕（2026-10-19 热修）：下方 _sync_output_copy_rows 的 refresh
+        # 会先把人工值收编进快照（快照=副本当前值），Node6 写前 diff 已干净，
+        # writer 侧留不出痕——故在收编前用确认门同一批冲突明细逐厂落
+        # review_audits（source="manual_value_overwritten"，old=被盖人工值，
+        # new=系统侧快照值；快照空=人工抢先填，系统值待提取计算，记 None）。
+        # 幂等：重试重复确认只会追加同口径审计，消费方按每厂最新一条取值。
+        audit_by_factory: dict[str, list[dict]] = {}
+        for c in manual_conflicts:
+            audit_by_factory.setdefault(c["factory"], []).append({
+                "sku": c["sku"], "row": c["row"], "field": c["field"],
+                "old": c["new"], "new": c["old"],
+                "source": "manual_value_overwritten",
+            })
+        for fname, changes in audit_by_factory.items():
+            _write_audit({
+                "thread_id": batch_id,
+                "factory_name": fname,
+                "approved": True,
+                "edited_count": len(changes),
+                "changes": changes,
+                "new_skus": [],
+            }, "overwrite_confirmed")
     # 决策 4（阶段五）：人工新增行并入叠加在重解析覆盖之上——A 态向
     # requirements 追加 SKU + row_map 挂等长占位列表；B 态新厂需求明细
     # 全部来自副本新增行（SKU 按行号序去重）。幂等：快照已纳入的行

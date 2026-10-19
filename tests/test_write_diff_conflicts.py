@@ -530,6 +530,48 @@ def test_add_factories_conflict_gate(monkeypatch):
     assert result["manual_overrides_kept"] == 0     # 字段恒在（前端契约）
 
 
+def test_add_factories_confirm_overwrite_audit(monkeypatch):
+    """通道 B 热修（2026-10-19）：确认覆写必须在 sync 收编快照前落审计——
+    review_audits 出现 manual_value_overwritten 记录，detail 带人工旧值
+    与系统侧值；未确认（409）路径不落审计。"""
+    batch = "T-WDC-GATE-AUDIT"
+    _channel_b_setup(batch)
+    fake = _channel_b_graph(batch)
+    monkeypatch.setattr(service, "get_graph", lambda: fake)
+    monkeypatch.setattr(
+        "app.nodes.parse_downstream.parse_downstream_file",
+        lambda _p: ({FB: {"total_qty": 5}}, {FB: {SKU2: [3]}}))
+    monkeypatch.setattr(
+        service, "_auto_create_factory_folders", lambda *a, **k: None)
+
+    def _audits() -> list:
+        with get_session() as session:
+            return [a for a in session.query(ReviewAudit)
+                    .filter(ReviewAudit.thread_id == batch)
+                    .order_by(ReviewAudit.audit_id)
+                    .all()]
+
+    # 未确认：409 确认门，不落任何审计
+    with pytest.raises(service.ManualConflictError):
+        service.add_factories_to_batch(batch)
+    assert _audits() == []
+
+    # 确认覆写：sync 收编前逐厂落 manual_value_overwritten 审计
+    service.add_factories_to_batch(batch, confirm_overwrite=True)
+    audits = _audits()
+    assert len(audits) == 1
+    a = audits[0]
+    assert a.factory_name == FB
+    assert a.approved is True
+    assert a.result_status == "overwrite_confirmed"
+    assert a.edited_count == 1
+    # old=被盖人工值（副本 66.0），new=系统侧快照值（快照空=人工抢先填 → None）
+    assert json.loads(a.changes_json) == [
+        {"sku": SKU2, "row": 3, "field": "net",
+         "old": 66.0, "new": None,
+         "source": "manual_value_overwritten"}]
+
+
 # ---------------------------------------------------------------------------
 # 8. 快照结转（遗忘漏洞回归）：protected 跨重建不丢；人工清空解除保护
 # ---------------------------------------------------------------------------
