@@ -38,7 +38,11 @@ class AgentState(TypedDict, total=False):
 
     # ----- Node1 产物 -----
     downstream_requirements: Dict[str, List[str]]  # {工厂名: [SKU, ...]}
-    # {工厂名: {SKU: [openpyxl 行号, ...]}}，Node6 精准写回单元格用
+    # {工厂名: {SKU: [行号, ...]}}——行号语义已废弃（写入侧人工改动感知
+    # 决策 3）：Node6/清空一律按 (工厂, SKU, seq) row_key 索引现扫定位，
+    # 本结构只承载「行数需求」（len(列表) = 该 SKU 应有行数）；元素值对
+    # 原件解析产物是原件 openpyxl 行号（_sync_output_copy_rows 拷贝原件
+    # 行值仍消费），对人工新增行并入（决策 4）是副本行号占位，仅供参考
     downstream_row_map: Dict[str, Dict[str, List[int]]]
     pending_factories: List[str]          # 待处理工厂队列
     # 暂缓队列（W6a）：提取失败的工厂先记到这里（条目 {"factory_name",

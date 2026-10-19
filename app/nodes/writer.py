@@ -195,6 +195,20 @@ def _write_excel(
     - 数量列被人工改（快照 qty ≠ 副本 qty）→ warning + 明细塞
       cur["qty_manual_changes"]，写入仍按副本当前数量计算（告警不阻断）。
     diff/快照失败返回 None 时保守放行（无冲突语义），绝不阻塞写入主流程。
+
+    人工新增行纳入（决策 4，阶段五）：写前 diff 的 added_rows 经
+    copy_snapshot.classify_added_rows 三态分类——
+    - A 态（厂在原件需求集）：plan_manual_merge 算出并入计划，本厂
+      row_map 当场并入生效（写入定位用），并记入
+      cur["_manual_added_merge"] 由调用方持久化进 state（writer() 节点
+      返回值合并 / apply_reopen_payload update_state）；提取结果无此 SKU
+      的新增行保留人工行不动 + warning + cur["manual_rows_kept_no_extract"]
+      留痕（service 审计 source="manual_row_kept_no_extract"）；
+    - B 态（全新厂）：并入计划含 b_factories，由调用方并入 pending 走
+      既有文件夹匹配→提取→审核链路；
+    - C 态（缺管理番号）：不纳入，warning 提示补全（缺工厂/SKU 的行进
+      不了快照 diff，由 copy_snapshot.scan_incomplete_rows 活扫透出）；
+    落盘后快照重建把 A/B 行键打 origin="manual_added"（mark_manual）。
     """
     settings = get_settings()
     cur = state.get("current_factory_data") or {}
@@ -227,6 +241,8 @@ def _write_excel(
     conflict_map: dict[tuple[str, str], dict] = {}
     protected_cells: set[tuple[str, str]] = set()
     qty_change_map: dict[str, dict] = {}
+    manual_merge: dict | None = None     # 决策 4 并入计划（A/B 态）
+    added_classified: dict | None = None  # 决策 4 三态分类（留痕用）
     if batch_id:
         diff = copy_snapshot.diff_against_copy(batch_id)
         if diff is not None:
@@ -239,6 +255,31 @@ def _write_excel(
             copy_snapshot._detect_factory_removals(
                 batch_id, diff,
                 (state.get("downstream_requirements") or {}).keys())
+            # 决策 4（阶段五）：人工新增行三态分类与并入计划
+            if diff.added_rows:
+                known = (set(state.get("downstream_requirements") or {})
+                         | set(state.get("downstream_row_map") or {}))
+                added_classified = copy_snapshot.classify_added_rows(
+                    diff.added_rows, known)
+                for c in added_classified["c"]:
+                    logger.warning(
+                        "[Node6] 副本第 %s 行（%s/%s）缺管理番号"
+                        "（KANRI_NO），未纳入批次管理，请补全",
+                        c.get("row_no"), c.get("factory"), c.get("sku"))
+                if added_classified["a"] or added_classified["b"]:
+                    manual_merge = copy_snapshot.plan_manual_merge(
+                        added_classified["a"], added_classified["b"],
+                        state.get("downstream_requirements") or {},
+                        state.get("downstream_row_map") or {})
+                    # 本厂 A 态并入当场生效：写入定位用并入后的 row_map
+                    # （占位列表 len = 行数需求，row_key 索引定位实际行）
+                    upd_rm = manual_merge["row_map_updates"].get(factory)
+                    if upd_rm is not None:
+                        row_map = upd_rm
+                    for bf in manual_merge["b_factories"]:
+                        logger.info(
+                            "[Node6] 检出人工新增全新工厂「%s」的副本行，"
+                            "并入本批次待处理队列", bf)
 
     # 通道留痕字段复位（随 cur 快照进 factory_outputs，供 service 审计/摘要）
     cur["manual_conflicts"] = []
@@ -246,6 +287,13 @@ def _write_excel(
     cur["manual_overwritten_cells"] = []
     cur["manual_values_overwritten"] = 0
     cur["qty_manual_changes"] = []
+    # 决策 4（阶段五）：A 态无提取结果支撑的人工新增行留痕
+    # （service 审计 source="manual_row_kept_no_extract"）
+    cur["manual_rows_kept_no_extract"] = []
+    if manual_merge is not None:
+        # 并入计划暂存 cur，由调用方取出持久化（writer() 节点返回值合并 /
+        # apply_reopen_payload update_state）；writer() 快照 cur 前会摘除
+        cur["_manual_added_merge"] = manual_merge
     mark_protected: set[tuple[str, str]] = set()
     unprotect: set[tuple[str, str]] = set()
 
@@ -358,6 +406,24 @@ def _write_excel(
                         cur["manual_values_overwritten"] += 1
             if row_written:
                 written += 1
+    # 决策 4（阶段五）A 态无提取结果分支：本厂人工新增行的 SKU 不在
+    # calculated_items → 保留人工行不动 + warning + 留痕（提取结果含此
+    # SKU 的行已在主循环按决策 1 规则写入）
+    if added_classified and added_classified["a"]:
+        calc_skus = {str(i.get("sku")) for i in cur.get("calculated_items") or []}
+        fac_norm = copy_snapshot.norm_key_text(factory)
+        for a in added_classified["a"]:
+            if copy_snapshot.norm_key_text(a.get("factory")) != fac_norm:
+                continue
+            if str(a.get("sku")) in calc_skus:
+                continue
+            cur["manual_rows_kept_no_extract"].append({
+                "factory": factory, "sku": str(a.get("sku")),
+                "row": a.get("row_no")})
+            logger.warning(
+                "[Node6] 人工新增行：工厂「%s」SKU「%s」（副本第 %s 行）"
+                "无提取结果支撑，保留人工行未写入",
+                factory, a.get("sku"), a.get("row_no"))
     if skipped_mx:
         logger.info("[Node6] 跳过 MX 行写回 %d 行（人工已填值）", skipped_mx)
     if skipped_placeholder:
@@ -377,12 +443,15 @@ def _write_excel(
         raise
     # 快照更新点 2（决策 5）：写回落盘后全量重扫重建快照（含 protected
     # 结转——被保留的人工值打标，被覆盖的解除）；覆盖 writer() 与
-    # apply_reopen_payload 两条调用链
+    # apply_reopen_payload 两条调用链；决策 4（阶段五）：本次纳入管理的
+    # 人工新增行（A/B 态）打 origin="manual_added"
     if batch_id:
         copy_snapshot.refresh_snapshot(
             batch_id,
             mark_protected=mark_protected or None,
-            unprotect=unprotect or None)
+            unprotect=unprotect or None,
+            mark_manual=(manual_merge["manual_keys"]
+                         if manual_merge else None))
     return written, skipped_placeholder
 
 
@@ -699,12 +768,26 @@ def writer(state: AgentState) -> dict:
 
     # 占位行跳过计数随快照入 factory_outputs/state，供 Node7 摘要统计
     cur["skipped_placeholder_rows"] = skipped_placeholder
+    # 决策 4（阶段五）：取出人工新增行并入计划（不进 factory_outputs 快照）
+    manual_merge = cur.pop("_manual_added_merge", None)
     factory_outputs = state.get("factory_outputs") or {}
     # 存完整 current_factory_data 快照（reopen 时全文恢复，与首次审核字段一致）；
     # 旧格式列表（仅 calculated_items）由 reopen 层兼容读取
     factory_outputs[factory] = dict(cur)
     result = {"final_output_path": str(out_path),
               "factory_outputs": factory_outputs}
+    if manual_merge is not None:
+        # A 态需求追加 / B 态新厂入批经节点返回值合并进 state（B 厂进
+        # pending 后 _route_after_writer 回 Node2，走既有文件夹匹配→提取
+        # →审核→缺资料跳过/factory_watch 全链路，零新增机制）。
+        # 延迟导入：app.api.service 模块级 import app.graph → writer，
+        # 只能函数内反向引用
+        from app.api.service import _merge_factories_into_state
+        result.update(_merge_factories_into_state(
+            state,
+            manual_merge["req_updates"],
+            manual_merge["row_map_updates"],
+            pending_add=manual_merge["b_factories"]))
     if factory in overwrite_facs:
         # 确认标记消费后自清（其余未消费工厂保留）
         result["overwrite_manual_factories"] = sorted(overwrite_facs - {factory})

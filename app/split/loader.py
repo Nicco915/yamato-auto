@@ -13,7 +13,9 @@ from app.split.schemas import RawItem
 logger = logging.getLogger(__name__)
 
 
-def load_filled_excel(path: str | Path) -> list[RawItem]:
+def load_filled_excel(path: str | Path,
+                      skipped_kanri_rows: list[int] | None = None
+                      ) -> list[RawItem]:
     """读取 filled ContentsOfTheContainer，只取有数据的行（跳过表头）。
 
     按表头列名定位（列顺序变化不影响），所需列：
@@ -28,6 +30,11 @@ def load_filled_excel(path: str | Path) -> list[RawItem]:
     缺该列不报错，is_mx 全部按 False 处理并记 warning。
     可选列：SOTOBAKO_HABA / SOTOBAKO_OKUYUKI / SOTOBAKO_TAKASA
     （外箱长宽高 cm，供分体积统计公式）。缺列不报错，对应字段为 None。
+
+    决策 4（阶段五）：KANRI_NO 为空的行从「静默 continue」改「continue +
+    计数 warning」——只数带业务数据的行（工厂/SKU/数量任一非空），纯排版
+    空行不计；skipped_kanri_rows 传入列表时追加被跳过的行号（分票图
+    load_filled 节点据此把 kanri_missing_rows 写进 SplitState 透出）。
     """
     REQUIRED = [
         "KANRI_NO", "MINATO_MEI_KJ", "CONTAINER_MEI", "MAKER_MEI_KJ",
@@ -75,13 +82,20 @@ def load_filled_excel(path: str | Path) -> list[RawItem]:
             return None
 
     items: list[RawItem] = []
+    skipped_kanri: list[int] = []   # 缺管理番号被跳过的数据行（计数 warning）
     for row_idx in range(2, ws.max_row + 1):
         kanri_val = ws.cell(row=row_idx, column=col["KANRI_NO"]).value
-        if kanri_val is None:
+        if kanri_val is None or not str(kanri_val).strip():
+            # 决策 4（阶段五）：只数带业务数据的行（工厂/SKU/数量任一非空），
+            # 纯排版空行不算「缺管理番号」
+            probe = (ws.cell(row=row_idx, column=col["MAKER_MEI_KJ"]).value,
+                     ws.cell(row=row_idx, column=col["SHOHIN_CD"]).value,
+                     ws.cell(row=row_idx,
+                             column=col["SOTOBAKO_D_HACCHU_SU"]).value)
+            if any(v is not None and str(v).strip() for v in probe):
+                skipped_kanri.append(row_idx)
             continue
         kanri_no = str(kanri_val).strip()
-        if not kanri_no:
-            continue
 
         def text(name):
             v = ws.cell(row=row_idx, column=col[name]).value
@@ -123,4 +137,12 @@ def load_filled_excel(path: str | Path) -> list[RawItem]:
         ))
 
     wb.close()
+    if skipped_kanri:
+        logger.warning(
+            "load_filled_excel: %s 有 %d 行缺管理番号（KANRI_NO），"
+            "已跳过未参与分票（行号 %s）",
+            path, len(skipped_kanri), skipped_kanri,
+        )
+        if skipped_kanri_rows is not None:
+            skipped_kanri_rows.extend(skipped_kanri)
     return items

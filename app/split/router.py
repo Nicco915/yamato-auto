@@ -66,6 +66,8 @@ class ProposalResponse(BaseModel):
     source_file: str
     status: str  # "pending_review" | "confirmed" | "reset" | "completed"
     proposal: dict  # SplitProposal.model_dump()
+    # 决策 4（阶段五）：缺管理番号（KANRI_NO）未参与分票的行数（0 = 无）
+    kanri_missing_rows: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +165,7 @@ def get_proposal(split_thread_id: str):
                     source_file=snap.values.get("source_file_path", ""),
                     status="pending_review",
                     proposal=value,
+                    kanri_missing_rows=snap.values.get("kanri_missing_rows", 0),
                 )
 
     # 已确认/已完成：从 state.values 读取
@@ -173,6 +176,7 @@ def get_proposal(split_thread_id: str):
         source_file=snap.values.get("source_file_path", ""),
         status=status,
         proposal=proposal,
+        kanri_missing_rows=snap.values.get("kanri_missing_rows", 0),
     )
 
 
@@ -239,10 +243,17 @@ def confirm_split(split_thread_id: str, req: ConfirmSplitRequest):
             pass  # confirm 不应再次 interrupt
 
     final = graph.get_state(cfg)
-    return {
+    result = {
         "split_thread_id": split_thread_id,
         "status": final.values.get("status", "confirmed"),
     }
+    # 决策 4（阶段五）：缺管理番号行计数透出（分票完成摘要提示，不阻断）
+    kanri_missing = final.values.get("kanri_missing_rows", 0)
+    if kanri_missing:
+        result["kanri_missing_rows"] = kanri_missing
+        result["message"] = (f"{kanri_missing} 行缺管理番号（KANRI_NO），"
+                             f"未参与分票")
+    return result
 
 
 @router.post("/{split_thread_id}/reset")

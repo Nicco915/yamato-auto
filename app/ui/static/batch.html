@@ -62,6 +62,13 @@
   .topbar-fallback .title { font-weight: 700; font-size: 15px; }
   .topbar-fallback a { color: #cbd5e1; font-size: 13px; text-decoration: none; }
   .topbar-fallback a:hover { color: #fff; }
+  /* 人工新增行缺关键列警告条（写入侧人工改动感知 阶段五）：黄底卡片 + 可折叠明细 */
+  .warnbar { background: #fefce8; border: 1px solid #facc15; border-left: 4px solid #eab308;
+             border-radius: 8px; padding: 12px 16px; margin-bottom: 14px; }
+  .warnbar .warn-title { font-size: 13px; color: #854d0e; font-weight: 600; line-height: 1.7; }
+  .warnbar details { margin-top: 6px; }
+  .warnbar details > summary { cursor: pointer; font-size: 12px; color: #a16207; }
+  .warnbar .ltbl { margin-top: 6px; background: #fff; }
 </style>
 </head>
 <body>
@@ -740,6 +747,34 @@ function kvRow(k, vHtml, raw) {
   return '<span class="k">' + _esc(k) + "</span><span>" + (raw ? vHtml : vHtml) + "</span>";
 }
 
+/* ---- 人工新增行缺关键列警告条（写入侧人工改动感知 阶段五） ----
+   GET /api/v1/batches/{tid} 顶层 manual_rows_incomplete：
+   [{row, factory, sku, missing:["KANRI_NO"|"工厂"|"SKU"]}]，
+   表示人工在 output 副本新增但缺关键列、无法纳入批次管理的行。
+   缺省/非数组/空数组 → 不渲染（兼容老后端）；随详情轮询自然刷新显隐 */
+var MRI_MISSING_TEXT = { KANRI_NO: "管理番号", "工厂": "工厂", SKU: "SKU" };
+function _mriMissingText(k) { return MRI_MISSING_TEXT[k] || k || "-"; }
+
+function renderManualRowsIncomplete(d) {
+  var list = (d && Array.isArray(d.manual_rows_incomplete)) ? d.manual_rows_incomplete : null;
+  if (!list || !list.length) return "";
+  var n = list.length;
+  var detail = '<details><summary>查看明细（' + n + " 行）</summary>" +
+    '<table class="table ltbl"><tr><th>行号</th><th>工厂</th><th>SKU</th><th>缺少的列</th></tr>' +
+    list.map(function (r) {
+      r = r || {};
+      var missing = Array.isArray(r.missing) && r.missing.length
+        ? r.missing.map(_mriMissingText).join("、") : "-";
+      return "<tr><td>" + _esc(r.row != null ? r.row : "-") + "</td><td>" +
+        _esc(r.factory || "-") + "</td><td>" + _esc(r.sku || "-") + "</td><td>" +
+        _esc(missing) + "</td></tr>";
+    }).join("") + "</table></details>";
+  return '<div class="warnbar">' +
+    '<div class="warn-title">检测到 ' + n +
+    " 行人工新增的行缺少关键列（管理番号/工厂/SKU），未纳入批次管理，请补全后重新触发补充工厂。</div>" +
+    detail + "</div>";
+}
+
 function renderUsage(d) {
   var u = d.usage || {};
   var calls = (u.calls != null) ? u.calls : 0;
@@ -964,7 +999,7 @@ function renderAll(d) {
   d = d || {};
   try {
     $id("app").innerHTML =
-      renderHead(d) + renderUsage(d) + renderFactories(d) + renderAudit(d);
+      renderHead(d) + renderManualRowsIncomplete(d) + renderUsage(d) + renderFactories(d) + renderAudit(d);
   } catch (e) {
     $id("app").innerHTML = '<div class="card lcard c-red">渲染失败：' + _esc(e && e.message) + "</div>";
   }

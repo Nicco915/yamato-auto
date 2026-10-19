@@ -245,9 +245,10 @@ def test_channel_c_keep_audit_summary(caplog):
     # 审计留痕：service._manual_write_traces → changes_json
     # （source="manual_override_kept"）经 _write_audit 落库
     values = {"factory_outputs": {FA: dict(cur)}}
-    kept, overwritten, qty_changes = service._manual_write_traces(values, None)
+    kept, overwritten, qty_changes, kept_rows = \
+        service._manual_write_traces(values, None)
     assert len(kept) == 1 and kept[0]["source"] == "manual_override_kept"
-    assert overwritten == [] and qty_changes == []
+    assert overwritten == [] and qty_changes == [] and kept_rows == []
     service._write_audit({
         "thread_id": batch, "factory_name": FA, "approved": True,
         "edited_count": 1, "changes": kept, "new_skus": [],
@@ -588,7 +589,7 @@ def test_qty_change_warns_and_writes_by_new_qty(caplog):
                for r in caplog.records)
 
     # 摘要透出：traces 带 source + export_summary 计数字段
-    _k, _o, qty_changes = service._manual_write_traces(
+    _k, _o, qty_changes, _r = service._manual_write_traces(
         {"factory_outputs": {FA: dict(cur)}}, None)
     assert len(qty_changes) == 1
     assert qty_changes[0]["source"] == "manual_qty_changed"

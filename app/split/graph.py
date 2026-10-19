@@ -39,6 +39,9 @@ class SplitState(TypedDict, total=False):
     # ---- Node 1 产物 ----
     raw_items: list[dict]         # RawItem.model_dump() 列表
     sj_map: dict[str, bool]       # {factory_name: is_sj}
+    # 缺管理番号（KANRI_NO）被跳过的数据行数（决策 4 阶段五透出，
+    # 分票完成摘要/方案接口带「N 行缺管理番号未参与分票」提示）
+    kanri_missing_rows: int
 
     # ---- Node 2 产物 ----
     proposal: dict                # SplitProposal.model_dump()

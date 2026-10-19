@@ -69,11 +69,15 @@ def load_filled(state: dict) -> dict:
     """
     source = state["source_file_path"]
 
-    # 1) 读取 filled Excel
-    raw = load_filled_excel(source)
+    # 1) 读取 filled Excel（决策 4 阶段五：缺管理番号行计数收集 →
+    #    kanri_missing_rows 透出，loader 内已记计数 warning）
+    skipped_kanri: list[int] = []
+    raw = load_filled_excel(source, skipped_kanri_rows=skipped_kanri)
     if not raw:
         logger.warning("load_filled: 文件 %s 未读取到任何数据行", source)
-        return {"status": "loading", "raw_items": [], "sj_map": {}, "errors": ["empty_file"]}
+        return {"status": "loading", "raw_items": [], "sj_map": {},
+                "kanri_missing_rows": len(skipped_kanri),
+                "errors": ["empty_file"]}
 
     # 2) 工厂名归一化（DB factory_aliases 优先，config 兜底）
     normalize_map = load_excel_normalize_map()
@@ -132,6 +136,7 @@ def load_filled(state: dict) -> dict:
     return {
         "raw_items": [r.model_dump() for r in raw],
         "sj_map": sj_map,
+        "kanri_missing_rows": len(skipped_kanri),
         "status": "loading",
     }
 

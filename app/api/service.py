@@ -411,6 +411,7 @@ def _sync_output_copy_rows(
     downstream_path: str,
     factories: set[str],
     row_map: dict[str, dict[str, list[int]]],
+    mark_manual: set[str] | None = None,
 ) -> dict[str, int]:
     """把装箱单中待补充工厂的行同步进 output 副本（快照驱动三分支，决策 8）。
 
@@ -424,15 +425,22 @@ def _sync_output_copy_rows(
       中文品名/净重/毛重三列留空待 writer 填，行格式照搬上一数据行。
 
     落盘后全量重扫重建快照（更新点 4，含 tombstones 结转——本次消失行键
-    入碑）。输出副本不存在（尚无工厂写入）时无需同步。快照缺失/损坏时
-    退化：无墓碑可查，缺失行一律按真新增追加（同旧行为），不落半同步状态
-    （追加失败抛错前不落盘由调用方跑图前置保证）。
+    入碑；决策 4 阶段五：mark_manual 键集打 origin="manual_added"——
+    调用方在写前 diff 检出并纳入管理的人工新增行）。输出副本不存在
+    （尚无工厂写入）时无需同步。快照缺失/损坏时退化：无墓碑可查，缺失行
+    一律按真新增追加（同旧行为），不落半同步状态（追加失败抛错前不落盘
+    由调用方跑图前置保证）。
 
     Returns:
         {"synced": 追加行数, "skipped_manual_deleted": 人工删除不复活行数}
     """
     result = {"synced": 0, "skipped_manual_deleted": 0}
     if not factories:
+        # 无原件行需同步时照常收工；但决策 4（阶段五）纯人工新增行场景
+        # （原件未变，factories 空）也要重建快照打 origin="manual_added"，
+        # 否则下次 diff 重复检出同一批 added_rows
+        if mark_manual:
+            copy_snapshot.refresh_snapshot(batch_id, mark_manual=mark_manual)
         return result
     settings = get_settings()
     src = Path(downstream_path)
@@ -512,8 +520,9 @@ def _sync_output_copy_rows(
         logger.info("[补充工厂] 已向输出副本尾部追加 %d 行（%s）",
                     result["synced"], dst)
     # 快照更新点 4（决策 5）：sync 后全量重扫重建（含 tombstones 结转——
-    # 即使本次零追加也要重建：人工删除的行键在此入碑）
-    copy_snapshot.refresh_snapshot(batch_id)
+    # 即使本次零追加也要重建：人工删除的行键在此入碑；决策 4 阶段五：
+    # 当次纳入管理的人工新增行键经 mark_manual 打 origin="manual_added"）
+    copy_snapshot.refresh_snapshot(batch_id, mark_manual=mark_manual)
     return result
 
 
@@ -657,6 +666,18 @@ def _removed_factories_hint(newly_removed: list[str]) -> str:
     return f"工厂 {names} 已被人工剔除，本批次不再等待{pronoun}"
 
 
+def _manual_rows_incomplete_hint(batch_id: str,
+                                 source_path: str | None) -> tuple[int, str]:
+    """C 态透出（决策 4/阶段五）：活扫副本缺关键列（管理番号/工厂/SKU）且
+    未纳入管理的人工新增行，返回 (行数, 完成摘要提示文案)；无 → (0, "")。
+    扫描失败包死返回 (0, "")，绝不阻塞完成主流程。"""
+    rows = copy_snapshot.scan_incomplete_rows(batch_id, source_path)
+    if not rows:
+        return 0, ""
+    return len(rows), (f"{len(rows)} 行人工新增的行缺少关键列"
+                       f"（管理番号/工厂/SKU），未纳入批次管理，请补全")
+
+
 def _gap_factories(final_values: dict) -> list[str]:
     """图跑完后的缺口工厂名单（口径与 pipeline_state._extract_phase 一致）。
 
@@ -679,22 +700,65 @@ def _gap_factories(final_values: dict) -> list[str]:
     return sorted(gaps)
 
 
+def _merge_factories_into_state(
+    values: dict,
+    req_updates: dict[str, list],
+    row_map_updates: dict[str, dict],
+    pending_add=(),
+) -> dict[str, Any]:
+    """工厂需求 state 合并公共段（从 add_factories_to_batch 提取，两处复用：
+    补充工厂重解析覆盖 + 决策 4 阶段五人工新增行 A/B 态并入；Node6 writer
+    节点返回值合并也走这里）。
+
+    - req_updates / row_map_updates：{工厂: 全量替换值}——调用方负责语义
+      （重解析覆盖 or 追加合成后的完整列表），此处只做整体替换；
+    - pending_add：追加进 pending_factories 的工厂（去重，保序）；
+    - 批次带 factory_filter 时同步扩充（否则新工厂不进进度统计口径）。
+
+    返回可直接喂 graph.update_state / 节点返回值的 update dict。
+    """
+    merged_requirements = dict(values.get("downstream_requirements") or {})
+    merged_row_map = dict(values.get("downstream_row_map") or {})
+    for f, skus in (req_updates or {}).items():
+        merged_requirements[f] = skus
+    for f, rm in (row_map_updates or {}).items():
+        merged_row_map[f] = rm
+    merged_pending = list(values.get("pending_factories") or [])
+    for f in pending_add or ():
+        if f not in merged_pending:
+            merged_pending.append(f)
+    update: dict[str, Any] = {
+        "downstream_requirements": merged_requirements,
+        "downstream_row_map": merged_row_map,
+        "pending_factories": merged_pending,
+    }
+    factory_filter = values.get("factory_filter")
+    if factory_filter:
+        update["factory_filter"] = list(factory_filter) + [
+            f for f in (pending_add or ()) if f not in set(factory_filter)]
+    return update
+
+
 def _manual_write_traces(
     values: dict, factories,
-) -> tuple[list[dict], list[dict], list[dict]]:
-    """从 factory_outputs 快照取当次写入的人工改动留痕（决策 1 通道分流）。
+) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
+    """从 factory_outputs 快照取当次写入的人工改动留痕（决策 1 通道分流 +
+    决策 4 人工新增行）。
 
-    返回 (kept, overwritten, qty_changes)——均已附审计 source：
+    返回 (kept, overwritten, qty_changes, kept_rows)——均已附审计 source：
     - kept：通道 C 保留的人工修改（source="manual_override_kept"，
       old=快照值/系统认知，new=被保留的副本人工值）；
     - overwritten：通道 A 覆盖的人工旧值（source="manual_value_overwritten"，
       old=被盖掉的人工值，new=系统写入值）；
-    - qty_changes：数量列人工改动（source="manual_qty_changed"，告警不阻断）。
+    - qty_changes：数量列人工改动（source="manual_qty_changed"，告警不阻断）；
+    - kept_rows：A 态人工新增行无提取结果支撑（source=
+      "manual_row_kept_no_extract"），保留人工行未写入。
     factories 为 None 时统计全部工厂。
     """
     kept: list[dict] = []
     overwritten: list[dict] = []
     qty_changes: list[dict] = []
+    kept_rows: list[dict] = []
     outputs = (values or {}).get("factory_outputs") or {}
     names = factories if factories is not None else list(outputs)
     for name in names:
@@ -707,7 +771,9 @@ def _manual_write_traces(
             overwritten.append({**c, "source": "manual_value_overwritten"})
         for c in fo.get("qty_manual_changes") or []:
             qty_changes.append({**c, "source": "manual_qty_changed"})
-    return kept, overwritten, qty_changes
+        for c in fo.get("manual_rows_kept_no_extract") or []:
+            kept_rows.append({**c, "source": "manual_row_kept_no_extract"})
+    return kept, overwritten, qty_changes, kept_rows
 
 
 def _diff_factory_source_changes(
@@ -1079,11 +1145,45 @@ def add_factories_to_batch(
                          batch_id, exc_info=True)
             absorbed_factories = []
 
-    if not added and not absorbed_factories and not (was_aborted and snap.next):
+    # 决策 4（阶段五）：人工新增行预检出——副本存在快照没有的 row_key。
+    # A 态（厂已在批次需求）并入该厂需求；B 态（全新厂）视同待补充入队；
+    # C 态（缺管理番号）不纳入只提示（缺工厂/SKU 的行进不了快照 diff，
+    # 由完成摘要/批次详情 scan_incomplete_rows 活扫透出）。命中墓碑的键
+    # 随 _sync/写入后的 refresh 结转自动出碑再走三态。
+    # 检出必须在「没有待补充的工厂」早退之前：仅人工新增行（原件未变）
+    # 的场景也要能入批。diff 同时复用于下方通道 B 确认门，避免二次现扫。
+    manual_classified: dict[str, list] = {"a": [], "b": [], "c": []}
+    manual_keys: set[str] = set()
+    pre_diff = copy_snapshot.diff_against_copy(batch_id)
+    if pre_diff is not None and pre_diff.added_rows:
+        manual_classified = copy_snapshot.classify_added_rows(
+            pre_diff.added_rows,
+            set(values.get("downstream_requirements") or {})
+            | set(values.get("downstream_row_map") or {}))
+        for c in manual_classified["c"]:
+            logger.warning(
+                "[补充工厂] 副本第 %s 行（%s/%s）缺管理番号（KANRI_NO），"
+                "未纳入批次管理，请补全",
+                c.get("row_no"), c.get("factory"), c.get("sku"))
+        # B 态全新厂视同待补充入队（去重口径与原件待补一致）
+        manual_b = sorted({str(r.get("factory") or "")
+                           for r in manual_classified["b"]})
+        manual_b = [f for f in manual_b
+                    if f and f not in queued and f not in deferred_names
+                    and f != current_name]
+        added = added + manual_b
+    manual_ab = bool(manual_classified["a"] or manual_classified["b"])
+
+    if (not added and not absorbed_factories and not manual_ab
+            and not (was_aborted and snap.next)):
         # 无新工厂且无待吸收变更：顺手把指纹基线对齐当前原件
         # （mtime 抖动/仅非业务列改动场景下次零成本短路）
         source_diff.record_fingerprint(batch_id, config["downstream_file_path"])
-        return {"added": 0, "factories": [], "message": "没有待补充的工厂"}
+        no_add_msg = "没有待补充的工厂"
+        if manual_classified["c"]:
+            no_add_msg += (f"；{len(manual_classified['c'])} 行人工新增的行"
+                           f"缺管理番号（KANRI_NO），未纳入批次管理，请补全")
+        return {"added": 0, "factories": [], "message": no_add_msg}
     # aborted 复活且图还有未跑节点（停在 Node2 入口时主/暂缓队列未消，
     # 或停在 Node7 入口）：即使无新工厂可补，也照走续跑把剩余队列跑下去
 
@@ -1106,7 +1206,7 @@ def add_factories_to_batch(
     # 确认后覆写（writer 按 overwrite_manual_factories 走通道 A，旧值留痕）。
     # diff/快照失败返回 None 时保守放行，绝不阻塞补充主流程。
     manual_conflicts: list[dict] = []
-    diff = copy_snapshot.diff_against_copy(batch_id)
+    diff = pre_diff  # 复用决策 4 预检出的写前 diff（同一份现扫，零二次开销）
     if diff is not None:
         for c in diff.value_conflicts:
             if c["factory"] in refresh:
@@ -1126,36 +1226,40 @@ def add_factories_to_batch(
                        batch_id, len(manual_conflicts))
         raise ManualConflictError(manual_conflicts)
 
-    merged_requirements = dict(values.get("downstream_requirements") or {})
-    merged_row_map = dict(values.get("downstream_row_map") or {})
-    for f in refresh:
-        merged_requirements[f] = new_requirements[f]
-        merged_row_map[f] = new_row_map[f]
-    # 决策 9 吸收：确认变更的已完成工厂一并用重解析值覆盖 state 基准
+    # state 合并公共段（决策 4 阶段五提取，与 Node6 writer 节点返回值
+    # 合并共用 _merge_factories_into_state）：待补充工厂用新解析值覆盖
+    # （装箱单可能改过）；决策 9 吸收工厂一并以重解析值覆盖 state 基准
     # （原件整厂消失的工厂不在 new_requirements → state 保留原样，
-    #  副本行不删，由人工 reopen/剔除流程处理）
-    for f in absorbed_factories:
-        if f in new_requirements:
-            merged_requirements[f] = new_requirements[f]
-            merged_row_map[f] = new_row_map[f]
-    merged_pending = existing_pending + added
-
-    update: dict[str, Any] = {
-        "downstream_requirements": merged_requirements,
-        "downstream_row_map": merged_row_map,
-        "pending_factories": merged_pending,
-    }
+    #  副本行不删，由人工 reopen/剔除流程处理）；已写入工厂与挂起中的
+    # 当前工厂保持原值不动；added 入 pending / factory_filter 扩充
+    refresh_names = [f for f in sorted(refresh | set(absorbed_factories))
+                     if f in new_requirements]
+    update = _merge_factories_into_state(
+        values,
+        {f: new_requirements[f] for f in refresh_names},
+        {f: new_row_map[f] for f in refresh_names},
+        pending_add=added)
     if manual_conflicts and confirm_overwrite:
         # 通道 B 确认覆写：Node6 writer 对名单内工厂按通道 A（rework）语义
         # 覆盖人工修改（旧值留痕 manual_value_overwritten），消费后自清
         update["overwrite_manual_factories"] = sorted(
             {c["factory"] for c in manual_conflicts})
-    # 批次带 factory_filter（如「跳过已处理」建批）时同步扩充，
-    # 否则补充的工厂不进进度统计口径
-    factory_filter = values.get("factory_filter")
-    if factory_filter:
-        update["factory_filter"] = list(factory_filter) + [
-            f for f in added if f not in set(factory_filter)]
+    # 决策 4（阶段五）：人工新增行并入叠加在重解析覆盖之上——A 态向
+    # requirements 追加 SKU + row_map 挂等长占位列表；B 态新厂需求明细
+    # 全部来自副本新增行（SKU 按行号序去重）。幂等：快照已纳入的行
+    # 不再出现在 diff.added_rows，plan 对无变化工厂不吐 update。
+    if manual_ab:
+        plan = copy_snapshot.plan_manual_merge(
+            manual_classified["a"], manual_classified["b"],
+            update["downstream_requirements"], update["downstream_row_map"])
+        for f, skus in plan["req_updates"].items():
+            update["downstream_requirements"][f] = skus
+        for f, rm in plan["row_map_updates"].items():
+            update["downstream_row_map"][f] = rm
+        manual_keys = plan["manual_keys"]
+        if plan["b_factories"]:
+            logger.info("[补充工厂] 检出人工新增全新工厂 %s 的副本行，"
+                        "并入本批次待处理队列", plan["b_factories"])
 
     logger.info("[补充工厂] 批次 %s：补入 %d 家 %s（%s）",
                 batch_id, len(added), sorted(added),
@@ -1174,7 +1278,8 @@ def add_factories_to_batch(
         # 否则 writer 按新 row_map 行号写回会写出幽灵数据；
         # 决策 9 吸收工厂一并入同步范围（原件新增行追加副本尾部）
         _sync_output_copy_rows(batch_id, config["downstream_file_path"],
-                               refresh | set(absorbed_factories), new_row_map)
+                               refresh | set(absorbed_factories), new_row_map,
+                               mark_manual=manual_keys or None)
 
         # 决策 9 吸收副本重写（通道 A 语义）：数量列回写 + writer 重写三列
         # （被盖人工旧值留痕 manual_value_overwritten，审计 source_absorbed）
@@ -1268,13 +1373,17 @@ def add_factories_to_batch(
             "final_output_path": final.values.get("final_output_path"),
         }
         # 人工改动透出（决策 1/2.7）：通道 C 保留 / 通道 B 确认覆写计数摘要
-        # （manual_overrides_kept 恒在是前端契约）；数量列人工改动逐行透出
-        kept, overwritten, qty_changes = _manual_write_traces(final.values, added)
+        # （manual_overrides_kept 恒在是前端契约）；数量列人工改动逐行透出；
+        # 决策 4（阶段五）：A 态无提取结果支撑的人工新增行保留计数透出
+        kept, overwritten, qty_changes, kept_rows = _manual_write_traces(
+            final.values, added)
         result["manual_overrides_kept"] = len(kept)
         if overwritten:
             result["manual_values_overwritten"] = len(overwritten)
         if qty_changes:
             result["qty_manual_changes"] = len(qty_changes)
+        if kept_rows:
+            result["manual_rows_kept_no_extract"] = len(kept_rows)
         if not added:
             result["message"] = "批次已恢复执行并处理完成"
         if absorbed_factories:
@@ -1307,6 +1416,13 @@ def add_factories_to_batch(
                     f"单据到齐后可「补充工厂」继续")
             base = result.get("message") or "补充的工厂已处理完成"
             result["message"] = f"{base}；{hint}"
+        # 决策 4（阶段五）C 态透出：缺关键列的人工新增行未纳入，完成摘要提示
+        n_inc, inc_hint = _manual_rows_incomplete_hint(
+            batch_id, config["downstream_file_path"])
+        if n_inc:
+            result["manual_rows_incomplete"] = n_inc
+            base = result.get("message") or "补充的工厂已处理完成"
+            result["message"] = f"{base}；{inc_hint}"
         return result
 
 
@@ -1776,15 +1892,19 @@ def resume_order(thread_id: str, resume_data: dict,
                         "thread_id": thread_id,
                         "review_data": payload,
                     }
-                    # 人工改动透出（决策 1）：通道 C 保留/通道 A 覆写留痕入审计
-                    kept, overwritten, qty_changes = _manual_write_traces(
-                        current.values, [factory] if factory else None)
+                    # 人工改动透出（决策 1）：通道 C 保留/通道 A 覆写留痕入审计；
+                    # 决策 4（阶段五）：A 态无提取支撑的人工新增行一并入审计
+                    kept, overwritten, qty_changes, kept_rows = \
+                        _manual_write_traces(
+                            current.values, [factory] if factory else None)
                     if prepared is not None:
-                        prepared["changes"].extend(kept + overwritten)
+                        prepared["changes"].extend(kept + overwritten + kept_rows)
                     if kept:
                         result["manual_overrides_kept"] = len(kept)
                     if qty_changes:
                         result["qty_manual_changes"] = len(qty_changes)
+                    if kept_rows:
+                        result["manual_rows_kept_no_extract"] = len(kept_rows)
                     _write_audit(prepared, _audit_result_status(prepared, result))
                     return result
         except batch_store.BatchAbortedError:
@@ -1803,11 +1923,12 @@ def resume_order(thread_id: str, resume_data: dict,
         gaps = _gap_factories(final.values)
         # 人工改动透出（决策 1 通道 C）：保留的人工修改计入审计 +
         # 结果带 manual_overrides_kept + 完成文案提示（详情页可「覆盖写入」）；
-        # 数量列人工改动（决策 1 附则）告警不阻断，完成摘要逐行透出
-        kept, overwritten, qty_changes = _manual_write_traces(
+        # 数量列人工改动（决策 1 附则）告警不阻断，完成摘要逐行透出；
+        # 决策 4（阶段五）：A 态无提取支撑的人工新增行入审计 + 摘要提示
+        kept, overwritten, qty_changes, kept_rows = _manual_write_traces(
             final.values, [factory] if factory else None)
         if prepared is not None:
-            prepared["changes"].extend(kept + overwritten)
+            prepared["changes"].extend(kept + overwritten + kept_rows)
         if gaps:
             # 图跑到 END 但缺口未补齐（其余工厂缺资料待补充）：
             # status 保持 "success"（接口契约不变），靠 awaiting_factories
@@ -1827,6 +1948,14 @@ def resume_order(thread_id: str, resume_data: dict,
             _manually_removed_factories(thread_id) - removed_before)
         if newly_removed:
             message += f"；{_removed_factories_hint(newly_removed)}"
+        # 决策 4（阶段五）：A 态保留行 + C 态缺关键列行 → 完成摘要透出
+        if kept_rows:
+            message += (f"；{len(kept_rows)} 行人工新增的行无提取结果支撑，"
+                        f"保留人工行未写入，详见批次详情审计")
+        n_inc, inc_hint = _manual_rows_incomplete_hint(
+            thread_id, final.values.get("downstream_file_path"))
+        if n_inc:
+            message += f"；{inc_hint}"
         result = {
             "status": "success",
             "message": message,
@@ -1836,6 +1965,10 @@ def resume_order(thread_id: str, resume_data: dict,
             "final_validation_status": final.values.get("validation_status"),
             "final_output_path": final.values.get("final_output_path"),
         }
+        if kept_rows:
+            result["manual_rows_kept_no_extract"] = len(kept_rows)
+        if n_inc:
+            result["manual_rows_incomplete"] = n_inc
         if newly_removed:
             result["manually_removed_factories"] = newly_removed
         _write_audit(prepared, _audit_result_status(prepared, result))
@@ -2730,6 +2863,9 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
     fake_state: dict[str, Any] = {
         "batch_id": values.get("batch_id") or thread_id,
         "downstream_file_path": values["downstream_file_path"],
+        # 决策 4（阶段五）：_write_excel 的人工新增行三态分类/并入计划
+        # 以真实需求集为基准（缺了会把 A 态误判成 B 态）
+        "downstream_requirements": values.get("downstream_requirements") or {},
         "downstream_row_map": values.get("downstream_row_map") or {},
         "validation_status": "Approved",  # reopen 视为通过
         "current_factory_data": {
@@ -2751,6 +2887,11 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
             fake_state, out_path, deleted_skus, channel="rework")
     manual_overwritten = list(
         fake_state["current_factory_data"].get("manual_overwritten_cells") or [])
+    # 决策 4（阶段五）：reopen 写前 diff 的人工新增行并入计划（A 态需求
+    # 追加由下方 update_state 持久化；B 态全新厂 reopen 不驱动跑图，提示
+    # 走「补充工厂」入口）
+    manual_merge = fake_state["current_factory_data"].pop(
+        "_manual_added_merge", None)
 
     # 回写 factory_outputs 快照：否则 reopen 的修改只落在 Excel/DB，
     # 下次重开读到的仍是旧快照（reopen 数据源优先级 快照 > Excel 兜底）。
@@ -2794,6 +2935,39 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
         # 无快照（reopen 走 Excel 兜底）：Excel 已更新，下次重开自一致，无需写
     except Exception as e:  # noqa: BLE001 快照回写是辅助设施，不推翻已完成的写入
         logger.warning("⚠️ reopen 快照回写失败: %s: %s", type(e).__name__, e)
+
+    # 决策 4（阶段五）：reopen 检出的人工新增行并入计划持久化——A 态（厂在
+    # 批次需求集）需求/行映射并入 state；B 态全新厂 reopen 不驱动跑图，
+    # warning 提示走「补充工厂」入口。同样只在批次已结束时写（挂起中
+    # update_state 会销毁 interrupt）。辅助设施包死，不推翻已完成的写入。
+    if manual_merge is not None:
+        try:
+            fresh2 = graph.get_state(_config(thread_id))
+            if fresh2.next:
+                logger.info("[reopen] 批次仍挂起审核，人工新增行并入计划暂不"
+                            "写入 state（避免销毁 interrupt）：%s", factory_name)
+            else:
+                reqs = ((fresh2.values or {})
+                        .get("downstream_requirements") or {})
+                a_req = {f: s for f, s in
+                         (manual_merge["req_updates"] or {}).items()
+                         if f in reqs}
+                a_rm = {f: m for f, m in
+                        (manual_merge["row_map_updates"] or {}).items()
+                        if f in reqs}
+                if a_req or a_rm:
+                    graph.update_state(
+                        _config(thread_id),
+                        _merge_factories_into_state(fresh2.values, a_req, a_rm),
+                        as_node=NODE7)
+                    logger.info("[reopen] 人工新增行需求已并入 state：%s",
+                                sorted(a_req))
+                for bf in manual_merge["b_factories"]:
+                    logger.warning("[reopen] 检出全新工厂「%s」的人工新增行，"
+                                   "reopen 不入批，请走「补充工厂」入口", bf)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("⚠️ reopen 人工新增行并入 state 失败: %s: %s",
+                           type(e).__name__, e)
 
     # 审计留痕：复用 _prepare_audit + _write_audit（仅 approved=True 路径）
     try:
@@ -3536,6 +3710,18 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
     except Exception as e:  # noqa: BLE001 透出是辅助信息，绝不让详情页 500
         logger.warning("批次详情 manual_protected 透出失败 %s: %s", thread_id, e)
         detail["manual_protected"] = {"count": 0, "rows": []}
+
+    # 决策 4（阶段五）C 态透出：副本缺关键列（管理番号/工厂/SKU）且未纳入
+    # 管理的人工新增行，前端批次详情页据此渲染警告条（契约：顶层
+    # manual_rows_incomplete = [{row, factory, sku, missing:[...]}]，无则 []）；
+    # 活扫失败包死为空数组，绝不让详情页 500
+    try:
+        detail["manual_rows_incomplete"] = copy_snapshot.scan_incomplete_rows(
+            thread_id, values.get("downstream_file_path"))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("批次详情 manual_rows_incomplete 透出失败 %s: %s",
+                       thread_id, e)
+        detail["manual_rows_incomplete"] = []
 
     # 权威状态覆盖（2026-10-12 待补充状态）：checkpoint 三态推导的 completed
     # 无法区分「全部完成」与「缺资料待补充」；以 pipeline_state 自愈后的

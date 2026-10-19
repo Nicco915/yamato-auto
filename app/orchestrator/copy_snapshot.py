@@ -23,6 +23,16 @@ factory_manually_removed 审计（剔除名单权威源 = review_audits 每厂�
 factory_manually_readded 审计，自动出名单。与 tombstones 双轨印证（该厂
 全部 row_key 入碑/出碑由 refresh 结转负责）。
 
+阶段五落地（决策 4）：人工新增行纳入管理三态分类——
+- classify_added_rows：diff.added_rows 按「A 厂在原件 requirements /
+  B 全新厂 / C 缺关键列（KANRI_NO 为空）」分类；命中墓碑的键随 refresh
+  结转自动出碑（tombstones -= new_keys），出碑后照常走三态；
+- plan_manual_merge：A/B 并入计划纯函数（requirements 追加 SKU +
+  row_map 挂等长占位列表维持结构契约 + B 厂名单 + 打标键集）；
+- scan_incomplete_rows：C 态透出——活扫副本缺关键列行（缺工厂/SKU 的
+  行进不了快照 diff，只能活扫），扣除原件中同签名的行（原件本身缺列的
+  行不冤报），供批次详情 manual_rows_incomplete 与完成摘要提示。
+
 容错哲学（与 _write_audit 同）：快照/diff 是辅助设施，refresh/diff 任何
 失败只记 error 日志并退化为「无快照」（保守放行写入+warning），绝不阻塞
 写入主流程。
@@ -684,5 +694,225 @@ def _detect_factory_removals(
         return newly
     except Exception:  # noqa: BLE001 辅助设施失败静默降级，见模块 docstring
         logger.error("[快照] 批次 %s 整厂剔除检出失败（不影响写入主流程）",
+                     batch_id, exc_info=True)
+        return []
+
+
+# ---------------------------------------------------------------------------
+# 决策 4 / 阶段五：人工新增行纳入管理（三态分类 + 并入计划 + C 态透出）
+# ---------------------------------------------------------------------------
+
+def classify_added_rows(added_rows, known_factories) -> dict:
+    """写前 diff added_rows 的三态分类（决策 4 规则表，纯函数）。
+
+    - C 态：KANRI_NO 为空 → 无法纳入（缺关键列；缺工厂/SKU 的行根本进不了
+      快照 diff——build_snapshot 跳过工厂/SKU 空值行，那一类由
+      scan_incomplete_rows 活扫透出）；
+    - A 态：工厂已在原件 requirements（known_factories）→ 并入该厂需求；
+    - B 态：工厂是原件没有的全新工厂 → 新厂入批。
+
+    命中墓碑的键（in_tombstones=True，人工加回此前删除的行）不特殊分流——
+    出碑由 refresh 结转（tombstones -= new_keys）完成，此处仅 info 留痕，
+    随后照常走三态（决策 4 与墓碑的衔接）。
+
+    Returns:
+        {"a": [...], "b": [...], "c": [...]}——元素为 added_rows 原 dict
+        （row_key/row_no/factory/sku/seq/kanri_no/in_tombstones 不变）。
+    """
+    known = {str(f) for f in (known_factories or [])}
+    out: dict[str, list[dict]] = {"a": [], "b": [], "c": []}
+    for row in added_rows or []:
+        factory = str(row.get("factory") or "")
+        sku = str(row.get("sku") or "")
+        if row.get("in_tombstones"):
+            logger.info("[快照] 人工加回此前删除的行（出墓碑后走三态）："
+                        "工厂「%s」SKU「%s」第 %s 行", factory, sku,
+                        row.get("seq"))
+        if not (row.get("kanri_no") or "").strip():
+            out["c"].append(row)          # 缺管理番号 → 不纳入
+        elif factory in known:
+            out["a"].append(row)          # 已有厂新 SKU/加行 → 并入需求
+        else:
+            out["b"].append(row)          # 全新厂 → 新厂入批
+    return out
+
+
+def plan_manual_merge(
+    a_rows,
+    b_rows,
+    requirements,
+    row_map,
+) -> dict:
+    """A/B 态并入计划（决策 4，纯函数，不改入参）。
+
+    - A 态：requirements[factory] 追加新 SKU（按行号序去重）；row_map 挂
+      「等长占位列表」维持结构契约——len = 行数需求（writer 据此驱动 seq
+      循环），占位值取副本当前行号（行号语义已废弃，仅供日志/排查参考，
+      定位全权由 row_key 索引负责）；
+    - B 态：新厂需求明细来自副本新增行（SKU 按行号序去重）；
+    - 幂等：SKU 已在需求且 row_map 长度已覆盖该 seq → 不产生该厂更新
+      （重复检出/重复调用安全）。
+
+    Returns:
+        {"req_updates": {factory: [sku...]},          # 全量替换该厂 SKU 列表
+         "row_map_updates": {factory: {sku: [占位行号...]}},
+         "b_factories": [排序后的全新厂名单],          # → pending_factories
+         "manual_keys": {row_key_str...}}              # A+B 行键（refresh 打
+                                                       # origin="manual_added"）
+    """
+    requirements = requirements or {}
+    row_map = row_map or {}
+    req_updates: dict[str, list[str]] = {}
+    rm_updates: dict[str, dict[str, list[int]]] = {}
+    manual_keys: set[str] = set()
+
+    # A 态：按厂聚合，基于调用方给的最新 requirements/row_map 计算追加
+    a_by_factory: dict[str, list[dict]] = {}
+    for row in a_rows or []:
+        a_by_factory.setdefault(str(row.get("factory") or ""), []).append(row)
+        manual_keys.add(str(row.get("row_key") or ""))
+    for factory, rows in a_by_factory.items():
+        base_skus = [str(s) for s in (requirements.get(factory) or [])]
+        merged_skus = list(base_skus)
+        base_rm = {str(sku): list(rows_)
+                   for sku, rows_ in (row_map.get(factory) or {}).items()}
+        rm_changed = False
+        for row in sorted(rows, key=lambda r: int(r.get("row_no") or 0)):
+            sku = str(row.get("sku") or "")
+            seq = int(row.get("seq") or 0)
+            row_no = int(row.get("row_no") or 0)
+            if sku and sku not in merged_skus:
+                merged_skus.append(sku)
+            slots = base_rm.setdefault(sku, [])
+            while len(slots) < seq:      # 等长占位：len = 行数需求
+                slots.append(row_no)
+                rm_changed = True
+        if merged_skus != base_skus:
+            req_updates[factory] = merged_skus
+        if rm_changed:
+            rm_updates[factory] = base_rm
+
+    # B 态：全新厂——需求明细全部来自副本新增行
+    b_by_factory: dict[str, list[dict]] = {}
+    for row in b_rows or []:
+        b_by_factory.setdefault(str(row.get("factory") or ""), []).append(row)
+        manual_keys.add(str(row.get("row_key") or ""))
+    for factory, rows in b_by_factory.items():
+        skus: list[str] = []
+        rm: dict[str, list[int]] = {}
+        for row in sorted(rows, key=lambda r: int(r.get("row_no") or 0)):
+            sku = str(row.get("sku") or "")
+            if not sku:
+                continue
+            if sku not in skus:
+                skus.append(sku)
+            rm.setdefault(sku, []).append(int(row.get("row_no") or 0))
+        if skus:
+            req_updates[factory] = skus
+            rm_updates[factory] = rm
+    manual_keys.discard("")
+
+    return {
+        "req_updates": req_updates,
+        "row_map_updates": rm_updates,
+        "b_factories": sorted(b_by_factory),
+        "manual_keys": manual_keys,
+    }
+
+
+def scan_incomplete_rows(batch_id: str,
+                         source_path: str | None = None) -> list[dict]:
+    """C 态透出（决策 4）：活扫副本中缺关键列且未纳入管理的人工新增行。
+
+    判定：副本数据行中 工厂/SKU 至少其一非空（皆空 = 排版填充行，不参与），
+    且 KANRI_NO/工厂/SKU 任一为空 → 候选；再扣除「原件中本就存在同签名行」
+    （签名 = 工厂/SKU/管理番号/数量四成分规整值——原件本身缺列的行，如合并
+    单元格导致的空番号行，不冤报为人工新增）。
+
+    供批次详情 manual_rows_incomplete（前端契约：[{row, factory, sku,
+    missing:["KANRI_NO"|"工厂"|"SKU"]}]）与完成摘要提示。辅助设施包死：
+    无副本/无关键列/任何异常 → 记日志返回 []（不阻断详情页）。
+    """
+    batch_id = str(batch_id)
+    try:
+        copy_path = _find_copy(batch_id)
+        if copy_path is None:
+            return []
+        settings = get_settings()
+
+        def _scan(path: Path) -> list[dict]:
+            """扫一份表 → [{row, factory, sku, kanri, qty, missing}]。"""
+            wb = load_workbook(path, read_only=True, data_only=True)
+            try:
+                ws = wb[wb.sheetnames[0]]
+                it = ws.iter_rows()
+                header_row = next(it, None)
+                header = [c.value for c in header_row] if header_row else []
+                if settings.col_factory not in header \
+                        or settings.col_sku not in header:
+                    return []
+
+                def _ci(name: str) -> int | None:
+                    return header.index(name) if name in header else None
+
+                ci_f = header.index(settings.col_factory)
+                ci_s = header.index(settings.col_sku)
+                ci_k = _ci(COL_KANRI_NO)
+                ci_q = _ci(settings.col_qty)
+
+                def val(row, ci: int | None):
+                    return (row[ci].value
+                            if ci is not None and ci < len(row) else None)
+
+                out: list[dict] = []
+                for row_no, row in enumerate(it, start=2):
+                    factory = norm_key_text(val(row, ci_f))
+                    sku = norm_key_text(val(row, ci_s))
+                    if not factory and not sku:
+                        continue          # 排版填充行不参与
+                    kanri = norm_key_text(val(row, ci_k))
+                    missing: list[str] = []
+                    if not kanri:
+                        missing.append("KANRI_NO")
+                    if not factory:
+                        missing.append("工厂")
+                    if not sku:
+                        missing.append("SKU")
+                    out.append({"row": row_no, "factory": factory,
+                                "sku": sku, "kanri": kanri,
+                                "qty": round2(val(row, ci_q)),
+                                "missing": missing})
+                return out
+            finally:
+                wb.close()
+
+        copy_rows = _scan(copy_path)
+        candidates = [r for r in copy_rows if r["missing"]]
+        if not candidates:
+            return []
+
+        # 原件同签名行排除（原件本身缺列的行不冤报）；原件不可读时按无排除
+        source_sigs: set[tuple] = set()
+        if source_path:
+            src = Path(source_path).expanduser()
+            if src.is_file():
+                for r in _scan(src):
+                    source_sigs.add((r["factory"], r["sku"], r["kanri"],
+                                     r["qty"]))
+
+        result = [
+            {"row": r["row"], "factory": r["factory"], "sku": r["sku"],
+             "missing": r["missing"]}
+            for r in candidates
+            if (r["factory"], r["sku"], r["kanri"], r["qty"])
+            not in source_sigs
+        ]
+        if result:
+            logger.warning("[快照] 批次 %s 副本检出 %d 行缺关键列"
+                           "（管理番号/工厂/SKU）的人工新增行，未纳入批次管理",
+                           batch_id, len(result))
+        return result
+    except Exception:  # noqa: BLE001 辅助设施失败静默降级，见模块 docstring
+        logger.error("[快照] 批次 %s 缺关键列行扫描失败（按无透出处理）",
                      batch_id, exc_info=True)
         return []
