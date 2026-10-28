@@ -232,20 +232,24 @@ async def batch_precheck(request: PrecheckRequest):
 
 
 @router.get("/api/v1/batches/precheck-manual")
-async def precheck_manual(folder_name: str):
+async def precheck_manual(folder_name: str,
+                          downstream_file_path: Optional[str] = None):
     """手动录入预检（第七阶段 §2.3）：扫描候选文件夹的三列完整性建议。
 
     面板/控制台启动批次前调用：返回 {"factories": [{"name", "complete",
     "filled_rows", "total_rows"}]}，complete=True 的厂前端预勾选「跳过识别
-    （手动录入）」并标注「已填完整」。业务逻辑全在 service 层（任务 A 实现
-    precheck_manual_completeness，本端点仅透传）。
+    （手动录入）」并标注「已填完整」。业务逻辑全在 service 层。
+
+    downstream_file_path：候选文件夹内有多个装箱单时由前端指定所选文件，
+    否则 precheck 会因「发现多个」而 422、无法给出按厂勾选清单。
 
     注意：必须声明在 GET /api/v1/batches/{thread_id} 之前，否则
     "precheck-manual" 会被 {thread_id} 路径段吞掉。
     """
     try:
         return await asyncio.to_thread(
-            service.precheck_manual_completeness, folder_name)
+            service.precheck_manual_completeness,
+            folder_name, downstream_file_path)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 

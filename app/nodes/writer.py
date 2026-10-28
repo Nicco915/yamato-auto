@@ -83,15 +83,24 @@ def _apply_write_format(cell) -> None:
     cell.border = WRITE_BORDER
 
 
-def _ensure_output_copy(state: AgentState) -> Path:
-    """确保 output/{batch_id}/containers/ 下存在原件副本；已存在则复用。"""
+def _ensure_output_copy(
+    state: AgentState, return_created: bool = False,
+) -> Path | tuple[Path, bool]:
+    """确保 output/{batch_id}/containers/ 下存在原件副本；已存在则复用。
+
+    return_created=True 时返回 (副本路径, 本次是否新建)。Node1 据此判断
+    「新一轮写入起点」——rerun 归档旧 output 后副本会重建，旧 run 的
+    factory_outputs/manual_kept_rows 必须清空，否则遇值确认门会把原件里
+    人工预填的三列误判为「系统上一轮结转值」而漏确认。
+    """
     settings = get_settings()
     batch_id = state.get("batch_id") or "unknown"
     out_dir = settings.batch_containers_dir(batch_id)
     out_dir.mkdir(parents=True, exist_ok=True)
     src = Path(state["downstream_file_path"])
     dst = out_dir / f"{src.stem}_filled{src.suffix}"
-    if not dst.exists():
+    created = not dst.exists()
+    if created:
         try:
             shutil.copy2(src, dst)
         except OSError as e:
@@ -104,7 +113,7 @@ def _ensure_output_copy(state: AgentState) -> Path:
         # 延迟 import 避免 app.graph → writer → orchestrator 循环导入
         from app.orchestrator import copy_snapshot
         copy_snapshot.refresh_snapshot(batch_id)
-    return dst
+    return (dst, created) if return_created else dst
 
 
 def _probe_writable(path: Path) -> None:

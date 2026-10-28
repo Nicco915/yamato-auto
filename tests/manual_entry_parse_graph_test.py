@@ -148,6 +148,37 @@ def test_node1_generates_copy_and_baseline_snapshot():
     assert manual_row["gross"] == MANUAL_GROSS
 
 
+def test_node1_resets_stale_run_state_when_copy_recreated():
+    """rerun 归档旧 output 后副本重建：旧 run 的 factory_outputs /
+    manual_kept_rows 必须清空，否则遇值确认门把原件人工预填值误判为
+    系统结转值而漏确认（人工值静默被覆盖）。"""
+    batch = "MANUAL-NODE1-RERUN"
+    xlsx = _write_manifest(TMP / f"{batch}_src.xlsx", [
+        (AUTO_FACTORY, "4900000009431", 10, True),
+    ])
+    stale_outputs = {AUTO_FACTORY: {"factory_name": AUTO_FACTORY}}
+    stale_kept = {AUTO_FACTORY: ["自动识别厂|4900000009431|1"]}
+
+    result = parse_downstream({
+        "batch_id": batch,
+        "downstream_file_path": str(xlsx),
+        "factory_outputs": stale_outputs,
+        "manual_kept_rows": stale_kept,
+    })
+    assert result["factory_outputs"] == {}
+    assert result["manual_kept_rows"] == {}
+
+    # 副本已存在（同一输出目录复用）：不是新一轮，保留本轮已有状态
+    result2 = parse_downstream({
+        "batch_id": batch,
+        "downstream_file_path": str(xlsx),
+        "factory_outputs": stale_outputs,
+        "manual_kept_rows": stale_kept,
+    })
+    assert "factory_outputs" not in result2
+    assert "manual_kept_rows" not in result2
+
+
 def _manifest_for_graph(batch: str, rows) -> Path:
     return _write_manifest(TMP / f"{batch}.xlsx", rows)
 

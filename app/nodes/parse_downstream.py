@@ -116,9 +116,17 @@ def parse_downstream(state: AgentState) -> dict:
     # copy_snapshot 同哲学，防 app.graph → nodes → orchestrator 循环）
     if state.get("batch_id"):
         from app.nodes.writer import _ensure_output_copy
-        out_path = _ensure_output_copy(
+        out_path, copy_created = _ensure_output_copy(
             {"batch_id": state["batch_id"],
-             "downstream_file_path": file_path})
+             "downstream_file_path": file_path},
+            return_created=True)
         result["final_output_path"] = str(out_path)
+        if copy_created:
+            # 新副本 = 新一轮写入起点（首次运行/rerun 归档旧 output 后重建）：
+            # 旧 run 的 factory_outputs / manual_kept_rows 指向已归档旧副本，
+            # 必须清空。否则 writer 的 written_before 误判为「本厂已写过」，
+            # 原件中人工预填的三列会躲过遇值确认门被系统值静默覆盖。
+            result["factory_outputs"] = {}
+            result["manual_kept_rows"] = {}
 
     return result

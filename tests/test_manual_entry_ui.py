@@ -63,8 +63,9 @@ def test_precheck_manual_200_passthrough(monkeypatch):
     """预检端点透传 service.precheck_manual_completeness 的返回值。"""
     seen = {}
 
-    def fake(folder_name):
+    def fake(folder_name, downstream_file_path=None):
         seen["folder_name"] = folder_name
+        seen["downstream_file_path"] = downstream_file_path
         return PRECHECK_REPORT
 
     monkeypatch.setattr(service, "precheck_manual_completeness", fake,
@@ -74,13 +75,34 @@ def test_precheck_manual_200_passthrough(monkeypatch):
     assert r.status_code == 200, r.text
     assert r.json() == PRECHECK_REPORT
     assert seen["folder_name"] == "ETD0901"
+    assert seen["downstream_file_path"] is None
     print("  ✓ test_precheck_manual_200_passthrough")
+
+
+def test_precheck_manual_passes_downstream_path(monkeypatch):
+    """多装箱单：下游文件选择随预检透传（否则工厂勾选清单不可用）。"""
+    seen = {}
+
+    def fake(folder_name, downstream_file_path=None):
+        seen["folder_name"] = folder_name
+        seen["downstream_file_path"] = downstream_file_path
+        return {"factories": []}
+
+    monkeypatch.setattr(service, "precheck_manual_completeness", fake,
+                        raising=False)
+    r = client.get("/api/v1/batches/precheck-manual",
+                   params={"folder_name": "ETD0901",
+                           "downstream_file_path": "/w/ETD0901/a.xlsx"})
+    assert r.status_code == 200, r.text
+    assert seen["downstream_file_path"] == "/w/ETD0901/a.xlsx"
+    print("  ✓ test_precheck_manual_passes_downstream_path")
 
 
 def test_precheck_manual_route_order_guard(monkeypatch):
     """路由顺序守卫：/precheck-manual 不能被 /{thread_id} 捕获（捕获则 404）。"""
     monkeypatch.setattr(service, "precheck_manual_completeness",
-                        lambda folder_name: {"factories": []}, raising=False)
+                        lambda folder_name, downstream_file_path=None:
+                        {"factories": []}, raising=False)
     r = client.get("/api/v1/batches/precheck-manual",
                    params={"folder_name": "f"})
     assert r.status_code == 200 and "factories" in r.json()
@@ -89,7 +111,7 @@ def test_precheck_manual_route_order_guard(monkeypatch):
 
 def test_precheck_manual_422(monkeypatch):
     """文件夹不存在/装箱单解析失败 → 422。"""
-    def fake(folder_name):
+    def fake(folder_name, downstream_file_path=None):
         raise ValueError(f"子文件夹不存在: {folder_name}")
 
     monkeypatch.setattr(service, "precheck_manual_completeness", fake,
@@ -316,6 +338,7 @@ def main():
     """脚本模式直跑（无 pytest 注入 fixture 时用 MonkeyPatch.context）。"""
     with pytest.MonkeyPatch.context() as mp:
         test_precheck_manual_200_passthrough(mp)
+        test_precheck_manual_passes_downstream_path(mp)
         test_precheck_manual_route_order_guard(mp)
         test_precheck_manual_422(mp)
         test_create_batch_passes_manual_skip(mp)

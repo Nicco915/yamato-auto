@@ -72,7 +72,7 @@
     </div>
     <div class="field" id="start-downstream-field" style="display:none">
       <label>下游装箱单（发现多个，请选择一个）</label>
-      <select id="start-downstream"></select>
+      <select id="start-downstream" onchange="loadManualPrecheck()"></select>
     </div>
     <div class="field" id="start-downstream-single" style="display:none">
       <label>下游装箱单</label>
@@ -1012,18 +1012,29 @@ function openStartModal(idx) {
 /* ---------- 手动录入勾选（第七阶段 §1.1：预检三列完整性 → 预勾选建议） ---------- */
 
 /* 打开启动弹窗后异步拉预检；失败不阻断启动（降级为无建议，只提示原因） */
+var _manualPrecheckSeq = 0;   // 竞态守卫：多装箱单切换/重开弹窗时只认最后一次
+
 async function loadManualPrecheck() {
   var c = _startCandidate;
   if (!c) return;
+  var seq = ++_manualPrecheckSeq;
   $("start-manual-field").style.display = "none";
   $("start-manual-note").style.display = "";
   $("start-manual-note-text").textContent = "正在检测各工厂三列完整性…";
   $("start-manual-all").checked = false;
   try {
-    var d = await api("/api/v1/batches/precheck-manual?folder_name=" +
-                      encodeURIComponent(c.folder_name));
-    // 弹窗已关闭/换了候选：丢弃过期结果
-    if (_startCandidate !== c) return;
+    var downs = c.downstream_candidates || [];
+    var url = "/api/v1/batches/precheck-manual?folder_name=" +
+              encodeURIComponent(c.folder_name);
+    /* 多装箱单：预检必须针对用户选中的那一份，否则后端报「发现多个」，
+       工厂勾选清单会整块消失（第七阶段 §1.1 按厂勾选不可用） */
+    if (downs.length > 1 && $("start-downstream").value) {
+      url += "&downstream_file_path=" +
+             encodeURIComponent($("start-downstream").value);
+    }
+    var d = await api(url);
+    // 弹窗已关闭/换了候选/已有更新请求：丢弃过期结果
+    if (_startCandidate !== c || seq !== _manualPrecheckSeq) return;
     var factories = (d && d.factories) || [];
     if (!factories.length) {
       $("start-manual-note-text").textContent = "未在装箱单中解析到工厂，可直接启动。";
@@ -1045,7 +1056,7 @@ async function loadManualPrecheck() {
     $("start-manual-field").style.display = "";
     syncManualAll();
   } catch (e) {
-    if (_startCandidate !== c) return;
+    if (_startCandidate !== c || seq !== _manualPrecheckSeq) return;
     $("start-manual-note-text").textContent =
       "三列完整性预检失败：" + e.message + "（不影响启动，可在批次详情页后续处理）";
   }

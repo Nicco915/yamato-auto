@@ -4289,7 +4289,10 @@ def _scan_three_col_completeness(downstream_path: Path) -> list[dict[str, Any]]:
     } for name, s in sorted(stats.items())]
 
 
-def precheck_manual_completeness(folder_name: str) -> dict[str, Any]:
+def precheck_manual_completeness(
+    folder_name: str,
+    downstream_file_path: str | None = None,
+) -> dict[str, Any]:
     """启动前三列完整性预检（第七阶段 §2.2；纯查询函数，不起服务、不写盘，
     run_cli/面板启动页均可直接调用）。
 
@@ -4297,21 +4300,37 @@ def precheck_manual_completeness(folder_name: str) -> dict[str, Any]:
     complete=True 表示该厂所有 SKU 行三列均非空（净重/毛重为数字），
     供启动界面「已填完整」预勾选建议（最终决定权在人）。
 
+    downstream_file_path：候选文件夹内有多个装箱单时由界面显式指定
+    （不指定仍按自动匹配：0 个/多个都报错）。路径必须位于该候选文件夹内。
+
     Raises:
-        ValueError: 子文件夹不存在 / 未找到或发现多个装箱单 / 缺关键列
+        ValueError: 子文件夹不存在 / 未找到或发现多个装箱单 /
+            指定文件不在候选文件夹内 / 缺关键列
     """
     settings = get_settings()
     watch_dir = Path(settings.watch_dir).expanduser()
     subfolder = watch_dir / folder_name
     if not subfolder.is_dir():
         raise ValueError(f"子文件夹不存在: {subfolder}")
-    candidates = discovery.discover_downstream_files(subfolder)
-    if not candidates:
-        raise ValueError(
-            f"子文件夹 {folder_name} 中未找到 ContentsOfTheContainer 文件")
-    if len(candidates) > 1:
-        raise ValueError(
-            f"发现多个下游装箱单，无法预检：{[p.name for p in candidates]}")
+    if downstream_file_path:
+        chosen = Path(downstream_file_path).expanduser()
+        try:
+            chosen.resolve().relative_to(subfolder.resolve())
+        except ValueError as e:
+            raise ValueError(
+                f"下游装箱单不在候选文件夹内: {downstream_file_path}") from e
+        if not chosen.is_file():
+            raise ValueError(
+                f"下游装箱单不存在或不是文件: {downstream_file_path}")
+        candidates = [chosen]
+    else:
+        candidates = discovery.discover_downstream_files(subfolder)
+        if not candidates:
+            raise ValueError(
+                f"子文件夹 {folder_name} 中未找到 ContentsOfTheContainer 文件")
+        if len(candidates) > 1:
+            raise ValueError(
+                f"发现多个下游装箱单，无法预检：{[p.name for p in candidates]}")
     return {"factories": _scan_three_col_completeness(candidates[0])}
 
 

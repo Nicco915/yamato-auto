@@ -169,6 +169,34 @@ def test_precheck_errors_are_value_error(watch):
         service.precheck_manual_completeness("坏装箱单")
 
 
+def test_precheck_accepts_explicit_downstream_path(watch):
+    """多装箱单：显式指定文件可预检（面板按厂勾选依赖），路径越界拒绝。"""
+    multi = watch / "多装箱单指定"
+    chosen = _write_book(multi, "ContentsOfTheContainer_001.xlsx", [
+        {"MAKER_MEI_KJ": "指定厂", "SHOHIN_CD": "4900000009521",
+         "中文品名": "钳子", "净重": 1.0, "毛重": 2.0},
+    ])
+    _write_book(multi, "ContentsOfTheContainer_002.xlsx", [])
+
+    # 不指定：仍按既有语义报「发现多个」
+    with pytest.raises(ValueError, match="发现多个"):
+        service.precheck_manual_completeness("多装箱单指定")
+
+    result = service.precheck_manual_completeness(
+        "多装箱单指定", str(chosen))
+    assert result["factories"] == [{
+        "name": "指定厂", "complete": True,
+        "filled_rows": 1, "total_rows": 1}]
+
+    outside = watch / "别处.xlsx"
+    outside.write_bytes(chosen.read_bytes())
+    with pytest.raises(ValueError, match="不在候选文件夹内"):
+        service.precheck_manual_completeness("多装箱单指定", str(outside))
+    with pytest.raises(ValueError, match="不存在或不是文件"):
+        service.precheck_manual_completeness(
+            "多装箱单指定", str(multi / "no_such.xlsx"))
+
+
 # ---------------------------------------------------------------------------
 # 2. add_factories_to_batch reopen_factories
 # ---------------------------------------------------------------------------
