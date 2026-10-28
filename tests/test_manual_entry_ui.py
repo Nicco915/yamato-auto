@@ -359,3 +359,102 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def _run_node(script, tmp_path):
+    """运行真实静态脚本；子进程显式继承临时 dotenv 隔离。"""
+    import shutil
+    import subprocess
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("需 Node.js 执行前端行为测试")
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("# isolated frontend test\n", encoding="utf-8")
+    result = subprocess.run(
+        [node, "-"], input=script, text=True, capture_output=True,
+        env={**os.environ, "YAMATO_DOTENV_PATH": str(dotenv)},
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("review_payload", [
+    {"type": "overwrite_confirm", "factory": "厂A", "conflicts": []},
+    {"type": "overwrite_confirm", "items": []},
+    {"factory_name": "厂A"},
+])
+def test_review_write_confirmation_guide_blocks_node5_actions(tmp_path, review_payload):
+    """首次打开及审核推进后的冲突挂起均引导详情页，禁止审核提交。"""
+    import json
+
+    html = (APP_ROOT / "app" / "review" / "static" / "review.html").read_text(encoding="utf-8")
+    script = html.split("<script>", 1)[1].split("</script>", 1)[0]
+    script = script.replace("loadPayload();\nsetInterval(pollState, 10000);", "")
+    harness = r'''
+const assert = require("node:assert/strict");
+const elements = new Map();
+const document = {
+  getElementById(id) {
+    if (!elements.has(id)) elements.set(id, {
+      style: {}, disabled: false, textContent: "", innerHTML: "", addEventListener() {}
+    });
+    return elements.get(id);
+  }, addEventListener() {}
+};
+const window = {addEventListener() {}};
+const location = {search: "?thread_id=batch%20%26%20test"};
+const setTimeout = () => {};
+'''
+    checks = '''
+(async () => {
+  const incoming = REPLACE_PAYLOAD;
+  global.fetch = async () => ({ok: true, json: async () => incoming});
+  initItems = () => { throw Error("冲突挂起不能初始化 SKU 审核卡片"); };
+  await loadPayload();
+  assert.equal($("btn-submit").disabled, true);
+  assert.equal($("btn-submit").style.display, "none");
+  assert.equal($("btn-skip").disabled, true);
+  assert.equal($("btn-skip").style.display, "none");
+  assert.equal($("main").style.display, "none");
+  assert.equal($("done-title").textContent, "写入冲突待确认");
+  assert.match($("done-path").innerHTML, /href="\\/batch\\/batch%20%26%20test"/);
+  global.fetch = () => { throw Error("不得提交 Node5 resume"); };
+  submitReview();
+  await doSubmit();
+  await skipFactory();
+  payload = {items: []};
+  assert.equal(showWriteConfirmationGuide(), false);
+  await afterResumeSuccess({status: "pending_human_review", review_data: incoming}, "已写入");
+  assert.equal($("badge").textContent, "写入冲突待确认");
+})().catch(e => { console.error(e); process.exitCode = 1; });
+'''.replace("REPLACE_PAYLOAD", json.dumps(review_payload, ensure_ascii=False))
+    _run_node(harness + script + checks, tmp_path)
+
+
+def test_batch_manual_role_progress_and_gap_rendering(tmp_path):
+    """执行详情页真实渲染函数：手动厂计完成且不进入缺口。"""
+    html = (STATIC / "batch.html").read_text(encoding="utf-8")
+    start = html.index("function renderHead(d)")
+    render = html[start:html.index("\n}\n", start) + 3]
+    start = html.index("var ROLE_MAP =")
+    roles = html[start:html.index("\n};", start) + 3]
+    _run_node(r'''
+const assert = require("node:assert/strict");
+var STATUS_MAP = {}, threadId = "manual", splitExists = false, _manualProtected;
+function _esc(x) { return String(x); }
+function kvRow(k, v) { return k + v; }
+function fmtT(x) { return x || ""; }
+function badge(x) { return x; }
+''' + roles + render + r'''
+assert.deepEqual(ROLE_MAP.manual_entry, ["手动录入", "b-blue"]);
+let html = renderHead({status: "completed", factories: [
+  {role: "manual_entry"}, {role: "done"}
+]});
+assert.match(html, /2\/2 · 100%/);
+html = renderHead({status: "awaiting_factories", factories: [
+  {role: "manual_entry"}, {role: "failed"}
+]});
+assert.match(html, /1\/2 · 50%/);
+assert.match(html, /缺 1 家/);
+''', tmp_path)

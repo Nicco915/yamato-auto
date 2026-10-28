@@ -205,3 +205,28 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def test_all_manual_main_completes_without_review(monkeypatch, tmp_path, capsys):
+    """全手动已完成：不调用识别审核、不要求主数据新增或 Approved。"""
+    output = tmp_path / "filled.xlsx"
+    output.touch()
+    seen = {}
+
+    def run(thread_id, **kwargs):
+        seen.update(kwargs)
+        return {"status": "completed", "final_output_path": str(output)}
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("全手动不应进入审核/主数据校验")
+
+    monkeypatch.setattr(sys, "argv", ["run_cli.py", "--skip-all-manual"])
+    monkeypatch.setattr(rc.service, "run_until_interrupt", run)
+    monkeypatch.setattr(rc.service, "get_order_state", lambda tid: {"values": {
+        "pending_factories": [], "validation_status": "Pending"}})
+    monkeypatch.setattr(rc.service, "resume_order", unexpected)
+    monkeypatch.setattr(rc, "simulate_human", unexpected)
+    monkeypatch.setattr(rc, "get_session", unexpected)
+    rc.main()
+    assert seen["manual_skip_factories"] == [rc.TARGET_FACTORY]
+    assert "全部手动录入，跳过识别审核环节" in capsys.readouterr().out

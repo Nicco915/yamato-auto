@@ -204,6 +204,7 @@ var ROLE_MAP = {
   current: ["当前", "b-blue"],
   pending: ["待处理", "b-gray"],
   done:    ["已完成", "b-green"],
+  manual_entry: ["手动录入", "b-blue"],
   skipped: ["已跳过", "b-gray"],
   auto_skipped: ["缺资料自动跳过", "b-gray"],
   manually_removed: ["人工剔除", "b-gray"],
@@ -942,7 +943,7 @@ function renderHead(d) {
   var ftotal = flist.length;
   var progBar = "";
   if (ftotal > 0) {
-    var fdone = flist.filter(function (f) { return f && f.role === "done"; }).length;
+    var fdone = flist.filter(function (f) { return f && (f.role === "done" || f.role === "manual_entry"); }).length;
     var fpct = Math.round(fdone / ftotal * 100);
     progBar = '<div style="margin-top:8px;font-size:12px" class="c-gray">工厂进度 ' +
       fdone + '/' + ftotal + ' · ' + fpct + '%</div>' +
@@ -950,7 +951,7 @@ function renderHead(d) {
   }
   if (d.status === "awaiting_factories") {
     var gapN = flist.filter(function (f) {
-      return f && (f.role === "auto_skipped" || f.role === "skipped" || f.role === "failed");
+      return f && f.role !== "manual_entry" && (f.role === "auto_skipped" || f.role === "skipped" || f.role === "failed");
     }).length;
     progBar += '<div style="margin-top:6px;font-size:12px" class="c-orange">待补充 · 缺 ' +
       gapN + ' 家 · 📡 监控中（缺资料文件夹到齐后自动补充续跑）</div>';
