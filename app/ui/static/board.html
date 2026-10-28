@@ -1090,20 +1090,19 @@ async function confirmStart() {
   btn.disabled = true;
   btn.textContent = "启动中…";
   try {
+    /* 统一走 /api/v1/watch/start：后台线程跑提取、立即返回（面板不阻塞）。
+       手动跳过清单经 WatchStartRequest.manual_skip_factories 透传
+       → board.start_from_board → start_batch_from_scan → initial state。 */
+    var body = {
+      folder_name: _startCandidate.folder_name,
+      thread_id: tid,
+      manual_skip_factories: skips,
+    };
+    if (downs.length > 1) body.downstream_file_path = $("start-downstream").value;
+    var r = await api("/api/v1/watch/start", { method: "POST", body: body });
     if (skips.length) {
-      /* 有手动跳过厂：走 ui 路由的 scan-start（透传 manual_skip_factories）。
-         既有 /api/v1/watch/start（board.py 后台线程）暂不接受跳过清单
-         （任务 A 领地，差异已上报），本端点同步阻塞到首个挂起点，耗时较长 */
-      var body = { folder_name: _startCandidate.folder_name, thread_id: tid,
-                   manual_skip_factories: skips };
-      if (downs.length > 1) body.downstream_file_path = $("start-downstream").value;
-      btn.textContent = "启动中（含手动录入，可能较久）…";
-      await api("/api/v1/batches/scan-start", { method: "POST", body: body });
       toast("批次已启动，含 " + skips.length + " 家手动录入工厂：" + skips.join("、"), 5000);
     } else {
-      var body2 = { folder_name: _startCandidate.folder_name, thread_id: tid };
-      if (downs.length > 1) body2.downstream_file_path = $("start-downstream").value;
-      var r = await api("/api/v1/watch/start", { method: "POST", body: body2 });
       toast(r.message || "批次已启动");
     }
     closeStartModal();

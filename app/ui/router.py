@@ -12,12 +12,15 @@ API（路由极薄，逻辑全在 app.api.service；全部 asyncio.to_thread 防
 - GET  /api/v1/batches              批次列表
 - POST /api/v1/batches              发起批次（409 重名 / 422 路径无效）
 - POST /api/v1/batches/precheck     重复处理预检（422 装箱单解析失败）
+- GET  /api/v1/batches/precheck-manual  手动录入三列完整性预检（422 解析失败）
 - GET  /api/v1/batches/{thread_id}  批次详情（404 不存在）
 - DELETE /api/v1/batches/{thread_id} 删除过往批次（404 不存在 / 409 进行中）
 - PATCH /api/v1/batches/{thread_id}/paths  更新批次路径配置（404 不存在）
 - POST /api/v1/batches/{thread_id}/rerun   完全重跑批次（404 不存在）
 - POST /api/v1/batches/{thread_id}/add-factories  补充工厂（400 失败 /
   409 运行中或检测到人工修改待确认）
+- POST /api/v1/batches/{thread_id}/resume-overwrite  写入冲突决策 resume
+  （400 未挂起；{"decision": "overwrite"|"keep"}）
 - POST /api/v1/batches/{thread_id}/overwrite-protected  覆盖写入人工保留的
   protected 单元格（400 无 protected 行）
 - POST /api/v1/batches/{thread_id}/force-complete 强制结案（400 非待补充）
@@ -191,9 +194,7 @@ async def create_batch(request: CreateBatchRequest):
 
     skip_processed 且全部工厂已处理时返回 status=skipped_all（不建批次）。
     """
-    # 契约依赖（任务 A）：create_batch 需接受 manual_skip_factories 透传
-    # （§2.2 start_batch_from_scan → create_batch 链路）。签名未就位前
-    # 仅在非空时传参，避免影响既有发起批次流程。
+    # 第七阶段 §2.2：非空才透传手动录入清单（空清单保持既有调用形态）
     extra: dict = {}
     if request.manual_skip_factories:
         extra["manual_skip_factories"] = request.manual_skip_factories
@@ -245,49 +246,6 @@ async def precheck_manual(folder_name: str):
     try:
         return await asyncio.to_thread(
             service.precheck_manual_completeness, folder_name)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e)) from e
-
-
-class ScanStartRequest(BaseModel):
-    """看板启动批次请求（含手动跳过清单，第七阶段 §2.3）。
-
-    与 main.py 的 /api/v1/batches/start 区别：携带 manual_skip_factories，
-    供面板启动界面的「跳过识别（手动录入）」勾选透传。
-    """
-
-    folder_name: str
-    thread_id: Optional[str] = None
-    downstream_file_path: Optional[str] = None
-    upstream_root: Optional[str] = None
-    manual_skip_factories: list[str] = []
-
-
-@router.post("/api/v1/batches/scan-start")
-async def scan_start_batch(request: ScanStartRequest):
-    """从扫描候选启动批次（可带手动跳过清单），执行到首个挂起点返回。
-
-    契约差异说明：看板一键启动既有链路 /api/v1/watch/start →
-    board.start_from_board 不接受 manual_skip_factories（board.py 属任务 A
-    领地），故 B 侧在本路由新增本端点直调 service.start_batch_from_scan
-    （§2.2 契约签名）。代价是同步阻塞到首个挂起点（与 main.py
-    /api/v1/batches/start 同语义）；待 A 侧打通 watch/start 链路后前端可
-    切回后台线程版。
-    """
-    extra: dict = {}
-    if request.manual_skip_factories:
-        extra["manual_skip_factories"] = request.manual_skip_factories
-    try:
-        return await asyncio.to_thread(
-            service.start_batch_from_scan,
-            request.folder_name,
-            request.thread_id,
-            request.downstream_file_path,
-            request.upstream_root,
-            **extra,
-        )
-    except FileExistsError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
@@ -581,8 +539,7 @@ async def add_factories_endpoint(
       "count"}：检测到人工非空修改待确认（确认后带 confirm_overwrite=true
       重发覆写）。
     """
-    # 契约依赖（任务 A）：add_factories_to_batch 需接受 reopen_factories
-    # （§2.2）。签名未就位前仅在非空时传参，不影响既有补充工厂流程。
+    # 第七阶段 §2.2：非空才透传重开识别清单（空清单保持既有补充工厂形态）
     extra: dict = {}
     if request and request.reopen_factories:
         extra["reopen_factories"] = request.reopen_factories

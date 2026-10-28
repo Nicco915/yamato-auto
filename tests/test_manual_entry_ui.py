@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 """手动录入模式 UI 路由测试（第七阶段 任务 B，§2.3/§2.4）。
 
-覆盖 app/ui/router.py 新增接线：
+覆盖接线：
 - GET  /api/v1/batches/precheck-manual        预检透传（200 / 422；路由顺序守卫）
-- POST /api/v1/batches/scan-start             带 manual_skip_factories 启动（200 / 409 / 422）
+- POST /api/v1/watch/start                    面板异步启动 + manual_skip_factories 透传
+- POST /api/v1/batches/start                  StartBatchRequest.manual_skip_factories 透传
 - POST /api/v1/batches                        CreateBatchRequest.manual_skip_factories 透传
 - POST /api/v1/batches/{tid}/add-factories    AddFactoriesRequest.reopen_factories 透传
 - POST /api/v1/batches/{tid}/resume-overwrite 写入冲突决策 resume（§2.4）
 - 静态资产钩子（board.html / batch.html 关键接线存在性）
 
-service 层函数（precheck_manual_completeness / start_batch_from_scan 的
-manual_skip_factories 形参 / add_factories_to_batch 的 reopen_factories 形参）
-由任务 A 并行实现，本测试全部 monkeypatch（raising=False 兼容签名未就位）。
+service/board 层函数由任务 A 并行实现，本测试全部 monkeypatch
+（raising=False 兼容签名未就位）。
 
 运行方式：
     cd app && PYTHONPATH=. python3 -m pytest tests/test_manual_entry_ui.py -q
@@ -138,19 +138,21 @@ def test_create_batch_empty_skip_not_passed(monkeypatch):
     print("  ✓ test_create_batch_empty_skip_not_passed")
 
 
-# ---------- POST /api/v1/batches/scan-start ----------
+# ---------- POST /api/v1/watch/start（面板异步启动 + manual_skip_factories） ----------
 
-def test_scan_start_passes_manual_skip(monkeypatch):
-    """scan-start 透传 folder_name 位置参数 + manual_skip_factories 关键字。"""
+def test_watch_start_passes_manual_skip(monkeypatch):
+    """面板一键启动：手动跳过清单经 WatchStartRequest 透传 board.start_from_board。"""
+    from app.orchestrator import board
+
     captured = {}
 
     def fake(*args, **kwargs):
         captured["args"] = args
         captured.update(kwargs)
-        return {"status": "pending_human_review"}
+        return {"ok": True, "thread_id": "tid-1"}
 
-    monkeypatch.setattr(service, "start_batch_from_scan", fake)
-    r = client.post("/api/v1/batches/scan-start", json={
+    monkeypatch.setattr(board, "start_from_board", fake)
+    r = client.post("/api/v1/watch/start", json={
         "folder_name": "ETD0901",
         "thread_id": "tid-1",
         "manual_skip_factories": ["厂A"],
@@ -159,25 +161,48 @@ def test_scan_start_passes_manual_skip(monkeypatch):
     assert captured["args"][0] == "ETD0901"
     assert captured["args"][1] == "tid-1"
     assert captured.get("manual_skip_factories") == ["厂A"]
-    print("  ✓ test_scan_start_passes_manual_skip")
+    print("  ✓ test_watch_start_passes_manual_skip")
 
 
-def test_scan_start_error_mapping(monkeypatch):
-    """重名 409 / 路径无效 422（与 main.py /batches/start 同语义）。"""
-    def fake_exists(*a, **k):
-        raise FileExistsError("批次已存在，请换一个 thread_id")
+def test_watch_start_empty_skip_not_passed(monkeypatch):
+    """无手动录入厂时保持既有调用形态（不透传空清单）。"""
+    from app.orchestrator import board
 
-    monkeypatch.setattr(service, "start_batch_from_scan", fake_exists)
-    r = client.post("/api/v1/batches/scan-start", json={"folder_name": "f"})
-    assert r.status_code == 409
+    captured = {}
 
-    def fake_invalid(*a, **k):
-        raise ValueError("子文件夹不存在")
+    def fake(*args, **kwargs):
+        captured.update(kwargs)
+        return {"ok": True}
 
-    monkeypatch.setattr(service, "start_batch_from_scan", fake_invalid)
-    r = client.post("/api/v1/batches/scan-start", json={"folder_name": "f"})
-    assert r.status_code == 422
-    print("  ✓ test_scan_start_error_mapping")
+    monkeypatch.setattr(board, "start_from_board", fake)
+    r = client.post("/api/v1/watch/start", json={"folder_name": "f"})
+    assert r.status_code == 200, r.text
+    assert "manual_skip_factories" not in captured
+    print("  ✓ test_watch_start_empty_skip_not_passed")
+
+
+# ---------- POST /api/v1/batches/start（StartBatchRequest.manual_skip_factories） ----------
+
+def test_batches_start_passes_manual_skip(monkeypatch):
+    """API 启动端点同样透传手动跳过清单（与面板/控制台口径一致）。"""
+    captured = {}
+
+    def fake(*args, **kwargs):
+        captured["args"] = args
+        captured.update(kwargs)
+        return {"status": "pending_human_review"}
+
+    monkeypatch.setattr(service, "start_batch_from_scan", fake)
+    r = client.post("/api/v1/batches/start", json={
+        "folder_name": "ETD0901",
+        "thread_id": "tid-1",
+        "manual_skip_factories": ["厂A"],
+    })
+    assert r.status_code == 200, r.text
+    assert captured["args"][0] == "ETD0901"
+    assert captured["args"][1] == "tid-1"
+    assert captured.get("manual_skip_factories") == ["厂A"]
+    print("  ✓ test_batches_start_passes_manual_skip")
 
 
 # ---------- POST /api/v1/batches/{tid}/add-factories（reopen_factories） ----------
@@ -262,10 +287,12 @@ def test_resume_overwrite_not_suspended_400(monkeypatch):
 # ---------- 静态资产钩子（前端接线存在性回归守卫） ----------
 
 def test_board_html_manual_hooks():
-    """board.html：预检调用 + 全部跳过总开关 + scan-start + 重开勾选窗。"""
+    """board.html：预检调用 + 全部跳过总开关 + watch/start 透传 + 重开勾选窗。"""
     h = (STATIC / "board.html").read_text(encoding="utf-8")
     assert "/api/v1/batches/precheck-manual" in h   # 预检端点
-    assert "/api/v1/batches/scan-start" in h        # 带跳过清单的启动
+    assert "/api/v1/watch/start" in h               # 统一异步启动端点
+    assert "manual_skip_factories" in h             # 跳过清单随启动透传
+    assert "/api/v1/batches/scan-start" not in h    # 同步 workaround 已移除
     assert "start-manual-all" in h                  # 全部跳过总开关
     assert "已填完整" in h                           # 预勾选建议标注
     assert "af-reopen-check" in h                   # 重开识别勾选
@@ -293,8 +320,9 @@ def main():
         test_precheck_manual_422(mp)
         test_create_batch_passes_manual_skip(mp)
         test_create_batch_empty_skip_not_passed(mp)
-        test_scan_start_passes_manual_skip(mp)
-        test_scan_start_error_mapping(mp)
+        test_watch_start_passes_manual_skip(mp)
+        test_watch_start_empty_skip_not_passed(mp)
+        test_batches_start_passes_manual_skip(mp)
         test_add_factories_reopen_passthrough(mp)
         test_add_factories_empty_reopen_not_passed(mp)
         test_resume_overwrite_decision_passthrough(mp)
