@@ -74,12 +74,15 @@ def _make_progress_emitter(
 
     seed = seed or {}
     allow = set(seed["factory_filter"]) if seed.get("factory_filter") else None
-    tracker: dict[str, Any] = {"total_set": set(), "pending": set(), "current": None}
+    # 第七阶段：手动录入厂不计入进度口径（不识别、永远不会「处理完成」）
+    tracker: dict[str, Any] = {"total_set": set(), "pending": set(),
+                               "current": None,
+                               "manual": set(seed.get("manual_skip_factories") or [])}
     if seed.get("downstream_requirements"):
         total_set = set((seed.get("downstream_requirements") or {}).keys())
         if allow:
             total_set &= allow
-        tracker["total_set"] = total_set
+        tracker["total_set"] = total_set - tracker["manual"]
     tracker["pending"] = set(seed.get("pending_factories") or [])
     tracker["current"] = (seed.get("current_factory_data") or {}).get("factory_name")
 
@@ -91,11 +94,15 @@ def _make_progress_emitter(
                 if not isinstance(value, dict):
                     continue
                 # 先更新跟踪器（updates 事件值即节点返回的 state 增量）
+                if "manual_skip_factories" in value:
+                    tracker["manual"] = set(
+                        value.get("manual_skip_factories") or [])
+                    tracker["total_set"] -= tracker["manual"]
                 if "downstream_requirements" in value:
                     total_set = set((value.get("downstream_requirements") or {}).keys())
                     if allow:
                         total_set &= allow
-                    tracker["total_set"] = total_set
+                    tracker["total_set"] = total_set - tracker["manual"]
                 if "pending_factories" in value:
                     tracker["pending"] = set(value.get("pending_factories") or [])
                 current = (value.get("current_factory_data") or {}).get("factory_name")
@@ -106,9 +113,12 @@ def _make_progress_emitter(
                 popped = len(tracker["total_set"] - tracker["pending"])
                 factory = tracker["current"]
                 if node == NODE1:
+                    msg = f"装箱单解析完成，共 {total} 个工厂"
+                    if tracker["manual"]:
+                        msg += f"（另 {len(tracker['manual'])} 家手动录入）"
                     progress = {"node": node, "factory": None, "done": 0,
                                 "total": total,
-                                "message": f"装箱单解析完成，共 {total} 个工厂"}
+                                "message": msg}
                 elif node == NODE2 and factory:
                     cur_data = value.get("current_factory_data") or {}
                     if cur_data.get("is_final_attempt"):
@@ -687,6 +697,8 @@ def _gap_factories(final_values: dict) -> list[str]:
 
     决策 2（阶段四）：人工剔除厂减除出缺口——完成文案不再把它算进
     「仍有 N 家待补充」。
+    第七阶段 §1.5：手动录入厂（manual_skip_factories）同样减除——
+    手动录入是操作员显式选择，不算「待补充」缺口。
     """
     requirements = final_values.get("downstream_requirements") or {}
     total = set(requirements)
@@ -694,6 +706,7 @@ def _gap_factories(final_values: dict) -> list[str]:
     if factory_filter:
         total &= set(factory_filter)
     gaps = total - set((final_values.get("factory_outputs") or {}).keys())
+    gaps -= set(final_values.get("manual_skip_factories") or [])
     batch_id = final_values.get("batch_id")
     if batch_id:
         gaps -= _manually_removed_factories(batch_id)
@@ -969,6 +982,9 @@ def _absorb_source_changes(
                 "batch_id": batch_id,
                 "downstream_file_path": values.get("downstream_file_path"),
                 "downstream_row_map": {factory: new_row_map.get(factory) or {}},
+                # 第七阶段 §1.3：确认门「保留」人工行视同 MX 行——
+                # 原件吸收重写（通道 A）同样不得触碰
+                "manual_kept_rows": values.get("manual_kept_rows") or {},
                 "validation_status": "Approved",
                 "current_factory_data": {
                     "factory_name": factory,
@@ -1005,11 +1021,20 @@ def add_factories_to_batch(
     on_progress: Callable[[dict], None] | None = None,
     confirm_overwrite: bool = False,
     confirm_source_changes: bool = False,
+    reopen_factories: list[str] | None = None,
 ) -> dict[str, Any]:
     """补充工厂：重新解析装箱单，把「未写入」的工厂补进本批次继续处理。
 
     待补充工厂 = 装箱单工厂全集 − factory_outputs.keys()（已 approve 写入的）。
     装箱单新增的、被「跳过本工厂」的、被驳回的工厂都能补进来；已写入的绝不重复。
+
+    第七阶段 §1.5/§2.2：
+    - 手动录入厂（state.manual_skip_factories）默认不自动补回——不识别、
+      不打扰，与 factory_watch 隔离同口径；
+    - reopen_factories 显式勾选的手动厂「重开识别」：从 manual_skip_factories
+      移除并进入识别队列（与待补充工厂同链路），重开后写入仍走
+      writer 遇值确认门（§1.3）；响应新增 "reopened": list[str] 字段
+      （恒在，无重开为空列表）。
 
     决策 9 入口一（原件差异检测，先于通道 B）：利用本函数既有全文件重解析，
     对已完成工厂（factory_outputs）与 state 比对——有增行/删行/数量改且
@@ -1098,8 +1123,20 @@ def add_factories_to_batch(
     removed_before = _manually_removed_factories(batch_id)
     for f in sorted(set(new_requirements) & removed_before):
         logger.info("[补充工厂] 工厂「%s」已被人工剔除，不再补回", f)
+    # 第七阶段 §1.5/§2.2：手动录入厂默认不自动补回；reopen_factories
+    # 显式勾选「重开识别」的厂从跳过清单移除并照常补入（仍在装箱单中
+    # 且未写入才受理，不在装箱单的 reopen 请求静默忽略）
+    manual_skip_set = set(values.get("manual_skip_factories") or [])
+    reopened = [f for f in (reopen_factories or [])
+                if f in manual_skip_set and f in new_requirements
+                and f not in done]
+    reopened_set = set(reopened)
+    if reopened:
+        logger.info("[补充工厂] 批次 %s 手动录入厂重开识别：%s",
+                    batch_id, sorted(reopened_set))
     to_add = [f for f in new_requirements
-              if f not in done and f not in removed_before]
+              if f not in done and f not in removed_before
+              and (f not in manual_skip_set or f in reopened_set)]
 
     # pending 去重：已在主队列 / 暂缓队列的不重复加；挂起中的当前工厂
     # （仅 pending_review 时有意义——completed 的 current 是上一轮的残留，
@@ -1184,7 +1221,8 @@ def add_factories_to_batch(
         if manual_classified["c"]:
             no_add_msg += (f"；{len(manual_classified['c'])} 行人工新增的行"
                            f"缺管理番号（KANRI_NO），未纳入批次管理，请补全")
-        return {"added": 0, "factories": [], "message": no_add_msg}
+        return {"added": 0, "factories": [], "reopened": [],
+                "message": no_add_msg}
     # aborted 复活且图还有未跑节点（停在 Node2 入口时主/暂缓队列未消，
     # 或停在 Node7 入口）：即使无新工厂可补，也照走续跑把剩余队列跑下去
 
@@ -1240,6 +1278,11 @@ def add_factories_to_batch(
         {f: new_requirements[f] for f in refresh_names},
         {f: new_row_map[f] for f in refresh_names},
         pending_add=added)
+    if reopened:
+        # 第七阶段 §1.5：重开识别的厂从手动跳过清单移除（state 权威源；
+        # factory_watch/_gap_factories/详情透出同读此口径）
+        update["manual_skip_factories"] = sorted(
+            manual_skip_set - reopened_set)
     if manual_conflicts and confirm_overwrite:
         # 通道 B 确认覆写：Node6 writer 对名单内工厂按通道 A（rework）语义
         # 覆盖人工修改（旧值留痕 manual_value_overwritten），消费后自清
@@ -1352,6 +1395,7 @@ def add_factories_to_batch(
                     result = {
                         "added": len(added),
                         "factories": sorted(added),
+                        "reopened": sorted(reopened),
                         "status": "pending_human_review",
                         "thread_id": batch_id,
                         "review_data": event["__interrupt__"][0].value,
@@ -1376,6 +1420,7 @@ def add_factories_to_batch(
             # 落 aborted 而非 error，不向上抛；新增跑图路径必须同样处理
             _mark_batch_aborted(batch_id)
             return {"status": "aborted", "thread_id": batch_id,
+                    "reopened": sorted(reopened),
                     "message": "批次已终止，可稍后通过补充工厂恢复执行"}
         except Exception as e:  # noqa: BLE001
             _write_batch_state(batch_id, "error", error=str(e))
@@ -1390,6 +1435,7 @@ def add_factories_to_batch(
         result = {
             "added": len(added),
             "factories": sorted(added),
+            "reopened": sorted(reopened),
             "status": "completed",
             "thread_id": batch_id,
             "awaiting_factories": gaps,
@@ -1502,6 +1548,8 @@ def _write_batch_state(
                 "deferred": [
                     d.get("factory_name", "") for d in (state.get("deferred_factories") or [])
                 ],
+                # 第七阶段 §2.5：手动录入厂名单（启动勾选 − 已重开识别）
+                "manual": sorted(state.get("manual_skip_factories") or []),
             }
             # 输出路径
             output: dict[str, str] = {}
@@ -1798,11 +1846,15 @@ def run_until_interrupt(
     factory_filter: list[str] | None = None,
     factory_alias_overrides: dict[str, str] | None = None,
     on_progress: Callable[[dict], None] | None = None,
+    manual_skip_factories: list[str] | None = None,
 ) -> dict[str, Any]:
     """启动流程，执行 Node1-4 直到 Node5 的 interrupt 挂起（或全程无挂起跑完）。
 
     factory_alias_overrides：批次级「仅本次生效」工厂名对照（W5），
     非空才写进 initial_state（Node2 匹配的最高优先档，不落盘）。
+    manual_skip_factories：第七阶段手动录入清单（§2.1），非空才写进
+    initial_state——Node1 把清单内工厂从 pending_factories 剔除
+    （不进 LLM 提取、不弹 Node5 审核）。
     on_progress：节点级进度回调（W4a），收到至少含
     node/factory/done/total/message 的事件 dict；抛异常不影响跑图。
 
@@ -1823,6 +1875,8 @@ def run_until_interrupt(
             initial_state["factory_filter"] = factory_filter
         if factory_alias_overrides:
             initial_state["factory_alias_overrides"] = factory_alias_overrides
+        if manual_skip_factories:
+            initial_state["manual_skip_factories"] = list(manual_skip_factories)
         initial_state["batch_id"] = thread_id
         _ensure_batch_session_dir(thread_id)
         snap = graph.get_state(_config(thread_id))
@@ -2890,6 +2944,9 @@ def apply_reopen_payload(thread_id: str, factory_name: str,
         # 以真实需求集为基准（缺了会把 A 态误判成 B 态）
         "downstream_requirements": values.get("downstream_requirements") or {},
         "downstream_row_map": values.get("downstream_row_map") or {},
+        # 第七阶段 §1.3：确认门「保留」人工行视同 MX 行——reopen 重提
+        # （通道 A）与删除清空都不得触碰，fake_state 必须带上才能查到
+        "manual_kept_rows": values.get("manual_kept_rows") or {},
         "validation_status": "Approved",  # reopen 视为通过
         "current_factory_data": {
             **cur,
@@ -3669,6 +3726,8 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
     deferred_names = {
         d.get("factory_name") for d in (values.get("deferred_factories") or [])
     }
+    # 第七阶段 §2.5：手动录入厂集合——工厂项透出 source/status
+    manual_set = set(values.get("manual_skip_factories") or [])
     factories = []
     for name in sorted(total_set):
         last = latest_audit.get(name)
@@ -3697,6 +3756,11 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
             "factory": name,
             "role": role,
             "session": _load_factory_session(thread_id, name),
+            # 第七阶段 §2.5：source（auto/manual）与 status（手动录入厂
+            # 固定 manual_entry，其余镜像 role）——看板「手动录入」标识
+            # 与详情页徽章的数据源
+            "source": "manual" if name in manual_set else "auto",
+            "status": "manual_entry" if name in manual_set else role,
         }
         if role == "done" and name not in outputs:
             entry["can_reopen"] = False
@@ -4019,6 +4083,7 @@ def create_batch(
     factory_alias_overrides: dict[str, str] | None = None,
     skip_processed: bool = False,
     on_progress: Callable[[dict], None] | None = None,
+    manual_skip_factories: list[str] | None = None,
 ) -> dict[str, Any]:
     """发起新批次：thread_id 查重 + 路径存在性校验后复用 run_until_interrupt。
 
@@ -4031,6 +4096,8 @@ def create_batch(
       run_until_interrupt，None=全部工厂；
     - factory_alias_overrides 批次级「仅本次生效」工厂名对照（W5），
       非空才写入 state（Node2 最高优先匹配档，不落盘）；
+    - manual_skip_factories 第七阶段手动录入清单（§2.1），透传
+      run_until_interrupt 写入 initial state，Node1 剔除出识别队列；
     - skip_processed=True 时先跑 check_processed_factories 预检（W4b），
       取「未处理工厂」差集作 factory_filter（与显式 factory_filter 互斥，
       factory_filter 优先）；差集为空时不跑图，直接返回 skipped_all
@@ -4110,7 +4177,8 @@ def create_batch(
     result = run_until_interrupt(thread_id, str(d_path), str(u_path),
                                  factory_filter=effective_filter,
                                  factory_alias_overrides=factory_alias_overrides,
-                                 on_progress=on_progress)
+                                 on_progress=on_progress,
+                                 manual_skip_factories=manual_skip_factories)
     if skipped:
         result["skipped_processed"] = skipped
 
@@ -4152,12 +4220,108 @@ def scan_new_batches() -> list[dict[str, Any]]:
     return discovery.scan_new_batches()
 
 
+def _scan_three_col_completeness(downstream_path: Path) -> list[dict[str, Any]]:
+    """装箱单三列（中文品名/净重/毛重）逐厂完整性扫描（第七阶段 §1.1 预检）。
+
+    判定口径（§1.4 非空即信任）：
+    - 「已填」= 单元格非空；净重/毛重额外要求可解析为数字
+      （copy_snapshot.round2 口径，数值字符串也算）；
+    - 中文品名非空即可（字符串/数字皆可）；
+    - MX 人工行（PURCHASE_ORDER 以 MX 开头）不计入统计（三列本就人工填好）；
+    - 工厂/SKU 为空的排版填充行不计入（与 build_row_index 同口径）；
+    - 原件无三列表头（未插入过）→ 全部行未填，complete=False。
+    返回 [{"name", "complete", "filled_rows", "total_rows"}]，按工厂名排序。
+    """
+    settings = get_settings()
+    wb = load_workbook(downstream_path, read_only=True)
+    try:
+        ws = wb[wb.sheetnames[0]]
+        it = ws.iter_rows(values_only=True)
+        header = list(next(it, None) or [])
+        col_factory = (header.index(settings.col_factory)
+                       if settings.col_factory in header else None)
+        col_sku = (header.index(settings.col_sku)
+                   if settings.col_sku in header else None)
+        if col_factory is None or col_sku is None:
+            raise ValueError(
+                f"装箱单缺少关键列（{settings.col_factory}/"
+                f"{settings.col_sku}），无法预检")
+        col_cn = (header.index(settings.col_name_cn)
+                  if settings.col_name_cn in header else None)
+        col_net = (header.index(settings.col_net)
+                   if settings.col_net in header else None)
+        col_gross = (header.index(settings.col_gross)
+                     if settings.col_gross in header else None)
+        col_po = (header.index("PURCHASE_ORDER")
+                  if "PURCHASE_ORDER" in header else None)
+
+        stats: dict[str, dict[str, int]] = {}
+        for row in it:
+            factory = copy_snapshot.norm_key_text(
+                row[col_factory] if col_factory < len(row) else None)
+            sku = copy_snapshot.norm_key_text(
+                row[col_sku] if col_sku < len(row) else None)
+            if not factory or not sku:
+                continue
+            if col_po is not None and copy_snapshot._is_mx(
+                    row[col_po] if col_po < len(row) else None):
+                continue  # MX 人工行不计入缺失统计
+            entry = stats.setdefault(factory, {"filled": 0, "total": 0})
+            entry["total"] += 1
+            if col_cn is None or col_net is None or col_gross is None:
+                continue  # 三列不存在 → 全部未填
+            name_v = row[col_cn] if col_cn < len(row) else None
+            net_v = row[col_net] if col_net < len(row) else None
+            gross_v = row[col_gross] if col_gross < len(row) else None
+            name_filled = bool(copy_snapshot.norm_key_text(name_v))
+            if (name_filled
+                    and copy_snapshot.round2(net_v) is not None
+                    and copy_snapshot.round2(gross_v) is not None):
+                entry["filled"] += 1
+    finally:
+        wb.close()
+
+    return [{
+        "name": name,
+        "complete": s["total"] > 0 and s["filled"] == s["total"],
+        "filled_rows": s["filled"],
+        "total_rows": s["total"],
+    } for name, s in sorted(stats.items())]
+
+
+def precheck_manual_completeness(folder_name: str) -> dict[str, Any]:
+    """启动前三列完整性预检（第七阶段 §2.2；纯查询函数，不起服务、不写盘，
+    run_cli/面板启动页均可直接调用）。
+
+    返回 {"factories": [{"name", "complete", "filled_rows", "total_rows"}]}；
+    complete=True 表示该厂所有 SKU 行三列均非空（净重/毛重为数字），
+    供启动界面「已填完整」预勾选建议（最终决定权在人）。
+
+    Raises:
+        ValueError: 子文件夹不存在 / 未找到或发现多个装箱单 / 缺关键列
+    """
+    settings = get_settings()
+    watch_dir = Path(settings.watch_dir).expanduser()
+    subfolder = watch_dir / folder_name
+    if not subfolder.is_dir():
+        raise ValueError(f"子文件夹不存在: {subfolder}")
+    candidates = discovery.discover_downstream_files(subfolder)
+    if not candidates:
+        raise ValueError(
+            f"子文件夹 {folder_name} 中未找到 ContentsOfTheContainer 文件")
+    if len(candidates) > 1:
+        raise ValueError(
+            f"发现多个下游装箱单，无法预检：{[p.name for p in candidates]}")
+    return {"factories": _scan_three_col_completeness(candidates[0])}
+
+
 def start_batch_from_scan(
     folder_name: str,
     thread_id: str | None = None,
     downstream_file_path: str | None = None,
     upstream_root: str | None = None,
     on_progress: Callable[[dict], None] | None = None,
+    manual_skip_factories: list[str] | None = None,
 ) -> dict[str, Any]:
     """从扫描候选中启动一个批次。
 
@@ -4165,7 +4329,9 @@ def start_batch_from_scan(
     - 默认在监控目录 folder_name 下查找 downstream 文件；
     - 默认按装箱单实际所在目录推断 upstream_root（其下有「工厂」子目录则取它）；
     - on_progress：节点级进度回调，透传 create_batch（对话确认门执行时
-      前端才有「正在提取工厂X」级进度，否则全程只有「正在执行…」）。
+      前端才有「正在提取工厂X」级进度，否则全程只有「正在执行…」）；
+    - manual_skip_factories：第七阶段手动录入清单（§2.2），透传
+      create_batch → initial state["manual_skip_factories"]。
     """
     settings = get_settings()
     watch_dir = Path(settings.watch_dir).expanduser()
@@ -4202,7 +4368,8 @@ def start_batch_from_scan(
     if not tid:
         raise ValueError("thread_id 不能为空")
 
-    result = create_batch(tid, downstream, upstream, on_progress=on_progress)
+    result = create_batch(tid, downstream, upstream, on_progress=on_progress,
+                          manual_skip_factories=manual_skip_factories)
     batch_store.upsert_batch(
         tid,
         watch_dir=str(watch_dir),
@@ -4322,6 +4489,25 @@ def _prepare_audit(thread_id: str, resume_data: dict) -> dict[str, Any] | None:
     if payload is None:
         return None
 
+    # 第七阶段 §2.4：写入遇值确认门（writer interrupt）——payload 无 items，
+    # resume 值只有 {"decision": ...}；审计留痕以 payload 冲突清单为准，
+    # 单元格级明细由 resume_order 的 _manual_write_traces 追加
+    # （keep → manual_override_kept / overwrite → manual_value_overwritten）
+    if isinstance(payload, dict) and payload.get("type") == "overwrite_confirm":
+        decision = (resume_data or {}).get("decision")
+        decision = "overwrite" if decision == "overwrite" else "keep"
+        return {
+            "thread_id": thread_id,
+            "factory_name": payload.get("factory"),
+            # 确认门本身就是一次人工批准动作（无论覆盖还是保留）
+            "approved": True,
+            "skipped": False,
+            "edited_count": len(payload.get("conflicts") or []),
+            "changes": [],
+            "new_skus": [],
+            "overwrite_decision": decision,
+        }
+
     orig_items = {i.get("sku"): i for i in payload.get("items") or []}
     changes: list[dict[str, Any]] = []
     new_skus: list[dict[str, Any]] = []
@@ -4390,7 +4576,12 @@ def _audit_result_status(prepared: dict[str, Any] | None,
                          result: dict[str, Any]) -> str | None:
     """resume 审计的 result_status：「跳过本工厂」固化为 factory_skipped
     （approved=False + result_status=factory_skipped 是批次详情页 skipped 徽章、
-    以及后续「补充工厂」判定的权威留痕）；其余沿用图执行结果。"""
+    以及后续「补充工厂」判定的权威留痕）；第七阶段遇值确认门固化为
+    overwrite_confirmed/overwrite_kept；其余沿用图执行结果。"""
+    if prepared and prepared.get("overwrite_decision") is not None:
+        return ("overwrite_confirmed"
+                if prepared["overwrite_decision"] == "overwrite"
+                else "overwrite_kept")
     if prepared and prepared.get("skipped"):
         return "factory_skipped"
     return result.get("status")

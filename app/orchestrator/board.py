@@ -150,6 +150,8 @@ def board_state() -> dict[str, Any]:
                 rec["_pending_factories"] = len(extract.get("pending_factories") or [])
                 rec["_current_factory"] = extract.get("current_factory")
                 rec["_factories_failed"] = extract.get("factories_failed") or 0
+                # 第七阶段 §2.5：手动录入厂名单（看板「手动录入」标识数据源）
+                rec["_manual_factories"] = extract.get("manual_factories") or []
                 rec["_final_output_path"] = extract.get("final_output_path")
                 rec["_split_thread_id"] = split.get("split_thread_id")
                 rec["_declarations_ready"] = split.get("declarations_ready", False)
@@ -162,6 +164,7 @@ def board_state() -> dict[str, Any]:
                          "status": rec.get("status"),
                          "completed_at": rec.get("completed_at"),
                          "factories_failed": rec.get("_factories_failed", 0),
+                         "manual_factories": rec.get("_manual_factories", []),
                          "has_checkpoint": rec.get("_has_checkpoint", True),
                          "final_output_path": rec.get("_final_output_path"),
                          "split_thread_id": rec.get("_split_thread_id"),
@@ -185,6 +188,8 @@ def board_state() -> dict[str, Any]:
                 # 2026-10-12 待补充状态：缺口工厂数 / 建批时间 / 是否监控中
                 #（created_at/updated_at 在 batch_store._to_dict 已 isoformat）
                 "factories_failed": rec.get("_factories_failed", 0),
+                # 第七阶段 §2.5：手动录入厂名单（「手动录入」标识数据源）
+                "manual_factories": rec.get("_manual_factories", []),
                 "created_at": rec.get("created_at"),
                 "monitoring": rec.get("status") == "awaiting_factories",
             })
@@ -274,11 +279,15 @@ def start_from_board(
     folder_name: str,
     thread_id: str | None = None,
     downstream_file_path: str | None = None,
+    manual_skip_factories: list[str] | None = None,
 ) -> dict[str, Any]:
     """看板一键启动批次：预写 running 批次行 → 后台线程跑提取图。
 
     确认门由看板确认弹窗承担（一次一确认）；本函数立即返回 thread_id，
     前端随即跳转 /chat?thread_id= 由对话页轮询跟踪进度。
+
+    manual_skip_factories：第七阶段手动录入清单（§1.1 面板按厂勾选），
+    透传 start_batch_from_scan → initial state；None=全部自动识别。
 
     后台完成/失败后由 pipeline_state 自愈校正展示状态；异常记 error 日志
     并把批次行置为 error。
@@ -318,6 +327,7 @@ def start_from_board(
                 folder_name,
                 thread_id=tid,
                 downstream_file_path=downstream_file_path,
+                manual_skip_factories=manual_skip_factories,
             )
             logger.info("看板启动批次完成首段 | thread_id=%s | status=%s",
                         tid, result.get("status"))

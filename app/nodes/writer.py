@@ -13,6 +13,10 @@
    - MX 货物（PURCHASE_ORDER 列形如 "MX2-268510-001" 的行）是人工手动
      加进装箱单的，中文品名/净重/毛重三列已由人工填好并核对——写回与
      reopen 清空均跳过 MX 行，绝不覆盖/清除人工值（2026-09-29）；
+   - 第七阶段遇值确认门（§1.3/§2.4）：写入前预检目标格已有非空值
+     ≠ 系统值（非 MX 行）→ 整厂一次 interrupt 挂起确认；「覆盖」写
+     系统值并留痕，「保留」行记入 state.manual_kept_rows，视同 MX
+     人工行（后续写回/reopen 清空均跳过，永不覆盖）；
 2. 写数据库（Upsert）：
    - 新 SKU：INSERT 人工补录的多语言品名/HS 编码/单件重量；
    - 老 SKU：人工微调过重量时 UPDATE 刷新历史重量。
@@ -28,6 +32,7 @@ import shutil
 from copy import copy
 from pathlib import Path
 
+from langgraph.types import interrupt
 from openpyxl import load_workbook
 from openpyxl.styles import Border, Side
 from sqlalchemy import select
@@ -171,10 +176,180 @@ def _cell_non_empty(v) -> bool:
     return True
 
 
+# ---------------------------------------------------------------------------
+# 第七阶段 §1.3/§2.4：写入遇值确认门（overwrite gate）
+# ---------------------------------------------------------------------------
+
+# 门禁判定的「人工来源」快照 origin：
+# - baseline：建批基线快照记录的装箱单原值（含人工预先填写的三列），
+#   只在「本厂从未写入过」时采信，防把系统上一轮结转值误判为人工值；
+# - manual_added：决策 4 阶段五纳入管理的人工新增行，无论本厂是否写入过
+#   都必须参与门禁（否则会被无确认覆盖）。
+# origin="system" 是本系统写入值，走既有通道分流即可，不进门禁
+
+# 确认门 payload 的字段名映射（契约 §2.4：old/new 以中文列名为键）
+_GATE_FIELD_LABELS = {"name_cn": "中文品名", "net": "净重", "gross": "毛重"}
+
+
+def _collect_overwrite_conflicts(
+    state: AgentState,
+    out_path: Path,
+) -> tuple[list[dict], set[tuple[str, str]]]:
+    """写入遇值确认门预检（第七阶段 §1.3）：收集本厂「目标格已有非空值
+    且与系统值不同」的待写单元格，返回 (整厂冲突清单 payload, 门禁单元格集)。
+
+    门禁命中条件（逐单元格，三列独立判定）：
+    - 会实际写入（有系统值：品名非空 / 单重非 None，与 _write_excel 主循环
+      同一 pending_writes 口径）；占位行/副本缺行/MX 行/已保留行
+      （manual_kept_rows）/保护中单元格不进门禁；
+    - 且满足以下任一来源判定：
+      a) 写前 diff 冲突（快照值 × 副本值不一致，副本非空——人工改过）；或
+      b) 快照 origin == "manual_added"（决策 4 阶段五纳入管理的人工新增
+         行，无论本厂是否写入过都参与门禁）；或
+      c) 快照 origin == "baseline" 且本厂从未写入过（不在
+         factory_outputs——防把系统自己上一轮写的 baseline 结转值误判为
+         人工值）且副本当前值非空（人工预先填好，人工改动感知 diff 检不出
+         因为基线快照记录的就是该值）；
+    - 且副本当前值 ≠ 系统将写值（field_equal 容差对齐）。
+
+    快照缺失/扫描失败 → 返回空（保守放行，与 diff_against_copy 同哲学：
+    快照是辅助设施，绝不阻塞写入主流程）。返回的 gate_cells 直接传入
+    _write_excel 执行，保证「确认所见 = 实际执行」逐格一致。
+    """
+    # 延迟 import 避免 app.graph → writer → orchestrator 循环导入
+    from app.orchestrator import copy_snapshot
+
+    cur = state.get("current_factory_data") or {}
+    factory = cur.get("factory_name")
+    batch_id = state.get("batch_id")
+    if not factory or not batch_id:
+        return [], set()
+
+    snapshot = copy_snapshot.load_snapshot(batch_id)
+    if snapshot is None:
+        return [], set()
+    origins: dict[str, str] = {}
+    for r in snapshot.get("rows") or []:
+        k = r.get("key") or {}
+        origins[copy_snapshot.row_key_str((
+            str(k.get("factory") or ""), str(k.get("sku") or ""),
+            int(k.get("seq") or 0)))] = r.get("origin") or "system"
+
+    conflict_map: dict[tuple[str, str], dict] = {}
+    protected_cells: set[tuple[str, str]] = set()
+    diff = copy_snapshot.diff_against_copy(batch_id)
+    if diff is not None:
+        conflict_map = {(c["row_key"], c["field"]): c
+                        for c in diff.value_conflicts}
+        protected_cells = set(diff.protected_cells)
+
+    kept_rows = set((state.get("manual_kept_rows") or {}).get(factory) or [])
+    # 本厂已写入过（factory_outputs 有快照）→ 副本里 origin=baseline 的
+    # 非空值可能是系统自己上一轮写的，来源判定 b 一律不采信（人工改动
+    # 仍可由来源 a 的 diff 冲突捕获）
+    written_before = factory in (state.get("factory_outputs") or {})
+
+    settings = get_settings()
+    wb = load_workbook(out_path)
+    try:
+        ws = wb[wb.sheetnames[0]]
+        header = [c.value for c in ws[1]]
+        if any(n not in header for n in NEW_COL_NAMES):
+            # 副本尚无三列（极端：快照存在但副本被人工换成无三列版）→
+            # 三列全空，无任何可冲突人工值
+            return [], set()
+        col_by_field = {
+            "name_cn": header.index(settings.col_name_cn) + 1,
+            "net": header.index(settings.col_net) + 1,
+            "gross": header.index(settings.col_gross) + 1,
+        }
+        col_qty = header.index(settings.col_qty) + 1
+        col_po = (header.index(PO_COL_NAME) + 1
+                  if PO_COL_NAME in header else None)
+        row_index = copy_snapshot.build_row_index(ws)
+        row_map = (state.get("downstream_row_map") or {}).get(factory) or {}
+
+        gate_cells: set[tuple[str, str]] = set()
+        by_row: dict[tuple[str, int], dict] = {}
+        for item in cur.get("calculated_items") or []:
+            calc = item.get("calculation") or {}
+            unit_net = calc.get("calculated_unit_net")
+            unit_gross = calc.get("calculated_unit_gross")
+            name_cn = (item.get("name_cn")
+                       or (item.get("db_record") or {}).get("name_cn"))
+            if unit_net is None and unit_gross is None and not name_cn:
+                continue  # 占位行：主循环同样跳过，无写入即无冲突
+            sku = str(item.get("sku"))
+            sku_key = copy_snapshot.norm_key_text(sku)
+            rows_need = len(row_map.get(sku, []))
+            for seq in range(1, rows_need + 1):
+                excel_row = row_index.get(
+                    (copy_snapshot.norm_key_text(factory), sku_key, seq))
+                if excel_row is None:
+                    continue
+                if col_po is not None and _is_mx_po(
+                        ws.cell(row=excel_row, column=col_po).value):
+                    continue  # MX 人工行维持直接跳过，不进确认门（§2.4）
+                key_str = copy_snapshot.row_key_str(
+                    (copy_snapshot.norm_key_text(factory), sku_key, seq))
+                if key_str in kept_rows:
+                    continue  # 已「保留」的人工行视同 MX，不再打扰
+                qty = ws.cell(row=excel_row, column=col_qty).value
+                qty = float(qty) if isinstance(qty, (int, float)) else 0.0
+                pending_writes: list[tuple[str, int, object]] = []
+                if name_cn:
+                    pending_writes.append(
+                        ("name_cn", col_by_field["name_cn"], name_cn))
+                if unit_net is not None:
+                    pending_writes.append(
+                        ("net", col_by_field["net"], round(unit_net * qty, 2)))
+                if unit_gross is not None:
+                    pending_writes.append(
+                        ("gross", col_by_field["gross"],
+                         round(unit_gross * qty, 2)))
+                for field, col, new_val in pending_writes:
+                    ck = (key_str, field)
+                    if ck in protected_cells:
+                        continue  # 保护中的人工最终值：通道 C 本就跳过
+                    old_raw = ws.cell(row=excel_row, column=col).value
+                    conflict = conflict_map.get(ck)
+                    origin = origins.get(key_str)
+                    gate = (
+                        conflict is not None
+                        # 人工新增行：无论本厂此前是否写入过都必须确认，
+                        # 否则已写入工厂中的 manual_added 行会被无确认覆盖
+                        or (origin == "manual_added"
+                            and _cell_non_empty(old_raw))
+                        # 基线行只在首次写入时视为人工预填；已写入过则可能
+                        # 是本系统上一轮的结转值，防误判
+                        or (origin == "baseline" and not written_before
+                            and _cell_non_empty(old_raw))
+                    )
+                    if not gate:
+                        continue
+                    if copy_snapshot.field_equal(old_raw, new_val):
+                        continue  # 值相同无冲突（人工值恰好等于系统值）
+                    gate_cells.add(ck)
+                    agg = by_row.setdefault((sku, excel_row),
+                                            {"old": {}, "new": {}})
+                    agg["old"][_GATE_FIELD_LABELS[field]] = old_raw
+                    agg["new"][_GATE_FIELD_LABELS[field]] = new_val
+    finally:
+        wb.close()
+
+    conflicts = [
+        {"sku": sku, "excel_row": row_no, "old": agg["old"], "new": agg["new"]}
+        for (sku, row_no), agg in sorted(by_row.items(), key=lambda kv: kv[0][1])
+    ]
+    return conflicts, gate_cells
+
+
 def _write_excel(
     state: AgentState,
     out_path: Path,
     channel: str = "first_write",
+    conflict_decision: str | None = None,
+    gate_cells: set[tuple[str, str]] | None = None,
 ) -> tuple[int, int]:
     """按行标识精准写回 中文品名/净重/毛重 单元格。
 
@@ -195,6 +370,18 @@ def _write_excel(
     - 数量列被人工改（快照 qty ≠ 副本 qty）→ warning + 明细塞
       cur["qty_manual_changes"]，写入仍按副本当前数量计算（告警不阻断）。
     diff/快照失败返回 None 时保守放行（无冲突语义），绝不阻塞写入主流程。
+
+    第七阶段 §1.3/§2.4 遇值确认门（writer() 节点预检挂起后传入）：
+    - gate_cells：_collect_overwrite_conflicts 收集的门禁单元格
+      （(row_key_str, field) 集合），None = 未走门禁（直接调用/rework
+      通道），行为与既有通道分流完全一致；
+    - conflict_decision="keep"：门禁单元格按通道 C 保留语义跳过 +
+      留痕 + 快照打 protected，行键由 writer() 落账 manual_kept_rows；
+    - conflict_decision="overwrite"：门禁单元格按系统值写入，被盖
+      人工旧值逐格留痕 cur["manual_overwritten_cells"]；
+    - 非门禁单元格不受 decision 影响，仍按既有通道规则处理。
+    已「保留」的行（state.manual_kept_rows）视同 MX 人工行：所有通道
+    （含 rework）一律整行跳过，永不覆盖（§1.3）。
 
     人工新增行纳入（决策 4，阶段五）：写前 diff 的 added_rows 经
     copy_snapshot.classify_added_rows 三态分类——
@@ -297,8 +484,13 @@ def _write_excel(
     mark_protected: set[tuple[str, str]] = set()
     unprotect: set[tuple[str, str]] = set()
 
+    # 第七阶段 §1.3「保留」行集（视同 MX 人工行，所有通道整行跳过）
+    kept_row_keys = set(
+        (state.get("manual_kept_rows") or {}).get(factory) or [])
+
     written = 0
     skipped_mx = 0
+    skipped_kept = 0
     skipped_placeholder = 0
     for item in cur.get("calculated_items") or []:
         calc = item.get("calculation") or {}
@@ -332,6 +524,11 @@ def _write_excel(
                 continue
             key_str = copy_snapshot.row_key_str(
                 (copy_snapshot.norm_key_text(factory), sku_key, seq))
+            if key_str in kept_row_keys:
+                # 第七阶段 §1.3：确认门「保留」的人工行视同 MX 人工行，
+                # 所有通道（含 rework/reopen）一律整行跳过，永不覆盖
+                skipped_kept += 1
+                continue
 
             # 数量列告警（决策 1 附则）：人工改数量 → warning + 摘要透出，
             # 写入仍按副本当前数量吸收（人工数量优先，绝不静默）
@@ -363,8 +560,12 @@ def _write_excel(
                 conflict = conflict_map.get(ck)
                 old_raw = ws.cell(row=excel_row, column=col).value
                 is_protected = ck in protected_cells and _cell_non_empty(old_raw)
-                if channel != "rework" and (conflict is not None or is_protected):
-                    # 通道 C：默认跳过保留人工值 + 快照打 protected
+                # 第七阶段 §2.4 确认门单元格：执行决策与挂起时展示清单逐格一致
+                is_gate = gate_cells is not None and ck in gate_cells
+                gate_keep = is_gate and conflict_decision == "keep"
+                if channel != "rework" and (conflict is not None
+                                            or is_protected or gate_keep):
+                    # 通道 C / 确认门「保留」：默认跳过保留人工值 + 快照打 protected
                     cur["manual_override_kept"] += 1
                     cur["manual_conflicts"].append({
                         "factory": factory, "sku": sku, "row": excel_row,
@@ -383,7 +584,19 @@ def _write_excel(
                 cell = ws.cell(row=excel_row, column=col, value=new_val)
                 _apply_write_format(cell)
                 row_written = True
-                if conflict is not None:
+                if is_gate and conflict_decision == "overwrite":
+                    # 第七阶段确认门「覆盖」：写系统值，被盖人工旧值留痕
+                    cur["manual_overwritten_cells"].append({
+                        "factory": factory, "sku": sku, "row": excel_row,
+                        "field": field, "old": old_raw, "new": new_val,
+                    })
+                    cur["manual_values_overwritten"] += 1
+                    unprotect.add(ck)
+                    logger.info(
+                        "[Node6] 行 %d（%s/%s）%s 列人工值 %r 已被系统值 %r"
+                        " 覆盖（遇值确认门「覆盖」决策）",
+                        excel_row, factory, sku, field, old_raw, new_val)
+                elif conflict is not None:
                     # 通道 A：覆盖人工非空值，被盖旧值留痕 manual_value_overwritten
                     cur["manual_overwritten_cells"].append({
                         "factory": factory, "sku": sku, "row": excel_row,
@@ -426,6 +639,9 @@ def _write_excel(
                 factory, a.get("sku"), a.get("row_no"))
     if skipped_mx:
         logger.info("[Node6] 跳过 MX 行写回 %d 行（人工已填值）", skipped_mx)
+    if skipped_kept:
+        logger.info("[Node6] 跳过「保留」人工行写回 %d 行"
+                    "（第七阶段确认门决策，视同 MX 保护）", skipped_kept)
     if skipped_placeholder:
         logger.warning("[Node6] 工厂「%s」共跳过 %d 条占位行（未写入 Excel）",
                        factory, skipped_placeholder)
@@ -472,6 +688,9 @@ def clear_sku_rows(
     人工非空修改（快照×副本冲突单元格）逐单元格记
     cur["manual_overwritten_cells"]（old=人工值，new=None），由 service
     层入审计 changes_json（source="manual_value_overwritten"）。
+
+    第七阶段 §1.3：确认门「保留」的人工行（state.manual_kept_rows）
+    视同 MX 人工行，reopen 清空同样整行跳过，永不清除。
     """
     if not skus:
         return 0
@@ -479,6 +698,9 @@ def clear_sku_rows(
     cur = state.get("current_factory_data") or {}
     factory = cur.get("factory_name")
     row_map = (state.get("downstream_row_map") or {}).get(factory) or {}
+    # 第七阶段「保留」行集（视同 MX 人工行）
+    kept_row_keys = set(
+        (state.get("manual_kept_rows") or {}).get(factory) or [])
 
     wb = load_workbook(out_path)
     ws = wb[wb.sheetnames[0]]
@@ -506,6 +728,7 @@ def clear_sku_rows(
 
     cleared = 0
     skipped_mx = 0
+    skipped_kept = 0
     for sku in skus:
         sku_key = copy_snapshot.norm_key_text(sku)
         rows_need = len(row_map.get(str(sku), []))
@@ -523,6 +746,10 @@ def clear_sku_rows(
                 continue
             key_str = copy_snapshot.row_key_str(
                 (copy_snapshot.norm_key_text(factory), sku_key, seq))
+            if key_str in kept_row_keys:
+                # 第七阶段 §1.3：「保留」人工行视同 MX 行，reopen 清空跳过
+                skipped_kept += 1
+                continue
             for col in cols:
                 conflict = conflict_map.get((key_str, field_by_col[col]))
                 if conflict is not None:
@@ -539,6 +766,9 @@ def clear_sku_rows(
     if skipped_mx:
         logger.info("[Node6] reopen 删除条目：跳过 MX 行清空 %d 行（人工已填值）",
                     skipped_mx)
+    if skipped_kept:
+        logger.info("[Node6] reopen 删除条目：跳过「保留」人工行清空 %d 行"
+                    "（第七阶段确认门决策，视同 MX 保护）", skipped_kept)
     if cleared:
         _probe_writable(out_path)
         wb.save(out_path)
@@ -759,7 +989,34 @@ def writer(state: AgentState) -> dict:
     # 消费后自清（防止残留确认污染后续写入）。
     overwrite_facs = set(state.get("overwrite_manual_factories") or [])
     channel = "rework" if factory in overwrite_facs else "first_write"
-    written, skipped_placeholder = _write_excel(state, out_path, channel=channel)
+
+    # 第七阶段 §1.3/§2.4 遇值确认门：写入前预检——目标格已有非空值且
+    # 与系统值不同（MX 行除外）→ 整厂一次 interrupt 挂起确认。
+    # 通道 A（rework）操作员已在补充工厂确认门确认过覆写，不再重复打扰。
+    # 注意 interrupt 语义：挂起后恢复执行时本节点从头重跑，预检在副本
+    # 未被写入的前提下结果一致，interrupt() 直接返回 resume 值；
+    # 零容错默认——决策缺失/无法识别一律按「保留」处理。
+    conflict_decision: str | None = None
+    gate_cells: set[tuple[str, str]] | None = None
+    if channel != "rework":
+        conflicts, gate_cells = _collect_overwrite_conflicts(state, out_path)
+        if conflicts:
+            logger.warning(
+                "[Node6] 工厂「%s」检测到 %d 行人工已填值与系统值冲突，"
+                "挂起等待整厂确认（覆盖/保留）", factory, len(conflicts))
+            answer = interrupt({
+                "type": "overwrite_confirm",
+                "factory": factory,
+                "conflicts": conflicts,
+            })
+            raw = answer.get("decision") if isinstance(answer, dict) else None
+            conflict_decision = "overwrite" if raw == "overwrite" else "keep"
+            logger.info("[Node6] 工厂「%s」遇值确认门决策：%s",
+                        factory, conflict_decision)
+
+    written, skipped_placeholder = _write_excel(
+        state, out_path, channel=channel,
+        conflict_decision=conflict_decision, gate_cells=gate_cells)
     inserted, updated = _upsert_db(state)
 
     logger.info("[Node6] 工厂「%s」：写入 %d 行 Excel（跳过占位 %d 条）；"
@@ -776,6 +1033,18 @@ def writer(state: AgentState) -> dict:
     factory_outputs[factory] = dict(cur)
     result = {"final_output_path": str(out_path),
               "factory_outputs": factory_outputs}
+    if conflict_decision == "keep" and gate_cells:
+        # 第七阶段 §2.4「保留」决策落账：冲突行键并入
+        # state.manual_kept_rows（checkpoint 持久化），后续写回/reopen
+        # 清空均按视同 MX 人工行跳过（_write_excel / clear_sku_rows 消费）
+        kept_keys = sorted({k for k, _f in gate_cells})
+        merged_kept = {f: list(v) for f, v in
+                       (state.get("manual_kept_rows") or {}).items()}
+        merged_kept[factory] = sorted(
+            set(merged_kept.get(factory) or []) | set(kept_keys))
+        result["manual_kept_rows"] = merged_kept
+        logger.info("[Node6] 工厂「%s」%d 行人工值已标记「保留」"
+                    "（视同 MX 人工行保护）", factory, len(kept_keys))
     if manual_merge is not None:
         # A 态需求追加 / B 态新厂入批经节点返回值合并进 state（B 厂进
         # pending 后 _route_after_writer 回 Node2，走既有文件夹匹配→提取

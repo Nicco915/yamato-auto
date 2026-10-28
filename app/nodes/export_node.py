@@ -32,9 +32,13 @@ def export_node(state: AgentState) -> dict:
     # 口径：downstream_requirements 全集 − factory_outputs 快照（仅 Approved 工厂
     # 进快照）。差集 = 提取失败（deferred 耗尽/占位挂起/被跳过）+ 人工驳回/跳过
     # ——state 无独立的「最终失败」字段，差集是最接近的可得口径，故注释留痕。
+    # 第七阶段 §1.5：手动录入厂（manual_skip_factories）减除——手动录入是
+    # 操作员显式选择，不算失败
     requirements = state.get("downstream_requirements") or {}
     factory_outputs = state.get("factory_outputs") or {}
-    factories_failed = len(set(requirements) - set(factory_outputs))
+    manual_skip = set(state.get("manual_skip_factories") or [])
+    factories_failed = len(
+        set(requirements) - set(factory_outputs) - manual_skip)
 
     # 人工改动透出（写入侧人工改动感知 决策 1，阶段二 §2.7）：
     # 通道 C 保留未覆盖 / 通道 A 覆写 / 数量列人工改动，逐工厂计数汇总
@@ -55,6 +59,9 @@ def export_node(state: AgentState) -> dict:
         "final_output_path": out_path,
         "factories_processed": list(requirements.keys()),
         "factories_failed": factories_failed,
+        # 第七阶段 §2.5：手动录入厂名单透出（摘要消费方据此区分
+        # 「未识别」与「手动录入」）
+        "manual_entry_factories": sorted(manual_skip & set(requirements)),
         "validation_status": state.get("validation_status"),
         "manual_overrides_kept": manual_overrides_kept,
         "manual_values_overwritten": manual_values_overwritten,

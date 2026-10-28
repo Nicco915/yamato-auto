@@ -118,13 +118,17 @@ def _extract_phase(thread_id: str) -> dict[str, Any] | None:
 
     # 失败工厂计数（提取失败告警闭环 §3.2）：口径与 export_node 一致
     # （downstream_requirements 全集 − factory_outputs 快照）。只在图跑完
-    # （next 为空）时有意义——运行中/挂起中差集只是「还没轮到」，不能算失败
+    # （next 为空）时有意义——运行中/挂起中差集只是「还没轮到」，不能算失败。
+    # 第七阶段 §1.5：手动录入厂（manual_skip_factories）减除出缺口——
+    # 手动录入是操作员显式选择，不因它滞留「待补充」
     requirements = values.get("downstream_requirements") or {}
     total_set = set(requirements.keys())
     factory_filter = values.get("factory_filter")
     if factory_filter:
         total_set &= set(factory_filter)
-    factories_failed = len(total_set - set(done)) if not next_nodes else 0
+    manual_set = set(values.get("manual_skip_factories") or []) & total_set
+    failed_set = total_set - set(done) - manual_set
+    factories_failed = len(failed_set) if not next_nodes else 0
 
     return {
         "phase": phase,
@@ -136,7 +140,9 @@ def _extract_phase(thread_id: str) -> dict[str, Any] | None:
         "factories_failed": factories_failed,
         # 缺口工厂名单（与 factories_failed 同口径同条件），供
         # awaiting_factories/completed_with_errors 分类查审计留痕用
-        "failed_factories": sorted(total_set - set(done)) if not next_nodes else [],
+        "failed_factories": sorted(failed_set) if not next_nodes else [],
+        # 第七阶段 §2.5：手动录入厂名单（看板「手动录入」标识数据源）
+        "manual_factories": sorted(manual_set),
         "final_output_path": values.get("final_output_path"),
     }
 

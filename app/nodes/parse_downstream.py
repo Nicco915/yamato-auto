@@ -85,13 +85,40 @@ def parse_downstream(state: AgentState) -> dict:
         requirements = {k: v for k, v in requirements.items() if k in factory_filter}
         row_map = {k: v for k, v in row_map.items() if k in factory_filter}
 
-    pending = list(requirements.keys())
+    # 第七阶段 §1.1/§2.1：手动录入厂从待识别队列剔除（不进 LLM 提取、
+    # 不弹 Node5 审核），但保留在 requirements/row_map 中（副本透出/
+    # 导出统计/批次详情仍需要全集）。匹配口径与 factory_filter 一致：
+    # 装箱单工厂名（MAKER_MEI_KJ 原文）精确匹配；normalize 回写 state，
+    # 未命中任何工厂的名字直接丢弃（防误拼名字残留污染看板/监控口径）
+    manual_skip = sorted(
+        set(state.get("manual_skip_factories") or []) & set(requirements))
+    skip_set = set(manual_skip)
+    pending = [f for f in requirements.keys() if f not in skip_set]
+    if skip_set:
+        logger.info("[Node1] 手动录入跳过 %d 个工厂：%s",
+                    len(skip_set), "、".join(manual_skip))
     logger.info("[Node1] 本次队列 %d 个", len(pending))
 
-    return {
+    result = {
         "downstream_file_path": file_path,
         "downstream_requirements": requirements,
         "downstream_row_map": row_map,
         "pending_factories": pending,
+        "manual_skip_factories": manual_skip,
         "validation_status": "Pending",
     }
+
+    # 第七阶段 §1.2：副本提前生成——解析后无条件把原件复制到
+    # output/{batch_id}/containers/ 并建基线快照（含人工已填三列），
+    # 不再等 Node6 首次写入；手动录入厂直接以该副本为下游数据源。
+    # 副本是下游环节的硬依赖，失败不吞（零容错）；复用 writer 的
+    # 「绝不写原件 + 已存在则复用」逻辑（延迟 import 与 writer 内
+    # copy_snapshot 同哲学，防 app.graph → nodes → orchestrator 循环）
+    if state.get("batch_id"):
+        from app.nodes.writer import _ensure_output_copy
+        out_path = _ensure_output_copy(
+            {"batch_id": state["batch_id"],
+             "downstream_file_path": file_path})
+        result["final_output_path"] = str(out_path)
+
+    return result
