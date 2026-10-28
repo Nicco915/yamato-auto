@@ -1,9 +1,11 @@
 """StateGraph 编排 + SqliteSaver checkpointer 编译。
 
-状态流转（《第一阶段.md》第 5 节 + W6a 暂缓队列 + 2026-10-12 自动跳过）：
-    START -> Node1 -> Node2 -> Node3 -> Node4 --(成功/二遍仍失败/最后一个)--> Node5(🔴interrupt)
+状态流转（《第一阶段.md》第 5 节 + W6a 暂缓队列 + 2026-10-12 自动跳过
++ 第七阶段手动录入）：
+    START -> Node1 --(队列非空)--> Node2 -> Node3 -> Node4 --(成功/二遍仍失败/最后一个)--> Node5(🔴interrupt)
           -> Node6 --(主队列或暂缓队列非空)--> Node2 ...
                    --(两队列皆空)--> Node7 -> END
+          Node1 --(手动剔除后两队列皆空，全手动批次)--> Node7 -> END
           Node4 --(失败且后面还有厂)--> Node4B(暂缓) --> Node2
           Node4 --(缺资料且二遍/最后一家)--> Node4C(自动跳过)
                    --(还有厂)--> Node2 / --(两队列皆空)--> Node7
@@ -40,6 +42,18 @@ NODE7 = "node7_export"
 
 # 可自动跳过的缺资料类失败原因（2026-10-12 需求 1；与 auto_skip_node 口径一致）
 _AUTO_SKIP_REASONS = {"no_folder_matched", "no_documents"}
+
+
+def _route_after_parse(state: AgentState) -> str:
+    """Node1 后的条件边（第七阶段 §1.2 全手动批次兜底）。
+
+    手动录入剔除后主/暂缓队列皆空（全手动批次）→ 直走 Node7 导出终态；
+    否则正常进 Node2。不加此边时 Node2 空队列守卫会造出「未知工厂」
+    空数据，被 Node4C 自动跳过路径留下虚假审计留痕。
+    """
+    if state.get("pending_factories") or state.get("deferred_factories"):
+        return NODE2
+    return NODE7
 
 
 def _route_after_compute(state: AgentState) -> str:
@@ -91,7 +105,10 @@ def build_graph(checkpointer=None):
     builder.add_node(NODE7, export_node)
 
     builder.add_edge(START, NODE1)
-    builder.add_edge(NODE1, NODE2)
+    # 第七阶段 §1.2：全手动批次（手动剔除后队列空）直走 Node7，
+    # 不进 Node2 空队列守卫（防「未知工厂」假审计）
+    builder.add_conditional_edges(NODE1, _route_after_parse,
+                                  {NODE2: NODE2, NODE7: NODE7})
     builder.add_edge(NODE2, NODE3)
     builder.add_edge(NODE3, NODE4)
     # W6a：失败且后面还有厂 → Node4B 暂缓回 Node2；缺资料类二遍/最后一家

@@ -43,6 +43,15 @@ def _progress_line(thread_id: str) -> str | None:
 
 def _review_lines(review_data: dict) -> list[str]:
     """pending_human_review 的审核包明细行（工厂/SKU 数/缺失/提取覆盖）。"""
+    # 第七阶段 §2.4：写入遇值确认门挂起包（非审核包）——纯文本透出
+    # 冲突概况，不含内部路径/配置（调度红线）
+    if review_data.get("type") == "overwrite_confirm":
+        conflicts = review_data.get("conflicts") or []
+        return [
+            f"工厂「{review_data.get('factory') or '未知'}」写入时发现 "
+            f"{len(conflicts)} 行已有人工填写的值与识别结果不同",
+            "请到审核界面查看差异明细，选择「覆盖」或「保留」（整厂一次确认）",
+        ]
     lines: list[str] = []
     items = review_data.get("items") or []
     lines.append(f"待审核工厂：{review_data.get('factory_name') or '未知'}"

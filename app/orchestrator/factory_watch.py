@@ -158,6 +158,12 @@ def _scan_batch(tid: str) -> None:
     removed = service._manually_removed_factories(tid)
     if removed:
         gap = [f for f in gap if f not in removed]
+    # 第七阶段 §2.6：手动录入厂（manual_skip_factories，未重开识别）减除
+    # 出缺口——监控到新文件也不自动触发识别；重开（reopen_factories）
+    # 会把厂从清单移除，之后自然恢复监控
+    manual_skip = set(values.get("manual_skip_factories") or [])
+    if manual_skip:
+        gap = [f for f in gap if f not in manual_skip]
     if not gap:
         # 无缺口（自愈即将转 completed），顺手清掉本批残留快照与触发快照
         _prune_snapshots(alive_tids=None, keep_tid=tid)

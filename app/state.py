@@ -75,5 +75,18 @@ class AgentState(TypedDict, total=False):
     # 污染后续写入
     overwrite_manual_factories: Optional[List[str]]
 
+    # ----- 第七阶段：手动录入模式 -----
+    # 手动跳过清单（设计文档 §2.1，批次启动时传入）：清单内工厂由 Node1
+    # 从 pending_factories 剔除——不进 LLM 提取、不弹 Node5 审核，直接以
+    # output 副本中人工已填的三列为下游数据源；补充工厂/批次重跑/
+    # factory_watch 一律不自动触发识别，仅「补充工厂」入口的
+    # reopen_factories 可把工厂从本清单移除重开识别
+    manual_skip_factories: Optional[List[str]]
+    # 写入遇值确认门「保留」标记（§2.4）：{工厂名: [row_key_str, ...]}；
+    # 被保留行整行视同 MX 人工行——后续写回与 reopen 清空一律跳过，
+    # 永不覆盖。Node6 writer 决策后落账（节点返回值合并），
+    # writer._write_excel / clear_sku_rows 消费
+    manual_kept_rows: Optional[Dict[str, List[str]]]
+
     # ----- Node7 产物 -----
     final_output_path: str                # 最终输出的 Excel 副本路径
