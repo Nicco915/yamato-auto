@@ -155,7 +155,7 @@ def test_gate_keep_retains_manual_values_and_persists_rows(monkeypatch):
     src, dst = _make_copy(batch)
     captured = _install_interrupt(monkeypatch, "keep")
 
-    result = writer.writer(_state(batch, src))
+    result = _run_writer(_state(batch, src))
 
     assert len(captured) == 1
     payload = captured[0]
@@ -205,7 +205,7 @@ def test_gate_overwrite_writes_system_values_and_traces(monkeypatch):
     src, dst = _make_copy(batch)
     captured = _install_interrupt(monkeypatch, "overwrite")
 
-    result = writer.writer(_state(batch, src))
+    result = _run_writer(_state(batch, src))
 
     assert len(captured) == 1
     assert captured[0]["type"] == "overwrite_confirm"
@@ -256,3 +256,124 @@ def test_baseline_row_not_gated_after_factory_written(monkeypatch):
 
     assert conflicts == []
     assert gate_cells == set()
+
+def _run_writer(state):
+    """模拟节点返回清单后，经 checkpoint 合并再进入 Node6 的条件自循环。"""
+    result = writer.writer(state)
+    while result.get("overwrite_gate") is not None:
+        state.update(result)
+        result = writer.writer(state)
+    return result
+
+
+@pytest.mark.parametrize("decision", ["overwrite", "keep"])
+def test_diff_gate_decision_is_applied(monkeypatch, decision):
+    """基线后人工改副本净重：diff 冲突必须服从确认门决定。"""
+    batch = "DIFF-GATE-" + decision
+    src, dst = _make_copy(batch)
+    original = src.read_bytes()
+    wb = load_workbook(dst)
+    wb.active.cell(2, COL["净重"], 123.0)
+    wb.save(dst)
+    state = _state(batch, src, factory_outputs={FACTORY: {}})
+    captured = _install_interrupt(monkeypatch, decision)
+    result = _run_writer(state)
+    assert captured[0]["conflicts"][0]["old"]["净重"] == 123.0
+    cur = result["factory_outputs"][FACTORY]
+    row = next(r for r in copy_snapshot.load_snapshot(batch)["rows"]
+               if r["row_no"] == 2)
+    if decision == "overwrite":
+        assert _cell(load_workbook(dst).active, 2, "净重") == 10.0
+        assert cur["manual_values_overwritten"] == 1
+        assert cur["manual_overwritten_cells"][0]["old"] == 123.0
+        assert "net" not in row["protected_fields"]
+    else:
+        assert _cell(load_workbook(dst).active, 2, "净重") == 123.0
+        assert cur["manual_override_kept"] == 1
+        assert "net" in row["protected_fields"]
+    assert src.read_bytes() == original
+
+
+def test_gate_overwrite_unprotects_confirmed_cell():
+    """写入层已有保护标记也不能架空明确的门禁覆盖决定。"""
+    batch = "DIFF-GATE-UNPROTECT"
+    src, dst = _make_copy(batch)
+    snap = copy_snapshot.load_snapshot(batch)
+    row = next(r for r in snap["rows"] if r["row_no"] == 2)
+    row["protected"] = True
+    row["protected_fields"] = ["net"]
+    copy_snapshot.save_snapshot(batch, snap)
+    key = copy_snapshot.row_key_str((copy_snapshot.norm_key_text(FACTORY), SKU_GATE, 1))
+    state = _state(batch, src)
+    writer._write_excel(state, dst, conflict_decision="overwrite", gate_cells={(key, "net")})
+    assert _cell(load_workbook(dst).active, 2, "净重") == 10.0
+    row = next(r for r in copy_snapshot.load_snapshot(batch)["rows"] if r["row_no"] == 2)
+    assert not row["protected"]
+    assert "net" not in row["protected_fields"]
+
+
+@pytest.mark.parametrize("change", ["added", "removed", "removed_all", "value"])
+def test_resume_changed_copy_requires_new_confirmation(monkeypatch, tmp_path, change):
+    """真实 Sqlite checkpoint：重建图后恢复，旧决策不能套用变化清单。"""
+    from langgraph.checkpoint.sqlite import SqliteSaver
+    from langgraph.graph import StateGraph, START, END
+    from langgraph.types import Command
+    from app.state import AgentState
+    from app.graph import NODE6, NODE7, NODE2, _route_after_writer
+
+    batch = "GATE-TOCTOU-" + change
+    src, dst = _make_copy(batch)
+    original = src.read_bytes()
+    monkeypatch.setattr(writer, "_upsert_db", lambda state: (0, 0))
+
+    def build(saver):
+        graph = StateGraph(AgentState)
+        graph.add_node(NODE6, writer.writer)
+        graph.add_node(NODE7, lambda state: {})
+        graph.add_edge(START, NODE6)
+        graph.add_conditional_edges(NODE6, _route_after_writer,
+                                    {NODE6: NODE6, NODE7: NODE7, NODE2: NODE7})
+        graph.add_edge(NODE7, END)
+        return graph.compile(checkpointer=saver)
+
+    db = str(tmp_path / "checkpoint.db")
+    cfg = {"configurable": {"thread_id": batch}}
+    with SqliteSaver.from_conn_string(db) as saver:
+        graph = build(saver)
+        first = graph.invoke(_state(batch, src), cfg)
+        shown = first["__interrupt__"][0].value
+        saved = graph.get_state(cfg).values["overwrite_gate"]
+        assert saved["conflicts"] == shown["conflicts"]
+    wb = load_workbook(dst)
+    if change == "added":
+        wb.active.cell(3, COL["净重"], 999.0)
+    elif change == "removed":
+        wb.active.cell(2, COL["净重"], 10.0)
+    elif change == "removed_all":
+        wb.active.cell(2, COL["中文品名"], "系统品名")
+        wb.active.cell(2, COL["净重"], 10.0)
+        wb.active.cell(2, COL["毛重"], 20.0)
+    else:
+        wb.active.cell(2, COL["净重"], 456.0)
+    wb.save(dst)
+    before_resume = dst.read_bytes()
+    with SqliteSaver.from_conn_string(db) as saver:
+        graph = build(saver)
+        second = graph.invoke(Command(resume={"decision": "overwrite"}), cfg)
+        updated = second["__interrupt__"][0].value
+        assert updated["conflicts"] != shown["conflicts"]
+        assert dst.read_bytes() == before_resume
+        assert not graph.get_state(cfg).values.get("factory_outputs")
+        if change == "added":
+            assert len(updated["conflicts"]) == 2
+        elif change == "removed":
+            assert "净重" not in updated["conflicts"][0]["old"]
+        elif change == "removed_all":
+            assert updated["conflicts"] == []
+        else:
+            assert updated["conflicts"][0]["old"]["净重"] == 456.0
+        final = graph.invoke(Command(resume={"decision": "overwrite"}), cfg)
+        assert "__interrupt__" not in final
+        assert final["overwrite_gate"] is None
+        assert _cell(load_workbook(dst).active, 2, "净重") == 10.0
+    assert src.read_bytes() == original

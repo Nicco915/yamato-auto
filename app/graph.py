@@ -85,6 +85,8 @@ def _route_after_writer(state: AgentState) -> str:
 
     暂缓队列（W6a）也算未完——失败工厂要等主队列走完后二遍重试。
     """
+    if state.get("overwrite_gate") is not None:
+        return NODE6
     if state.get("pending_factories") or state.get("deferred_factories"):
         return NODE2
     return NODE7
@@ -124,7 +126,8 @@ def build_graph(checkpointer=None):
                                   {NODE2: NODE2, NODE7: NODE7})
     builder.add_edge(NODE5, NODE6)
     # 工厂维度批处理循环
-    builder.add_conditional_edges(NODE6, _route_after_writer, {NODE2: NODE2, NODE7: NODE7})
+    builder.add_conditional_edges(NODE6, _route_after_writer,
+                                  {NODE6: NODE6, NODE2: NODE2, NODE7: NODE7})
     builder.add_edge(NODE7, END)
 
     return builder.compile(checkpointer=checkpointer)

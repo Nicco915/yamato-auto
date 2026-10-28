@@ -382,7 +382,25 @@ def test_batch_detail_marks_manual_source_and_status():
     detail = service.get_batch_detail(tid)
     by_name = {f["factory"]: f for f in detail["factories"]}
 
+    assert by_name["手动厂"]["role"] == "manual_entry"
+    assert detail["progress"]["done"] == detail["progress"]["total"] == 2
+    assert service._gap_factories(graph.get_state({"configurable": {"thread_id": tid}}).values) == []
     assert by_name["手动厂"]["source"] == "manual"
     assert by_name["手动厂"]["status"] == "manual_entry"
     assert by_name["已完成厂"]["source"] == "auto"
     assert by_name["已完成厂"]["status"] == "done"
+
+
+def test_gate_checkpoint_does_not_report_write_complete():
+    """确认清单持久化的 Node6 自循环不能误报写回完成。"""
+    from app.graph import NODE6
+
+    events = []
+    emit = service._make_progress_emitter(events.append, seed={
+        "downstream_requirements": {"自动厂": []},
+        "current_factory_data": {"factory_name": "自动厂"},
+    })
+    emit({NODE6: {"overwrite_gate": {"factory": "自动厂", "conflicts": []}}})
+    assert events == []
+    emit({NODE6: {"overwrite_gate": None, "factory_outputs": {"自动厂": {}}}})
+    assert events[0]["message"] == "自动厂 写回完成"

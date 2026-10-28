@@ -572,8 +572,9 @@ def _write_excel(
                 # 第七阶段 §2.4 确认门单元格：执行决策与挂起时展示清单逐格一致
                 is_gate = gate_cells is not None and ck in gate_cells
                 gate_keep = is_gate and conflict_decision == "keep"
-                if channel != "rework" and (conflict is not None
-                                            or is_protected or gate_keep):
+                if (channel != "rework"
+                        and not (is_gate and conflict_decision == "overwrite")
+                        and (conflict is not None or is_protected or gate_keep)):
                     # 通道 C / 确认门「保留」：默认跳过保留人工值 + 快照打 protected
                     cur["manual_override_kept"] += 1
                     cur["manual_conflicts"].append({
@@ -989,7 +990,7 @@ def writer(state: AgentState) -> dict:
         # Rejected/Skipped 等都走这里：不写 Excel、不落库、不进 factory_outputs
         logger.warning("[Node6] 工厂「%s」未获批准（%s），跳过写入",
                        factory, state.get('validation_status'))
-        return {}
+        return {"overwrite_gate": None}
 
     out_path = _ensure_output_copy(state)
     # 通道分流（决策 1）：补充工厂确认门（通道 B）操作员确认覆写后，
@@ -1002,22 +1003,33 @@ def writer(state: AgentState) -> dict:
     # 第七阶段 §1.3/§2.4 遇值确认门：写入前预检——目标格已有非空值且
     # 与系统值不同（MX 行除外）→ 整厂一次 interrupt 挂起确认。
     # 通道 A（rework）操作员已在补充工厂确认门确认过覆写，不再重复打扰。
-    # 注意 interrupt 语义：挂起后恢复执行时本节点从头重跑，预检在副本
-    # 未被写入的前提下结果一致，interrupt() 直接返回 resume 值；
-    # 零容错默认——决策缺失/无法识别一律按「保留」处理。
+    # interrupt 恢复会从头执行节点；先返回清单让条件边自循环，使清单在
+    # 挂起前进入 checkpoint。恢复后只对已展示且未变化的清单使用决策。
     conflict_decision: str | None = None
     gate_cells: set[tuple[str, str]] | None = None
     if channel != "rework":
-        conflicts, gate_cells = _collect_overwrite_conflicts(state, out_path)
-        if conflicts:
-            logger.warning(
-                "[Node6] 工厂「%s」检测到 %d 行人工已填值与系统值冲突，"
-                "挂起等待整厂确认（覆盖/保留）", factory, len(conflicts))
+        saved_gate = state.get("overwrite_gate")
+        if not saved_gate or saved_gate.get("factory") != factory:
+            conflicts, gate_cells = _collect_overwrite_conflicts(state, out_path)
+            if conflicts:
+                return {"overwrite_gate": {
+                    "factory": factory, "conflicts": conflicts,
+                    "cells": [list(ck) for ck in sorted(gate_cells)],
+                }}
+        else:
             answer = interrupt({
                 "type": "overwrite_confirm",
                 "factory": factory,
-                "conflicts": conflicts,
+                "conflicts": saved_gate["conflicts"],
             })
+            conflicts, gate_cells = _collect_overwrite_conflicts(state, out_path)
+            cells = [list(ck) for ck in sorted(gate_cells)]
+            if cells != saved_gate["cells"] or conflicts != saved_gate["conflicts"]:
+                # 键集合或展示值变化均重新确认；包括冲突已全部消失的情况。
+                logger.warning("[Node6] 工厂「%s」确认期间副本冲突变化，重新挂起", factory)
+                return {"overwrite_gate": {
+                    "factory": factory, "conflicts": conflicts, "cells": cells,
+                }}
             raw = answer.get("decision") if isinstance(answer, dict) else None
             conflict_decision = "overwrite" if raw == "overwrite" else "keep"
             logger.info("[Node6] 工厂「%s」遇值确认门决策：%s",
@@ -1040,7 +1052,7 @@ def writer(state: AgentState) -> dict:
     # 存完整 current_factory_data 快照（reopen 时全文恢复，与首次审核字段一致）；
     # 旧格式列表（仅 calculated_items）由 reopen 层兼容读取
     factory_outputs[factory] = dict(cur)
-    result = {"final_output_path": str(out_path),
+    result = {"overwrite_gate": None, "final_output_path": str(out_path),
               "factory_outputs": factory_outputs}
     if conflict_decision == "keep" and gate_cells:
         # 第七阶段 §2.4「保留」决策落账：冲突行键并入

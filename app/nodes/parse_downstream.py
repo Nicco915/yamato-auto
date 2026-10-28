@@ -106,6 +106,7 @@ def parse_downstream(state: AgentState) -> dict:
         "pending_factories": pending,
         "manual_skip_factories": manual_skip,
         "validation_status": "Pending",
+        "overwrite_gate": None,
     }
 
     # 第七阶段 §1.2：副本提前生成——解析后无条件把原件复制到

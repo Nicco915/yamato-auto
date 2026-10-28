@@ -87,6 +87,8 @@ class AgentState(TypedDict, total=False):
     # 永不覆盖。Node6 writer 决策后落账（节点返回值合并），
     # writer._write_excel / clear_sku_rows 消费
     manual_kept_rows: Optional[Dict[str, List[str]]]
+    # 内部确认现场：展示清单及逐格键先入 checkpoint，完成写入后清空。
+    overwrite_gate: Optional[Dict[str, Any]]
 
     # ----- Node7 产物 -----
     final_output_path: str                # 最终输出的 Excel 副本路径

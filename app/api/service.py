@@ -145,6 +145,8 @@ def _make_progress_emitter(
                                 "total": total,
                                 "message": f"{factory} 提取失败，已暂缓，将在其余工厂处理完后重试"}
                 elif node == NODE6 and factory:
+                    if value.get("overwrite_gate") is not None:
+                        continue  # 清单入 checkpoint 尚未写回，不报完成
                     # 写回完成：当前工厂计入 done
                     progress = {"node": node, "factory": factory, "done": popped,
                                 "total": total, "message": f"{factory} 写回完成"}
@@ -3736,6 +3738,8 @@ def get_batch_detail(thread_id: str) -> dict[str, Any]:
             # 决策 2（阶段四）：整厂人工剔除（最新审计 removed 且在
             # requirements 中）——剔除是操作员最新意图，优先于 done/pending
             role = "manually_removed"
+        elif name in manual_set:
+            role = "manual_entry"
         elif name == current and snap.next:
             role = "current"
         elif name in pending or name in deferred_names:

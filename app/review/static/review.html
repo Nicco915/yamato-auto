@@ -245,7 +245,7 @@
 </div>
 
 <div id="done-view">
-  <h2>✔ 全部工厂处理完成</h2>
+  <h2 id="done-title">✔ 全部工厂处理完成</h2>
   <p id="done-path"></p>
 </div>
 
@@ -335,6 +335,27 @@ function toast(msg, ms = 2600) {
 }
 
 /* ================= 数据加载 ================= */
+// 写入确认挂起不属于识别审核，阻止按 Node5 形态提交。
+function showWriteConfirmationGuide() {
+  if (payload && payload.type !== "overwrite_confirm" && Array.isArray(payload.items)) return false;
+  ["btn-submit", "btn-skip"].forEach(id => {
+    $(id).disabled = true;
+    $(id).style.display = "none";
+  });
+  $("badge").textContent = "写入冲突待确认";
+  $("done-title").textContent = "写入冲突待确认";
+  $("main").style.display = "none";
+  $("btn-back").style.display = "";
+  $("done-view").style.display = "block";
+  $("done-path").innerHTML = '当前为写入冲突确认挂起，请前往批次详情页核对并处理。' +
+    '<a href="/batch/' + encodeURIComponent(threadId) + '">前往批次详情页</a>';
+  $("cards").innerHTML = "";
+  ["missing-bar", "failure-bar", "source-bar", "alias-bar"].forEach(id => {
+    if ($(id)) $(id).style.display = "none";
+  });
+  return true;
+}
+
 async function loadPayload() {
   let url = `/api/v1/review/${encodeURIComponent(threadId)}/payload`;
   if (isReopen) {
@@ -343,6 +364,7 @@ async function loadPayload() {
   const r = await fetch(url);
   if (!r.ok) { toast("获取审核数据失败：" + r.status); return; }
   payload = await r.json();
+  if (showWriteConfirmationGuide()) return;
   initItems();
   $("tb-thread").textContent = "thread: " + threadId;
   $("tb-factory").textContent = "工厂: " + (payload.factory_name || "-");
@@ -1879,6 +1901,7 @@ function confirmSubmit() { closeDiffModal(); doSubmit(); }
 
 /* 提交入口：有改动才弹摘要弹窗，无改动直接提交（减少日常点击） */
 function submitReview() {
+  if (showWriteConfirmationGuide()) return;
   const s = buildDiffSummary();
   if (!s.changes.length && !s.newSkus.length &&
       !s.addedMissing.length && !s.reextractAdded.length &&
@@ -1899,6 +1922,7 @@ async function afterResumeSuccess(data, verb) {
     // 多工厂循环：图在下一个工厂的 Node5 再次挂起
     toast(verb + "，进入下一工厂审核");
     payload = data.review_data;
+    if (showWriteConfirmationGuide()) return;
     initItems();
     $("tb-factory").textContent = "工厂: " + (payload.factory_name || "-");
     renderAliasBar(); renderFailureBar(); renderMissingBar(); renderCards(); renderDocSelect();
@@ -1921,6 +1945,7 @@ async function afterResumeSuccess(data, verb) {
 }
 
 async function doSubmit() {
+  if (showWriteConfirmationGuide()) return;
   const btn = $("btn-submit");
   btn.disabled = true; btn.textContent = isReopen ? "重新提交中…" : "提交中…";
   // 清理前端临时标记；有改动的项显式带上 is_human_edited（后端比对之外的冗余保险）
@@ -1977,6 +2002,7 @@ async function doSubmit() {
    （awaiting_factories），可补充工厂补齐或在详情页强制结案。
    跳过语义明确（整厂不处理），不走改动摘要弹窗。 */
 async function skipFactory() {
+  if (showWriteConfirmationGuide()) return;
   if (isReopen) return;   // reopen 模式下按钮已隐藏，双保险
   const btn = $("btn-skip");
   if (btn.disabled) return;   // 防连点
@@ -2010,6 +2036,7 @@ async function skipFactory() {
 }
 
 function showDone(data) {
+  $("done-title").textContent = "✔ 全部工厂处理完成";
   data = data || {};
   // 缺口工厂（其余工厂缺资料待补充）：批次并未全部完成，
   // badge 文案改「待补充」（className 必须保留 "done"，skipFactory 的

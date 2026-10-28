@@ -223,21 +223,26 @@ def main():
     result = service.run_until_interrupt(
         THREAD_ID, factory_filter=[TARGET_FACTORY], **extra
     )
-    assert result["status"] == "pending_human_review", f"未挂起: {result}"
-    review_data = result["review_data"]
-    print(f"\n===== 挂起！审核 payload 摘要 =====")
-    print(f"工厂: {review_data['factory_name']}")
-    print(f"文件夹: {review_data['folder_path']}")
-    print(f"源单据数: {len(review_data['source_documents'])}")
-    print(f"SKU 数: {len(review_data['items'])}，缺失 SKU: {review_data['missing_skus']}")
-    first = review_data["items"][0]
-    print(f"首个 SKU 示例:\n{json.dumps(first, ensure_ascii=False, indent=2)[:800]}")
+    all_manual = result["status"] == "completed"
+    if all_manual:
+        print("全部手动录入，跳过识别审核环节")
+        resume_result = result
+    else:
+        assert result["status"] == "pending_human_review", f"未挂起: {result}"
+        review_data = result["review_data"]
+        print(f"\n===== 挂起！审核 payload 摘要 =====")
+        print(f"工厂: {review_data['factory_name']}")
+        print(f"文件夹: {review_data['folder_path']}")
+        print(f"源单据数: {len(review_data['source_documents'])}")
+        print(f"SKU 数: {len(review_data['items'])}，缺失 SKU: {review_data['missing_skus']}")
+        first = review_data["items"][0]
+        print(f"首个 SKU 示例:\n{json.dumps(first, ensure_ascii=False, indent=2)[:800]}")
 
-    # ---- 步骤 B：模拟人工审核并唤醒 ----
-    print(f"\n===== 模拟人工审核并 resume =====")
-    human_data = simulate_human(review_data)
-    resume_result = service.resume_order(THREAD_ID, human_data)
-    print(f"resume 结果: {resume_result}")
+        # ---- 步骤 B：模拟人工审核并唤醒 ----
+        print(f"\n===== 模拟人工审核并 resume =====")
+        human_data = simulate_human(review_data)
+        resume_result = service.resume_order(THREAD_ID, human_data)
+        print(f"resume 结果: {resume_result}")
 
     # ---- 断言 ----
     print(f"\n===== 断言 =====")
@@ -246,18 +251,24 @@ def main():
     assert out_path.exists(), f"输出 Excel 不存在: {out_path}"
     print(f"[断言通过] 输出 Excel 已生成: {out_path}")
 
-    with get_session() as session:
-        rows = session.scalars(select(FactorySKU)).all()
-        assert len(rows) > 0, "factory_skus 无新行"
-        print(f"[断言通过] factory_skus 共 {len(rows)} 行，示例: "
-              f"sku={rows[0].sku_code} name_cn={rows[0].name_cn} "
-              f"hs={rows[0].hs_code} unit_net={rows[0].unit_net_weight}")
+    if all_manual:
+        state = service.get_order_state(THREAD_ID)
+        assert not state["values"].get("pending_factories"), "仍有工厂待处理"
+        assert resume_result["status"] == "completed"
+        print("[断言通过] 全手动流程已完成，输出副本可供下游使用")
+    else:
+        with get_session() as session:
+            rows = session.scalars(select(FactorySKU)).all()
+            assert len(rows) > 0, "factory_skus 无新行"
+            print(f"[断言通过] factory_skus 共 {len(rows)} 行，示例: "
+                  f"sku={rows[0].sku_code} name_cn={rows[0].name_cn} "
+                  f"hs={rows[0].hs_code} unit_net={rows[0].unit_net_weight}")
 
-    state = service.get_order_state(THREAD_ID)
-    assert state["values"].get("validation_status") == "Approved", \
-        f"validation_status 异常: {state['values'].get('validation_status')}"
-    assert resume_result["status"] == "success"
-    print(f"[断言通过] validation_status == Approved，流程走到 END")
+        state = service.get_order_state(THREAD_ID)
+        assert state["values"].get("validation_status") == "Approved", \
+            f"validation_status 异常: {state['values'].get('validation_status')}"
+        assert resume_result["status"] == "success"
+        print(f"[断言通过] validation_status == Approved，流程走到 END")
 
     print(f"\n🎉 冒烟测试全部通过！")
 
