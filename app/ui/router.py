@@ -12,12 +12,15 @@ API（路由极薄，逻辑全在 app.api.service；全部 asyncio.to_thread 防
 - GET  /api/v1/batches              批次列表
 - POST /api/v1/batches              发起批次（409 重名 / 422 路径无效）
 - POST /api/v1/batches/precheck     重复处理预检（422 装箱单解析失败）
+- GET  /api/v1/batches/precheck-manual  手动录入三列完整性预检（422 解析失败）
 - GET  /api/v1/batches/{thread_id}  批次详情（404 不存在）
 - DELETE /api/v1/batches/{thread_id} 删除过往批次（404 不存在 / 409 进行中）
 - PATCH /api/v1/batches/{thread_id}/paths  更新批次路径配置（404 不存在）
 - POST /api/v1/batches/{thread_id}/rerun   完全重跑批次（404 不存在）
 - POST /api/v1/batches/{thread_id}/add-factories  补充工厂（400 失败 /
   409 运行中或检测到人工修改待确认）
+- POST /api/v1/batches/{thread_id}/resume-overwrite  写入冲突决策 resume
+  （400 未挂起；{"decision": "overwrite"|"keep"}）
 - POST /api/v1/batches/{thread_id}/overwrite-protected  覆盖写入人工保留的
   protected 单元格（400 无 protected 行）
 - POST /api/v1/batches/{thread_id}/force-complete 强制结案（400 非待补充）
@@ -33,7 +36,7 @@ import asyncio
 import logging
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
@@ -136,6 +139,10 @@ class CreateBatchRequest(BaseModel):
 
     factory_filter 只处理指定工厂；skip_processed=true 自动跳过已处理
     工厂（与 factory_filter 互斥，factory_filter 优先）——W4b。
+
+    manual_skip_factories（第七阶段 手动录入模式 §2.3）：批次级手动跳过
+    识别清单，透传 service.create_batch（契约 §2.2：start_batch_from_scan
+    → create_batch → initial state["manual_skip_factories"]）。
     """
 
     thread_id: str
@@ -143,6 +150,7 @@ class CreateBatchRequest(BaseModel):
     upstream_root: Optional[str] = None
     factory_filter: Optional[list[str]] = None
     skip_processed: bool = False
+    manual_skip_factories: Optional[list[str]] = None
 
 
 class PrecheckRequest(BaseModel):
@@ -186,6 +194,10 @@ async def create_batch(request: CreateBatchRequest):
 
     skip_processed 且全部工厂已处理时返回 status=skipped_all（不建批次）。
     """
+    # 第七阶段 §2.2：非空才透传手动录入清单（空清单保持既有调用形态）
+    extra: dict = {}
+    if request.manual_skip_factories:
+        extra["manual_skip_factories"] = request.manual_skip_factories
     try:
         return await asyncio.to_thread(
             service.create_batch,
@@ -194,6 +206,7 @@ async def create_batch(request: CreateBatchRequest):
             request.upstream_root,
             factory_filter=request.factory_filter,
             skip_processed=request.skip_processed,
+            **extra,
         )
     except FileExistsError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
@@ -214,6 +227,25 @@ async def batch_precheck(request: PrecheckRequest):
             request.downstream_file_path,
             request.factory_names,
         )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+@router.get("/api/v1/batches/precheck-manual")
+async def precheck_manual(folder_name: str):
+    """手动录入预检（第七阶段 §2.3）：扫描候选文件夹的三列完整性建议。
+
+    面板/控制台启动批次前调用：返回 {"factories": [{"name", "complete",
+    "filled_rows", "total_rows"}]}，complete=True 的厂前端预勾选「跳过识别
+    （手动录入）」并标注「已填完整」。业务逻辑全在 service 层（任务 A 实现
+    precheck_manual_completeness，本端点仅透传）。
+
+    注意：必须声明在 GET /api/v1/batches/{thread_id} 之前，否则
+    "precheck-manual" 会被 {thread_id} 路径段吞掉。
+    """
+    try:
+        return await asyncio.to_thread(
+            service.precheck_manual_completeness, folder_name)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e)) from e
 
@@ -482,6 +514,9 @@ class AddFactoriesRequest(BaseModel):
 
     confirm_overwrite: bool = False
     confirm_source_changes: bool = False
+    # 第七阶段 §2.3：勾选「重新进入识别」的手动跳过工厂——从
+    # manual_skip_factories 移除并进入识别队列；响应新增 "reopened" 字段
+    reopen_factories: list[str] = []
 
 
 @router.post("/api/v1/batches/{thread_id}/add-factories")
@@ -504,12 +539,17 @@ async def add_factories_endpoint(
       "count"}：检测到人工非空修改待确认（确认后带 confirm_overwrite=true
       重发覆写）。
     """
+    # 第七阶段 §2.2：非空才透传重开识别清单（空清单保持既有补充工厂形态）
+    extra: dict = {}
+    if request and request.reopen_factories:
+        extra["reopen_factories"] = request.reopen_factories
     try:
         result = await asyncio.to_thread(
             service.add_factories_to_batch,
             thread_id,
             confirm_overwrite=bool(request and request.confirm_overwrite),
             confirm_source_changes=bool(request and request.confirm_source_changes),
+            **extra,
         )
         return result
     except service.SourceChangesError as e:
@@ -531,6 +571,34 @@ async def add_factories_endpoint(
     except RuntimeError as e:
         # 批次正在运行中（无 interrupt 且 next 非空）——纯字符串 detail 兼容契约
         raise HTTPException(status_code=409, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+class OverwriteDecisionRequest(BaseModel):
+    """写入冲突确认决策（第七阶段 §2.4）：整厂一次。
+
+    Node6 写入副本遇人工非空值 ≠ 系统值时挂起 interrupt
+    （payload type=overwrite_confirm），本端点把用户决策 resume 回图：
+    - overwrite：冲突单元格按系统值写入，旧值留痕；
+    - keep：冲突行标记人工来源，视同 MX 行保护，永不覆盖。
+    """
+
+    decision: Literal["overwrite", "keep"]
+
+
+@router.post("/api/v1/batches/{thread_id}/resume-overwrite")
+async def resume_overwrite_endpoint(thread_id: str, request: OverwriteDecisionRequest):
+    """写入冲突确认后 resume（第七阶段 §2.4）：{"decision": "overwrite"|"keep"}。
+
+    main.py 的 /api/v1/orders/{thread_id}/resume 请求体固定为 Node5 审核
+    结构（approved/skipped/items），装不下 decision 形态，故在 B 侧领地
+    新增本端点；resume_order 内部 Command(resume=...) 原样透传 dict。
+    返回结构与 resume_order 一致（可能挂起下一厂审核/下一厂冲突，或完成）。
+    """
+    try:
+        return await asyncio.to_thread(
+            service.resume_order, thread_id, {"decision": request.decision})
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 

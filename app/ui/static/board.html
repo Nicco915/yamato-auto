@@ -78,6 +78,21 @@
       <label>下游装箱单</label>
       <input type="text" id="start-downstream-ro" readonly>
     </div>
+    <!-- 手动录入（第七阶段 §1.1）：启动前列出工厂清单，按厂勾选「跳过识别」；
+         预检三列完整性，已填全的厂预勾选并标注「已填完整」，用户可改 -->
+    <div class="field" id="start-manual-field" style="display:none">
+      <label>跳过识别（手动录入）</label>
+      <div style="font-size:13px;margin-bottom:6px">
+        <label style="display:inline;color:#1f2937;font-size:13px">
+          <input type="checkbox" id="start-manual-all" onchange="toggleManualAll(this.checked)"> 全部跳过（整批手动录入）
+        </label>
+      </div>
+      <div id="start-manual-list" style="max-height:28vh;overflow-y:auto;border:1px solid #e2e8f0;border-radius:6px;padding:6px 10px"></div>
+      <p class="hint" style="margin:6px 0 0">勾选的工厂不走自动识别，直接在输出表格手动填写中文品名/净重/毛重；人工填的值系统永不自动覆盖。</p>
+    </div>
+    <div class="field" id="start-manual-note" style="display:none">
+      <p class="hint" id="start-manual-note-text" style="margin:0"></p>
+    </div>
     <div class="modal-actions">
       <button class="btn" onclick="closeStartModal()">取消</button>
       <button class="btn btn-primary" id="start-confirm-btn" onclick="confirmStart()">确认启动</button>
@@ -117,6 +132,24 @@
     <div class="modal-actions">
       <button class="btn" onclick="closePrepareModal()">取消</button>
       <button class="btn btn-primary" id="prep-confirm-btn" onclick="confirmPrepare()">确认创建</button>
+    </div>
+  </div>
+</div>
+
+<!-- 补充工厂弹窗（第七阶段 §1.5）：有手动录入工厂时替代原生 confirm——
+     列出当前手动跳过的厂，可勾选「重新进入识别」（带 reopen_factories 调
+     add-factories）；无手动厂时不弹本窗，走原 confirm 流程 -->
+<div id="af-mask" class="modal-mask" onclick="if (event.target === this) closeAfModal()">
+  <div class="modal start-modal">
+    <h3 id="af-title">补充工厂</h3>
+    <p class="hint" id="af-hint">重新解析装箱单，把未处理的工厂补进批次。</p>
+    <div class="field" id="af-reopen-field" style="display:none">
+      <label>手动录入的工厂（勾选后重新进入识别，从手动清单移除）</label>
+      <div id="af-reopen-list" style="max-height:28vh;overflow-y:auto;border:1px solid #e2e8f0;border-radius:6px;padding:6px 10px"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeAfModal()">取消</button>
+      <button class="btn btn-primary" id="af-confirm-btn" onclick="confirmAf()">确认补充</button>
     </div>
   </div>
 </div>
@@ -489,15 +522,19 @@ function _cardAt(tier, i) {
    409 冲突响应的 detail 是对象 {code:"manual_conflicts"|"source_changes", ...}，
    而 ui.js 的 api() 只透传字符串 detail（对象会被吞成 "HTTP 409"），
    这里保留原始 detail 供确认窗使用；旧版字符串 detail（如「批次运行中」）不受影响 */
-async function _postAddFactories(tid, confirmOverwrite, confirmSourceChanges) {
+/* reopenFactories（第七阶段 §1.5）：勾选「重新进入识别」的手动厂清单，
+   透传 AddFactoriesRequest.reopen_factories；空数组时不带该字段 */
+async function _postAddFactories(tid, confirmOverwrite, confirmSourceChanges, reopenFactories) {
+  var body = {
+    thread_id: tid,
+    confirm_overwrite: !!confirmOverwrite,
+    confirm_source_changes: !!confirmSourceChanges,
+  };
+  if (reopenFactories && reopenFactories.length) body.reopen_factories = reopenFactories;
   var resp = await fetch("/api/v1/batches/" + encodeURIComponent(tid) + "/add-factories", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      thread_id: tid,
-      confirm_overwrite: !!confirmOverwrite,
-      confirm_source_changes: !!confirmSourceChanges,
-    }),
+    body: JSON.stringify(body),
   });
   var data = null;
   try { data = await resp.json(); } catch (e) { data = null; }
@@ -511,11 +548,16 @@ async function _postAddFactories(tid, confirmOverwrite, confirmSourceChanges) {
   return data;
 }
 
-/* 补充工厂成功后的公共文案：结果 toast + 人工值保留提示（manual_overrides_kept 透出，
-   延时播放避免覆盖主 toast） */
+/* 补充工厂成功后的公共文案：结果 toast + 重开识别提示 + 人工值保留提示
+   （reopened/manual_overrides_kept 透出，延时播放避免覆盖主 toast） */
 function _afterAddFactoriesOk(r) {
   r = r || {};
   toast(r.message || ("已补充 " + (r.added || 0) + " 家工厂"));
+  if ((r.reopened || []).length > 0) {
+    setTimeout(function () {
+      toast("已重新进入识别：" + r.reopened.join("、"), 5000);
+    }, 1500);
+  }
   if ((r.manual_overrides_kept || 0) > 0) {
     setTimeout(function () {
       toast(r.manual_overrides_kept + " 行人工修改的值已保留未覆盖，可在批次详情页确认覆盖", 6000);
@@ -523,36 +565,100 @@ function _afterAddFactoriesOk(r) {
   }
 }
 
+/* 手动录入工厂探测（第七阶段 §2.5）：批次详情的工厂项带
+   source="manual" / status="manual_entry"；详情取不到（批次异常等）按无手动厂
+   处理，不阻断补充工厂主流程 */
+async function _fetchManualFactories(tid) {
+  try {
+    var d = await api("/api/v1/batches/" + encodeURIComponent(tid));
+    return (d.factories || []).filter(function (f) {
+      return f && (f.source === "manual" || f.status === "manual_entry");
+    }).map(function (f) { return f.factory || f.name || ""; })
+      .filter(function (n) { return !!n; });
+  } catch (e) {
+    return [];
+  }
+}
+
 /* 补充工厂：重解析装箱单把未处理工厂补进批次（可能跑数十秒）。
+   有手动录入工厂时先弹「重开识别」勾选窗（第七阶段 §1.5），否则走原 confirm。
    门槛顺序：先 409 source_changes（原件中已完成工厂有变更）→ 确认吸收后重发；
    再可能 409 manual_conflicts（检测到人工修改待写入行）→ 确认覆盖后重发
    （两个标志都带上，防后端复核）；任一取消则不动 */
 async function boardAddFactories(tier, i, btn) {
   var b = _cardAt(tier, i);
   if (!b || (btn && btn.disabled)) return;
+  var manualFactories = await _fetchManualFactories(b.thread_id);
+  if (manualFactories.length) {
+    openAfModal(b.thread_id, manualFactories);
+    return;
+  }
   if (!confirm("批次「" + b.folder_name + "」将重新解析装箱单，把未处理的工厂补进批次。\n确认执行？")) return;
-  btn.disabled = true;
-  btn.textContent = "补充中…";
+  await _doAddFactories(b.thread_id, [], btn);
+}
+
+/* 补充工厂执行体（reopen 清单透传；btn 可空——弹窗路径无卡片按钮要恢复） */
+async function _doAddFactories(tid, reopenFactories, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = "补充中…"; }
   try {
-    var r = await _postAddFactories(b.thread_id, false, false);
+    var r = await _postAddFactories(tid, false, false, reopenFactories);
     _afterAddFactoriesOk(r);
     loadBoard(false);
   } catch (e) {
     if (e.status === 409 && e.detail && typeof e.detail === "object" && e.detail.code === "source_changes") {
-      openScModal(b.thread_id, e.detail);
+      openScModal(tid, e.detail, reopenFactories);
     } else if (e.status === 409 && e.detail && typeof e.detail === "object" && e.detail.code === "manual_conflicts") {
-      openMcModal(b.thread_id, e.detail, false);
+      openMcModal(tid, e.detail, false, reopenFactories);
     } else {
       toast("补充工厂失败：" + e.message, 4000);
     }
   } finally {
-    btn.disabled = false;
-    btn.textContent = "补充工厂";
+    if (btn) { btn.disabled = false; btn.textContent = "补充工厂"; }
   }
 }
 
+/* ---------- 补充工厂弹窗（手动厂「重新进入识别」勾选，第七阶段 §1.5） ---------- */
+var _afPending = null;   // {tid, manualFactories} 待确认的补充工厂请求
+
+function openAfModal(tid, manualFactories) {
+  _afPending = { tid: tid, manualFactories: manualFactories };
+  $("af-hint").textContent =
+    "重新解析装箱单，把未处理的工厂补进批次。以下工厂当前为手动录入（跳过识别），" +
+    "勾选后将重新进入识别流程（从手动清单移除），未勾选的保持手动录入不动。";
+  $("af-reopen-field").style.display = "";
+  $("af-reopen-list").innerHTML = manualFactories.map(function (name, idx) {
+    return '<div style="font-size:13px;line-height:2">' +
+      '<label style="display:inline;color:#1f2937;font-size:13px">' +
+      '<input type="checkbox" class="af-reopen-check" value="' + esc(name) + '"> ' +
+      esc(name) + ' <span style="color:var(--muted)">重新进入识别</span></label></div>';
+  }).join("");
+  var btn = $("af-confirm-btn");
+  btn.disabled = false;
+  btn.textContent = "确认补充";
+  $("af-mask").classList.add("show");
+}
+
+function closeAfModal() {
+  $("af-mask").classList.remove("show");
+  _afPending = null;
+}
+
+async function confirmAf() {
+  if (!_afPending) return;
+  var tid = _afPending.tid;
+  var reopen = Array.from(document.querySelectorAll(".af-reopen-check"))
+    .filter(function (cb) { return cb.checked; })
+    .map(function (cb) { return cb.value; });
+  var btn = $("af-confirm-btn");
+  btn.disabled = true;
+  btn.textContent = "补充中…";
+  closeAfModal();
+  await _doAddFactories(tid, reopen, null);
+}
+
 /* ---------- 原件变更确认门（409 source_changes，决策 9 入口一） ---------- */
-var _scPending = null;   // {tid} 待确认的吸收原件变更请求
+var _scPending = null;   // {tid, reopen} 待确认的吸收原件变更请求
+                         // （reopen=本次补充携带的重开识别清单，重发时继续带上）
 
 /* 每家工厂变更摘要文案：新增 N 行 / 删除 N 行 / 数量改动 N 处 */
 function _scChangeText(c) {
@@ -564,8 +670,8 @@ function _scChangeText(c) {
   return parts.join("；") || "有变更";
 }
 
-function openScModal(tid, detail) {
-  _scPending = { tid: tid };
+function openScModal(tid, detail, reopenFactories) {
+  _scPending = { tid: tid, reopen: reopenFactories || [] };
   var changes = (detail && detail.changes) || [];
   var count = (detail && detail.count) || changes.length;
   $("sc-title").textContent = "检测到原件变更（" + count + " 家工厂）";
@@ -599,7 +705,7 @@ async function confirmScAbsorb() {
   btn.disabled = true;
   btn.textContent = "吸收变更中…";
   try {
-    var r = await _postAddFactories(tid, false, true);
+    var r = await _postAddFactories(tid, false, true, _scPending.reopen);
     closeScModal();
     _afterAddFactoriesOk(r);
     loadBoard(false);
@@ -607,8 +713,9 @@ async function confirmScAbsorb() {
     if (e.status === 409 && e.detail && typeof e.detail === "object" && e.detail.code === "manual_conflicts") {
       /* 顺序衔接第二道确认门：原件变更已确认，改弹人工冲突窗；
          其确认时 confirm_overwrite 与 confirm_source_changes 两标志都带上 */
+      var reopen = _scPending.reopen;
       closeScModal();
-      openMcModal(tid, e.detail, true);
+      openMcModal(tid, e.detail, true, reopen);
     } else {
       toast("补充工厂失败：" + e.message, 4000);
       btn.disabled = false;
@@ -618,14 +725,16 @@ async function confirmScAbsorb() {
 }
 
 /* ---------- 人工修改确认门（409 manual_conflicts） ---------- */
-var _mcPending = null;   // {tid, sourceConfirmed} 待确认的补充工厂请求
-                       // （sourceConfirmed=原件变更已确认，重发时两个标志都带上）
+var _mcPending = null;   // {tid, sourceConfirmed, reopen} 待确认的补充工厂请求
+                       // （sourceConfirmed=原件变更已确认，重发时两个标志都带上；
+                       //  reopen=本次携带的重开识别清单，重发时继续带上）
 var MC_FIELD_TEXT = { name_cn: "中文品名", net: "净重", gross: "毛重", qty: "数量" };
 function _mcFieldText(f) { return MC_FIELD_TEXT[f] || f || "-"; }
 function _mcValText(v) { return (v === null || v === undefined || v === "") ? "（空）" : String(v); }
 
-function openMcModal(tid, detail, sourceConfirmed) {
-  _mcPending = { tid: tid, sourceConfirmed: !!sourceConfirmed };
+function openMcModal(tid, detail, sourceConfirmed, reopenFactories) {
+  _mcPending = { tid: tid, sourceConfirmed: !!sourceConfirmed,
+                 reopen: reopenFactories || [] };
   var conflicts = (detail && detail.conflicts) || [];
   var count = (detail && detail.count) || conflicts.length;
   $("mc-title").textContent = "检测到 " + count + " 行人工修改";
@@ -663,7 +772,7 @@ async function confirmMcOverwrite() {
   btn.disabled = true;
   btn.textContent = "覆盖写入中…";
   try {
-    var r = await _postAddFactories(tid, true, sourceConfirmed);
+    var r = await _postAddFactories(tid, true, sourceConfirmed, _mcPending.reopen);
     closeMcModal();
     _afterAddFactoriesOk(r);
     loadBoard(false);
@@ -897,6 +1006,71 @@ function openStartModal(idx) {
   $("start-confirm-btn").disabled = false;
   $("start-confirm-btn").textContent = "确认启动";
   $("start-mask").classList.add("show");
+  loadManualPrecheck();
+}
+
+/* ---------- 手动录入勾选（第七阶段 §1.1：预检三列完整性 → 预勾选建议） ---------- */
+
+/* 打开启动弹窗后异步拉预检；失败不阻断启动（降级为无建议，只提示原因） */
+async function loadManualPrecheck() {
+  var c = _startCandidate;
+  if (!c) return;
+  $("start-manual-field").style.display = "none";
+  $("start-manual-note").style.display = "";
+  $("start-manual-note-text").textContent = "正在检测各工厂三列完整性…";
+  $("start-manual-all").checked = false;
+  try {
+    var d = await api("/api/v1/batches/precheck-manual?folder_name=" +
+                      encodeURIComponent(c.folder_name));
+    // 弹窗已关闭/换了候选：丢弃过期结果
+    if (_startCandidate !== c) return;
+    var factories = (d && d.factories) || [];
+    if (!factories.length) {
+      $("start-manual-note-text").textContent = "未在装箱单中解析到工厂，可直接启动。";
+      return;
+    }
+    $("start-manual-note").style.display = "none";
+    $("start-manual-list").innerHTML = factories.map(function (f) {
+      f = f || {};
+      var meta = f.complete
+        ? ' <span class="badge badge-ok">已填完整</span>'
+        : ' <span style="color:var(--muted)">（已填 ' + (f.filled_rows || 0) +
+          '/' + (f.total_rows || 0) + ' 行）</span>';
+      return '<div style="font-size:13px;line-height:2">' +
+        '<label style="display:inline;color:#1f2937;font-size:13px">' +
+        '<input type="checkbox" class="start-manual-check" value="' + esc(f.name || "") + '"' +
+        (f.complete ? " checked" : "") + ' onchange="syncManualAll()"> ' +
+        esc(f.name || "-") + meta + '</label></div>';
+    }).join("");
+    $("start-manual-field").style.display = "";
+    syncManualAll();
+  } catch (e) {
+    if (_startCandidate !== c) return;
+    $("start-manual-note-text").textContent =
+      "三列完整性预检失败：" + e.message + "（不影响启动，可在批次详情页后续处理）";
+  }
+}
+
+/* 「全部跳过」总开关：勾上即全选，取消即全不选 */
+function toggleManualAll(checked) {
+  Array.from(document.querySelectorAll(".start-manual-check")).forEach(function (cb) {
+    cb.checked = checked;
+  });
+}
+
+/* 单个勾选变化 → 同步总开关状态（全选才亮） */
+function syncManualAll() {
+  var boxes = Array.from(document.querySelectorAll(".start-manual-check"));
+  $("start-manual-all").checked =
+    boxes.length > 0 && boxes.every(function (cb) { return cb.checked; });
+}
+
+/* 收集勾选手动录入的工厂名 */
+function collectManualSkips() {
+  return Array.from(document.querySelectorAll(".start-manual-check"))
+    .filter(function (cb) { return cb.checked; })
+    .map(function (cb) { return cb.value; })
+    .filter(function (n) { return !!n; });
 }
 
 function closeStartModal() {
@@ -909,16 +1083,28 @@ async function confirmStart() {
   var tid = $("start-thread-id").value.trim();
   if (!tid) { toast("批次号不能为空"); return; }
   var downs = _startCandidate.downstream_candidates || [];
-  var body = { folder_name: _startCandidate.folder_name, thread_id: tid };
-  if (downs.length > 1) body.downstream_file_path = $("start-downstream").value;
+  var skips = collectManualSkips();
 
   _starting = true;
   var btn = $("start-confirm-btn");
   btn.disabled = true;
   btn.textContent = "启动中…";
   try {
+    /* 统一走 /api/v1/watch/start：后台线程跑提取、立即返回（面板不阻塞）。
+       手动跳过清单经 WatchStartRequest.manual_skip_factories 透传
+       → board.start_from_board → start_batch_from_scan → initial state。 */
+    var body = {
+      folder_name: _startCandidate.folder_name,
+      thread_id: tid,
+      manual_skip_factories: skips,
+    };
+    if (downs.length > 1) body.downstream_file_path = $("start-downstream").value;
     var r = await api("/api/v1/watch/start", { method: "POST", body: body });
-    toast(r.message || "批次已启动");
+    if (skips.length) {
+      toast("批次已启动，含 " + skips.length + " 家手动录入工厂：" + skips.join("、"), 5000);
+    } else {
+      toast(r.message || "批次已启动");
+    }
     closeStartModal();
     // 停留看板页：立即刷新，让卡片从「未执行」挪到「执行中」
     loadBoard(false);
@@ -1139,6 +1325,7 @@ _pollTimer = setInterval(function () {
   if ($("abort-mask").classList.contains("show")) return;
   if ($("mc-mask").classList.contains("show")) return;
   if ($("sc-mask").classList.contains("show")) return;
+  if ($("af-mask").classList.contains("show")) return;
   loadBoard(false);
 }, 10000);
 </script>

@@ -219,6 +219,7 @@ class StartBatchRequest(BaseModel):
     thread_id: Optional[str] = None             # 可覆盖默认 thread_id
     downstream_file_path: Optional[str] = None  # 可覆盖自动匹配结果
     upstream_root: Optional[str] = None         # 可覆盖监控目录下的工厂文件夹
+    manual_skip_factories: list[str] = []       # 第七阶段：手动录入厂（跳过识别）
 
 
 class UndoAliasRequest(BaseModel):
@@ -243,6 +244,7 @@ class WatchStartRequest(BaseModel):
     folder_name: str
     thread_id: Optional[str] = None             # 可覆盖默认 thread_id
     downstream_file_path: Optional[str] = None  # 多个装箱单时由人工选定
+    manual_skip_factories: list[str] = []       # 第七阶段：手动录入厂（跳过识别）
 
 
 class WatchPrepareFoldersRequest(BaseModel):
@@ -301,6 +303,10 @@ async def scan_batches():
 @app.post("/api/v1/batches/start")
 async def start_batch_from_scan(request: StartBatchRequest):
     """从扫描候选中选中一个子文件夹，创建 batch 并启动提取到 Node5 挂起。"""
+    # 第七阶段 §2.3：非空才透传手动录入清单（兼容 service 未升级的旧部署）
+    extra: dict = {}
+    if request.manual_skip_factories:
+        extra["manual_skip_factories"] = request.manual_skip_factories
     try:
         return await asyncio.to_thread(
             service.start_batch_from_scan,
@@ -308,6 +314,7 @@ async def start_batch_from_scan(request: StartBatchRequest):
             request.thread_id,
             request.downstream_file_path,
             request.upstream_root,
+            **extra,
         )
     except FileExistsError as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
@@ -397,12 +404,18 @@ async def watch_start(request: WatchStartRequest):
     跳转 /chat?thread_id= 由对话页跟踪进度。
     """
     from app.orchestrator import board
+    # 第七阶段 §2.3：手动录入清单随启动透传到后台线程（start_from_board →
+    # start_batch_from_scan → initial state），看板保持「立即返回」的异步语义
+    extra: dict = {}
+    if request.manual_skip_factories:
+        extra["manual_skip_factories"] = request.manual_skip_factories
     try:
         return await asyncio.to_thread(
             board.start_from_board,
             request.folder_name,
             request.thread_id,
             request.downstream_file_path,
+            **extra,
         )
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
